@@ -221,10 +221,13 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
         if let Some((source, detail)) = &rejected.logical_source_failure {
             let failure =
                 SourceBackedRouteError::new(SourceBackedRouteErrorKind::InvalidSource, detail);
+            let carried_forward = bases
+                .iter()
+                .any(|base| base.observation().source().exact_descriptor_eq(source));
             if adapter.provider() == CaptureProvider::Codex {
                 sink.record_logical_source_quarantine(source.clone(), failure)
             } else {
-                sink.record_logical_source_failure(source.clone(), failure, false)
+                sink.record_logical_source_failure(source.clone(), failure, carried_forward)
             }
             .map_err(route_internal)?;
         }
@@ -403,10 +406,19 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
             SourceBackedRouteErrorKind::InvalidSource,
             &quarantined.detail,
         );
+        let carried_forward = bases.iter().any(|base| {
+            base.observation()
+                .source()
+                .exact_descriptor_eq(&quarantined.failure_source)
+        });
         if adapter.provider() == CaptureProvider::Codex {
             sink.record_logical_source_quarantine(quarantined.failure_source.clone(), failure)
         } else {
-            sink.record_logical_source_failure(quarantined.failure_source.clone(), failure, false)
+            sink.record_logical_source_failure(
+                quarantined.failure_source.clone(),
+                failure,
+                carried_forward,
+            )
         }
         .map_err(route_internal)?;
     }

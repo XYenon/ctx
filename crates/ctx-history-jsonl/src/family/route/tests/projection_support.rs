@@ -250,6 +250,87 @@ impl JsonlFamilyProjector for RecordRejectionTestProjector {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScopedPreflightTestBehavior {
+    WrongSource,
+    GenericInternal,
+    PostStagingFailure,
+}
+
+pub(super) struct ScopedPreflightTestAdapter {
+    pub(super) behavior: ScopedPreflightTestBehavior,
+}
+
+struct ScopedPreflightTestProjector {
+    behavior: ScopedPreflightTestBehavior,
+    source: SourceKey,
+    wrong_source: SourceKey,
+}
+
+impl JsonlFamilyProjector for ScopedPreflightTestProjector {
+    type Runtime = TestJsonlRuntime;
+
+    fn preflight_with_failure_scope(
+        &mut self,
+        reader: &mut JsonlReader,
+        _certified_prefix_end: Option<u64>,
+    ) -> std::result::Result<bool, JsonlFamilyProjectorPreflightError<CaptureError>> {
+        match self.behavior {
+            ScopedPreflightTestBehavior::WrongSource => {
+                return Err(JsonlFamilyProjectorPreflightError::logical_source_failure(
+                    self.wrong_source.clone(),
+                    "wrong-source preflight claim",
+                ));
+            }
+            ScopedPreflightTestBehavior::GenericInternal => {
+                return Err(JsonlFamilyProjectorPreflightError::internal(
+                    CaptureError::InvalidPayload("generic preflight failure".to_owned()),
+                ));
+            }
+            ScopedPreflightTestBehavior::PostStagingFailure => {}
+        }
+        while reader
+            .visit_page(&mut |_record| -> Result<()> { Ok(()) })?
+            .is_some()
+        {}
+        Ok(false)
+    }
+
+    fn project(
+        &mut self,
+        _record: JsonlRecordRef<'_>,
+        _worker: &mut JsonlFamilyWorkerContext,
+        emit: &mut dyn FnMut(CoreRecord) -> Result<()>,
+    ) -> Result<()> {
+        for ordinal in 0..65 {
+            emit(emission_test_record(&self.source, ordinal)?)?;
+        }
+        Err(CaptureError::InvalidPayload(
+            "post-staging generic failure".to_owned(),
+        ))
+    }
+}
+
+impl_standard_jsonl_test_adapter!(
+    ScopedPreflightTestAdapter,
+    "scoped-preflight-test-parser-v1",
+    JsonlFamilyAppendMode::ProjectorPreflight(true),
+    |adapter, leaf, _source_file, _imported_at| {
+        let wrong_source = SourceKey::derive(
+            CaptureProvider::Pi.as_str(),
+            TEST_SOURCE_FORMAT,
+            TEST_SCHEMA,
+            1,
+            SourceAnchor::CatalogLineage([0xfe; 32]),
+        )
+        .map_err(test_contract_error)?;
+        Ok(Box::new(ScopedPreflightTestProjector {
+            behavior: adapter.behavior,
+            source: leaf.source().clone(),
+            wrong_source,
+        }))
+    }
+);
 pub(super) struct FramingPolicyTestAdapter {
     pub(super) projected: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(super) record_framing: JsonlRecordFraming,
