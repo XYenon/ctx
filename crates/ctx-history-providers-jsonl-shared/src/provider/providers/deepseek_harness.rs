@@ -206,6 +206,7 @@ impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for DeepSeekHarnessJsonlAdapter
         let binding = decode_binding(leaf)?;
         Ok(Some(Box::new(DeepSeekHarnessSemanticExecutor::<R>::new(
             leaf.source().clone(),
+            self.source_anchor_scope,
             leaf.source_path().to_path_buf(),
             binding,
             encoding_for_path(leaf.source_path()),
@@ -216,6 +217,7 @@ impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for DeepSeekHarnessJsonlAdapter
 
 struct DeepSeekHarnessSemanticExecutor<R> {
     source: SourceKey,
+    source_anchor_scope: SourceAnchorScope,
     source_selector: PathBuf,
     binding: SessionHeader,
     encoding: JsonlPhysicalEncoding,
@@ -237,9 +239,10 @@ struct FrameProjection {
     represented: bool,
 }
 
-impl<R: JsonlProviderRuntime> DeepSeekHarnessSemanticExecutor<R> {
+impl<R> DeepSeekHarnessSemanticExecutor<R> {
     fn new(
         source: SourceKey,
+        source_anchor_scope: SourceAnchorScope,
         source_selector: PathBuf,
         binding: SessionHeader,
         encoding: JsonlPhysicalEncoding,
@@ -249,6 +252,7 @@ impl<R: JsonlProviderRuntime> DeepSeekHarnessSemanticExecutor<R> {
         let agent_scope = Some(agent_scope(&binding));
         Ok(Self {
             source,
+            source_anchor_scope,
             source_selector,
             binding,
             encoding,
@@ -414,8 +418,10 @@ impl<R: JsonlProviderRuntime> DeepSeekHarnessSemanticExecutor<R> {
         record.role = Some(event.role.as_str().to_owned());
         record.agent_scope = self.agent_scope;
         if let Some(parent) = self.binding.parent_session.as_deref() {
-            record.parent_session_id =
-                Some(session_identity(&self.source, parent).map_err(contract)?);
+            record.parent_session_id = Some(session_identity_for_native(
+                parent,
+                self.source_anchor_scope,
+            )?);
         }
         if let Some(reason) = event.content_omission_reason {
             record.content.policy_status = CoreContentPolicyStatus::Omitted {
@@ -674,6 +680,153 @@ fn decode_binding(leaf: &JsonlFamilyLeaf) -> Result<SessionHeader> {
     serde_json::from_slice(bytes).map_err(Into::into)
 }
 
+fn session_identity_for_native(
+    native_session_id: &str,
+    source_anchor_scope: SourceAnchorScope,
+) -> Result<StableEntityId> {
+    let source = source_key_scoped(
+        EXPLICIT_SOURCE_FORMAT,
+        native_session_id,
+        source_anchor_scope,
+    )
+    .map_err(contract)?;
+    session_identity(&source, native_session_id).map_err(contract)
+}
+
 fn contract(error: impl std::fmt::Display) -> CaptureError {
     CaptureError::InvalidPayload(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PARENT_NATIVE_ID: &str = "11111111-2222-4333-8444-555555555555";
+    const CHILD_NATIVE_ID: &str = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+
+    fn session_header(native_session_id: &str, parent_session: Option<&str>) -> SessionHeader {
+        let mut header = serde_json::json!({
+            "type": "session",
+            "version": 0,
+            "id": native_session_id,
+            "createdAt": 1,
+            "delegationDepth": u64::from(parent_session.is_some()),
+        });
+        if let Some(parent_session) = parent_session {
+            header["parentSession"] = Value::String(parent_session.to_owned());
+            header["origin"] = Value::String("subagent".to_owned());
+        }
+        let encoded = serde_json::to_vec(&header).unwrap();
+        let ParsedRow::Header(header) = parse_row(&encoded).unwrap() else {
+            panic!("test session row did not parse as a header");
+        };
+        header
+    }
+
+    fn semantic_event(native_session_id: &str) -> SemanticEvent {
+        let encoded = serde_json::to_vec(&serde_json::json!({
+            "type": "user/message",
+            "seq": 0,
+            "time": 2,
+            "data": {
+                "content": [{"type": "text", "text": native_session_id}],
+                "source": {"kind": "user"},
+                "role": "user",
+                "id": format!("{native_session_id}-event"),
+            },
+        }))
+        .unwrap();
+        let ParsedRow::Semantic(event) = parse_row(&encoded).unwrap() else {
+            panic!("test event row did not parse as a semantic event");
+        };
+        event
+    }
+
+    fn project_session(
+        native_session_id: &str,
+        parent_session: Option<&str>,
+        source_anchor_scope: SourceAnchorScope,
+        source_root: &Path,
+    ) -> CoreRecord {
+        let source = source_key_scoped(
+            EXPLICIT_SOURCE_FORMAT,
+            native_session_id,
+            source_anchor_scope,
+        )
+        .unwrap();
+        DeepSeekHarnessSemanticExecutor::<()>::new(
+            source,
+            source_anchor_scope,
+            source_root.join(native_session_id).join("session.jsonl"),
+            session_header(native_session_id, parent_session),
+            JsonlPhysicalEncoding::RawJsonl,
+            0,
+        )
+        .unwrap()
+        .project_event(semantic_event(native_session_id))
+        .unwrap()
+        .unwrap()
+    }
+
+    fn project_pair(
+        source_anchor_scope: SourceAnchorScope,
+        source_root: &Path,
+    ) -> (CoreRecord, CoreRecord) {
+        (
+            project_session(PARENT_NATIVE_ID, None, source_anchor_scope, source_root),
+            project_session(
+                CHILD_NATIVE_ID,
+                Some(PARENT_NATIVE_ID),
+                source_anchor_scope,
+                source_root,
+            ),
+        )
+    }
+
+    #[test]
+    fn scoped_parent_child_projection_is_distinct_and_coherent_across_lineages() {
+        let first = project_pair(SourceAnchorScope::Lineage([1; 32]), Path::new("first-root"));
+        let second = project_pair(
+            SourceAnchorScope::Lineage([2; 32]),
+            Path::new("second-root"),
+        );
+
+        assert_eq!(first.0.parent_session_id, None);
+        assert_eq!(first.1.parent_session_id, Some(first.0.session_id));
+        assert_eq!(second.0.parent_session_id, None);
+        assert_eq!(second.1.parent_session_id, Some(second.0.session_id));
+        assert_ne!(first.0.session_id, second.0.session_id);
+        assert_ne!(first.1.session_id, second.1.session_id);
+        assert_ne!(
+            first.1.parent_session_id,
+            Some(session_identity(&first.1.source, PARENT_NATIVE_ID).unwrap())
+        );
+    }
+
+    #[test]
+    fn unqualified_projection_preserves_released_and_path_independent_identity() {
+        let original = project_pair(SourceAnchorScope::Unqualified, Path::new("original-root"));
+        let relocated = project_pair(SourceAnchorScope::Unqualified, Path::new("relocated-root"));
+        let released_parent_source =
+            ctx_history_native_jsonl_parsers::deepseek_harness::source_key(
+                EXPLICIT_SOURCE_FORMAT,
+                PARENT_NATIVE_ID,
+            )
+            .unwrap();
+        let released_parent_session_id =
+            session_identity(&released_parent_source, PARENT_NATIVE_ID).unwrap();
+
+        assert!(original
+            .0
+            .source
+            .exact_descriptor_eq(&released_parent_source));
+        assert_eq!(original.0.session_id, released_parent_session_id);
+        assert_eq!(
+            original.1.parent_session_id,
+            Some(released_parent_session_id)
+        );
+        assert_eq!(relocated.0.session_id, original.0.session_id);
+        assert_eq!(relocated.1.session_id, original.1.session_id);
+        assert_eq!(relocated.1.parent_session_id, original.1.parent_session_id);
+    }
 }
