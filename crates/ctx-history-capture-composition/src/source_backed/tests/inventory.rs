@@ -812,18 +812,28 @@ fn automatic_builder_executes_typed_warp_crush_and_lingma_authorities() {
     );
     missing_mux.exists = false;
     missing_mux.status = ProviderSourceStatus::Missing;
+    let mut warp_source = fixture_provider_source_at(
+        CaptureProvider::Warp,
+        "warp_sqlite",
+        ProviderImportSupport::Native,
+        &warp,
+    );
+    warp_source.route_provenance = ProviderSourceRouteProvenance::Automatic {
+        route_role: ProviderRouteRole::from_dynamic([
+            b"installed-surface".as_slice(),
+            b"linux".as_slice(),
+            b"stable".as_slice(),
+            b"gui".as_slice(),
+        ])
+        .unwrap(),
+    };
     let sources = vec![
         fixture_provider_source(
             CaptureProvider::Gemini,
             GEMINI_CLI_SOURCE_FORMAT,
             ProviderImportSupport::Native,
         ),
-        fixture_provider_source_at(
-            CaptureProvider::Warp,
-            "warp_sqlite",
-            ProviderImportSupport::Native,
-            &warp,
-        ),
+        warp_source,
         fixture_provider_source_at(
             CaptureProvider::Goose,
             "goose_sessions_sqlite",
