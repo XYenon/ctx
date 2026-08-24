@@ -29,6 +29,7 @@ fn root_scope_composes_once_with_hermes_profile_and_session_lineage() {
         catalog_support: ProviderCatalogSupport::None,
         status: crate::ProviderSourceStatus::Available,
         unsupported_reason: None,
+        route_provenance: Default::default(),
     };
     let released = SourceKey::derive_provider_native(
         CaptureProvider::Hermes.as_str(),
