@@ -244,4 +244,38 @@ impl<B: ProviderRuntimeBinding> JsonlFamilyProjector for CodexPromptHistoryProje
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    #[test]
+    fn named_root_lineage_remains_the_root_singleton_catalog_anchor() {
+        let root_lineage = [0x5a; 32];
+        let source = CodexPromptHistorySourceBackedInputV0::explicit(
+            "/old/codex/history.jsonl",
+            root_lineage,
+        )
+        .source_key()
+        .unwrap();
+        let moved = CodexPromptHistorySourceBackedInputV0::explicit(
+            "/new/codex/history.jsonl",
+            root_lineage,
+        )
+        .source_key()
+        .unwrap();
+        let released = SourceKey::derive(
+            CaptureProvider::Codex.as_str(),
+            SOURCE_FORMAT,
+            SOURCE_SCHEMA_VARIANT,
+            SOURCE_IDENTITY_VERSION,
+            SourceAnchor::CatalogLineage(root_lineage),
+        )
+        .unwrap();
+
+        assert_eq!(source.anchor(), &SourceAnchor::CatalogLineage(root_lineage));
+        assert!(source.exact_descriptor_eq(&moved));
+        assert_eq!(
+            source.identity().encode_canonical().unwrap(),
+            released.identity().encode_canonical().unwrap()
+        );
+    }
+}

@@ -13,7 +13,8 @@ use ctx_history_core::{
     derive_event_id, derive_native_session_id, ActivityInvocation, ActivityJsonCapture,
     ActivityResult, ActivityTextCapture, AgentScope, CaptureProvider, CoreActivity, CoreRecord,
     CoreRecordAnnotation, EventIdentityInput, LiteralFactKind, NativeItemKey, ProviderDeclaredFact,
-    ProviderNativeSessionRelationship, SourceKey, StableEntityId, TypedKey, CORE_ACTIVITY_REVISION,
+    ProviderNativeSessionRelationship, SourceAnchorScope, SourceKey, StableEntityId, TypedKey,
+    CORE_ACTIVITY_REVISION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -843,21 +844,16 @@ fn session_typed_key(key: &ClaudeSessionKey) -> Result<TypedKey> {
 }
 
 fn source_key(source_root_lineage: Option<[u8; 32]>, key: &ClaudeSessionKey) -> Result<SourceKey> {
-    let native_key = match source_root_lineage {
-        Some(source_root_lineage) => TypedKey::composite(vec![
-            TypedKey::bytes(source_root_lineage.to_vec()).map_err(contract)?,
-            session_typed_key(key)?,
-        ])
-        .map_err(contract)?,
-        None => session_typed_key(key)?,
-    };
-    SourceKey::derive_provider_native(
+    let scope =
+        source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage);
+    SourceKey::derive_provider_native_scoped(
         CaptureProvider::Claude.as_str(),
         CLAUDE_PROJECTS_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         1,
         SOURCE_ANCHOR_NAMESPACE,
-        native_key,
+        session_typed_key(key)?,
+        scope,
     )
     .map_err(contract)
 }
