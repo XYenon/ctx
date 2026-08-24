@@ -144,14 +144,20 @@ pub(crate) struct GeminiBorrowedRecordParser {
 
 pub(crate) struct GeminiBorrowedRecordProjection {
     pub(crate) events: Vec<GeminiRetainedEvent>,
-    pub(crate) rejection_reason: Option<String>,
+    pub(crate) rejection: Option<(GeminiRecordRejectionKind, String)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum GeminiRecordRejectionKind {
+    Malformed,
+    Unsupported,
 }
 
 impl GeminiBorrowedRecordProjection {
     fn events(events: Vec<GeminiRetainedEvent>) -> Self {
         Self {
             events,
-            rejection_reason: None,
+            rejection: None,
         }
     }
 
@@ -159,10 +165,10 @@ impl GeminiBorrowedRecordProjection {
         Self::events(Vec::new())
     }
 
-    fn rejected(reason: impl Into<String>) -> Self {
+    fn rejected(kind: GeminiRecordRejectionKind, reason: impl Into<String>) -> Self {
         Self {
             events: Vec::new(),
-            rejection_reason: Some(reason.into()),
+            rejection: Some((kind, reason.into())),
         }
     }
 }
@@ -198,9 +204,18 @@ impl GeminiBorrowedRecordParser {
         let probe = match serde_json::from_slice::<GeminiRecordProbe>(payload) {
             Ok(probe) => probe,
             Err(error) => {
-                return Ok(GeminiBorrowedRecordProjection::rejected(format!(
-                    "malformed Gemini JSONL: {error}"
-                )))
+                let kind = match error.classify() {
+                    serde_json::error::Category::Syntax | serde_json::error::Category::Eof => {
+                        GeminiRecordRejectionKind::Malformed
+                    }
+                    serde_json::error::Category::Data | serde_json::error::Category::Io => {
+                        GeminiRecordRejectionKind::Unsupported
+                    }
+                };
+                return Ok(GeminiBorrowedRecordProjection::rejected(
+                    kind,
+                    format!("Gemini JSONL record could not be decoded: {error}"),
+                ));
             }
         };
         let class = probe.classify();
@@ -251,7 +266,12 @@ impl GeminiBorrowedRecordParser {
             GeminiRecordClass::Result => {
                 let decoded = match decode_result_record(payload, raw_ordinal, source_record) {
                     Ok(decoded) => decoded,
-                    Err(reason) => return Ok(GeminiBorrowedRecordProjection::rejected(reason)),
+                    Err(reason) => {
+                        return Ok(GeminiBorrowedRecordProjection::rejected(
+                            GeminiRecordRejectionKind::Unsupported,
+                            reason,
+                        ))
+                    }
                 };
                 if decoded
                     .events
@@ -259,6 +279,7 @@ impl GeminiBorrowedRecordParser {
                     .any(|(_, bytes)| *bytes > MAX_GEMINI_SINGLE_RECORD_PAGE_BYTES)
                 {
                     return Ok(GeminiBorrowedRecordProjection::rejected(
+                        GeminiRecordRejectionKind::Unsupported,
                         "Gemini result record exceeds the bounded event size",
                     ));
                 }
@@ -272,17 +293,26 @@ impl GeminiBorrowedRecordParser {
                     match decode_retained_event(payload, class, raw_ordinal, source_record) {
                         Ok(decoded) => decoded,
                         Err(GeminiDecodingError::Invalid(reason)) => {
-                            return Ok(GeminiBorrowedRecordProjection::rejected(reason));
+                            return Ok(GeminiBorrowedRecordProjection::rejected(
+                                GeminiRecordRejectionKind::Unsupported,
+                                reason,
+                            ));
                         }
                     };
                 let mut events = Vec::with_capacity(decoded.len());
                 for decoded in decoded {
                     let event_bytes = match retained_event_bytes(&decoded) {
                         Ok(event_bytes) => event_bytes,
-                        Err(reason) => return Ok(GeminiBorrowedRecordProjection::rejected(reason)),
+                        Err(reason) => {
+                            return Ok(GeminiBorrowedRecordProjection::rejected(
+                                GeminiRecordRejectionKind::Unsupported,
+                                reason,
+                            ))
+                        }
                     };
                     if event_bytes > MAX_GEMINI_SINGLE_RECORD_PAGE_BYTES {
                         return Ok(GeminiBorrowedRecordProjection::rejected(
+                            GeminiRecordRejectionKind::Unsupported,
                             "Gemini record exceeds the bounded event size",
                         ));
                     }

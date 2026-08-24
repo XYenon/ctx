@@ -15,10 +15,23 @@ pub(crate) enum CursorRejectionKind {
     UnsupportedShape,
 }
 
+impl CursorRejectionKind {
+    fn from_json_error(error: &serde_json::Error) -> Self {
+        match error.classify() {
+            serde_json::error::Category::Syntax | serde_json::error::Category::Eof => {
+                Self::MalformedJson
+            }
+            serde_json::error::Category::Data | serde_json::error::Category::Io => {
+                Self::UnsupportedShape
+            }
+        }
+    }
+}
+
 pub(super) enum CursorJsonlRecordOutcome {
     Events(Vec<super::projection::CursorNativeEvent>),
     Ignored,
-    Rejected(String),
+    Rejected(CursorRejectionKind, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +108,7 @@ pub(super) fn project_cursor_jsonl_record(
             byte_end_exclusive,
         )? {
             CursorJsonlRecordOutcome::Events(events) => Some(events),
-            CursorJsonlRecordOutcome::Ignored | CursorJsonlRecordOutcome::Rejected(_) => None,
+            CursorJsonlRecordOutcome::Ignored | CursorJsonlRecordOutcome::Rejected(_, _) => None,
         },
     )
 }
@@ -112,10 +125,16 @@ pub(super) fn project_cursor_jsonl_record_with_rejection(
     }
     let classification = match classify_cursor_line(bytes) {
         Ok(classification) => classification,
-        Err(CursorRejectionKind::UnsupportedShape) => return Ok(CursorJsonlRecordOutcome::Ignored),
+        Err(CursorRejectionKind::UnsupportedShape) => {
+            return Ok(CursorJsonlRecordOutcome::Rejected(
+                CursorRejectionKind::UnsupportedShape,
+                "Cursor record has a well-formed but unsupported shape".to_owned(),
+            ))
+        }
         Err(CursorRejectionKind::MalformedJson) => {
             return Ok(CursorJsonlRecordOutcome::Rejected(
-                "Cursor record is malformed JSON or repeats a critical selector".to_owned(),
+                CursorRejectionKind::MalformedJson,
+                "Cursor record is malformed JSON".to_owned(),
             ))
         }
     };
@@ -129,9 +148,10 @@ pub(super) fn project_cursor_jsonl_record_with_rejection(
     ) {
         Ok(record) => record,
         Err(error) => {
-            return Ok(CursorJsonlRecordOutcome::Rejected(format!(
-                "Cursor record could not be decoded safely: {error}"
-            )))
+            return Ok(CursorJsonlRecordOutcome::Rejected(
+                CursorRejectionKind::from_json_error(&error),
+                format!("Cursor record could not be decoded safely: {error}"),
+            ))
         }
     };
     Ok(CursorJsonlRecordOutcome::Events(
@@ -683,7 +703,26 @@ fn cursor_literal_kind_for_key(key: &str) -> Option<ctx_history_core::LiteralFac
 
 #[cfg(test)]
 mod tests {
-    use super::project_cursor_jsonl_record;
+    use super::{
+        project_cursor_jsonl_record, project_cursor_jsonl_record_with_rejection,
+        CursorJsonlRecordOutcome, CursorRejectionKind,
+    };
+
+    #[test]
+    fn cursor_distinguishes_malformed_json_from_unsupported_shapes() {
+        for (record, expected) in [
+            (b"{".as_slice(), CursorRejectionKind::MalformedJson),
+            (b"[]".as_slice(), CursorRejectionKind::UnsupportedShape),
+        ] {
+            let outcome =
+                project_cursor_jsonl_record_with_rejection(record, 0, 0, 0, record.len() as u64)
+                    .unwrap();
+            assert!(matches!(
+                outcome,
+                CursorJsonlRecordOutcome::Rejected(kind, _) if kind == expected
+            ));
+        }
+    }
 
     fn assert_rejected(label: &str, record: &[u8]) {
         assert!(

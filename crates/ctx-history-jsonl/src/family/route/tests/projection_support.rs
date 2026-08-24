@@ -146,9 +146,7 @@ pub(super) struct RecordRejectionTestAdapter;
 
 pub(super) struct RecordRejectionTestProjector {
     source: SourceKey,
-    source_selector: String,
-    rejected_records: u64,
-    record_rejections: SourceBackedRecordRejectionDrafts,
+    rejections: JsonlRecordRejections,
 }
 
 impl JsonlFamilyAdapter for RecordRejectionTestAdapter {
@@ -190,9 +188,11 @@ impl JsonlFamilyAdapter for RecordRejectionTestAdapter {
     ) -> Result<Box<JsonlFamilyProjectorObject>> {
         Ok(Box::new(RecordRejectionTestProjector {
             source: leaf.source().clone(),
-            source_selector: leaf.source_path().display().to_string(),
-            rejected_records: 0,
-            record_rejections: SourceBackedRecordRejectionDrafts::default(),
+            rejections: JsonlRecordRejections::new(
+                leaf.source().clone(),
+                CaptureProvider::Pi,
+                leaf.source_path().display().to_string(),
+            ),
         }))
     }
 }
@@ -217,22 +217,7 @@ impl JsonlFamilyProjector for RecordRejectionTestProjector {
                 .map(|error| format!("malformed test JSONL: {error}"))
         };
         if let Some(detail) = detail {
-            self.rejected_records =
-                self.rejected_records
-                    .checked_add(1)
-                    .ok_or(CaptureError::SystemInvariant(
-                        "test record rejection count overflowed",
-                    ))?;
-            self.record_rejections
-                .record(SourceBackedRecordRejectionDraft {
-                    source: self.source.clone(),
-                    provider: CaptureProvider::Pi,
-                    source_selector: self.source_selector.clone(),
-                    line_number: record.evidence().physical_ordinal().saturating_add(1),
-                    payload_type: None,
-                    class: SourceBackedRecordRejectionClass::MalformedRecord,
-                    detail,
-                });
+            self.rejections.malformed(record, detail);
             return Ok(());
         }
         emit(emission_test_record(
@@ -242,11 +227,11 @@ impl JsonlFamilyProjector for RecordRejectionTestProjector {
     }
 
     fn rejected_records(&self) -> u64 {
-        self.rejected_records
+        self.rejections.count()
     }
 
     fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
-        std::mem::take(&mut self.record_rejections)
+        self.rejections.take_drafts()
     }
 }
 

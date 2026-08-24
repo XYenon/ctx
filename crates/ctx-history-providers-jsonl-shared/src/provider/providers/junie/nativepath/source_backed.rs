@@ -24,7 +24,8 @@ use crate::{
         family::jsonl::{
             JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyWorkerContext,
-            JsonlOversizedRecordPolicy, JsonlRecordRef,
+            JsonlOversizedRecordPolicy, JsonlRecordRef, JsonlRecordRejections,
+            SourceBackedRecordRejectionDrafts,
         },
         FallbackEventIdentityState,
     },
@@ -204,6 +205,11 @@ impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for JunieJsonlAdapter<R> {
             workspace,
             projection,
             fallback_identities,
+            rejections: JsonlRecordRejections::new(
+                leaf.source().clone(),
+                CaptureProvider::Junie,
+                leaf.source_path().display().to_string(),
+            ),
         }))
     }
 }
@@ -214,6 +220,7 @@ struct JunieProjector<R: JsonlProviderRuntime> {
     workspace: Option<String>,
     projection: JunieProjection,
     fallback_identities: FallbackEventIdentityState<R>,
+    rejections: JsonlRecordRejections,
 }
 
 impl<R: JsonlProviderRuntime> JsonlFamilyProjector for JunieProjector<R> {
@@ -225,7 +232,19 @@ impl<R: JsonlProviderRuntime> JsonlFamilyProjector for JunieProjector<R> {
         _worker: &mut JsonlFamilyWorkerContext<R>,
         emit: &mut dyn FnMut(CoreRecord) -> Result<()>,
     ) -> Result<()> {
+        let rejected_before = self.projection.rejected_records();
         let rows = self.projection.project(record)?;
+        let rejected_after = self.projection.rejected_records();
+        debug_assert!(
+            rejected_after == rejected_before
+                || rejected_after == rejected_before.saturating_add(1)
+        );
+        if rejected_after > rejected_before {
+            self.rejections.malformed(
+                record,
+                "Junie record could not be projected within its structural bounds",
+            );
+        }
         self.emit_rows(rows, emit)
     }
 
@@ -240,7 +259,11 @@ impl<R: JsonlProviderRuntime> JsonlFamilyProjector for JunieProjector<R> {
     }
 
     fn rejected_records(&self) -> u64 {
-        self.projection.rejected_records()
+        self.rejections.count()
+    }
+
+    fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
+        self.rejections.take_drafts()
     }
 }
 

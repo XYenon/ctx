@@ -30,14 +30,14 @@ use super::{
     layout::CursorTranscriptPath,
     parser::{
         project_cursor_jsonl_record, project_cursor_jsonl_record_with_rejection,
-        CursorJsonlRecordOutcome,
+        CursorJsonlRecordOutcome, CursorRejectionKind,
     },
     projection::{CursorEventBody, CursorNativeEvent},
 };
 use crate::CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT;
 use ctx_history_jsonl::{
     fit_jsonl_activity, selected_content_fits, JsonlActivityObservedBytes, JsonlFamilyAdapter,
-    JsonlOversizedRecordPolicy, SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDraft,
+    JsonlOversizedRecordPolicy, JsonlRecordRejections, SourceBackedRecordRejectionClass,
     SourceBackedRecordRejectionDrafts,
 };
 use ctx_history_provider_runtime::{
@@ -274,7 +274,6 @@ where
         let session_id = session_id(leaf.source(), &binding.native_session_id)?;
         Ok(Box::new(CursorProjector {
             source: leaf.source().clone(),
-            source_selector: leaf.source_path().display().to_string(),
             native_session_id: binding.native_session_id,
             session_id,
             event_identities: match (mode, base_event_lookup) {
@@ -283,42 +282,33 @@ where
                 }
                 _ => JsonlOrderedAppendOccurrenceState::default(),
             },
-            rejected_records: 0,
-            record_rejections: SourceBackedRecordRejectionDrafts::default(),
+            rejections: JsonlRecordRejections::new(
+                leaf.source().clone(),
+                CaptureProvider::Cursor,
+                leaf.source_path().display().to_string(),
+            ),
         }))
     }
 }
 
 struct CursorProjector<B: ProviderRuntimeBinding> {
     source: SourceKey,
-    source_selector: String,
     native_session_id: String,
     session_id: StableEntityId,
     event_identities:
         JsonlOrderedAppendOccurrenceState<CursorLogicalEventIdentity, ProviderBaseEventLookup<B>>,
-    rejected_records: u64,
-    record_rejections: SourceBackedRecordRejectionDrafts,
+    rejections: JsonlRecordRejections,
 }
 
 impl<B: ProviderRuntimeBinding> CursorProjector<B> {
-    fn reject(&mut self, record: JsonlRecordRef<'_>, detail: String) -> Result<()> {
-        self.rejected_records =
-            self.rejected_records
-                .checked_add(1)
-                .ok_or(CaptureError::SystemInvariant(
-                    "Cursor record rejection count overflowed",
-                ))?;
-        self.record_rejections
-            .record(SourceBackedRecordRejectionDraft {
-                source: self.source.clone(),
-                provider: CaptureProvider::Cursor,
-                source_selector: self.source_selector.clone(),
-                line_number: record.evidence().physical_ordinal().saturating_add(1),
-                payload_type: None,
-                class: SourceBackedRecordRejectionClass::MalformedRecord,
-                detail,
-            });
-        Ok(())
+    fn reject(&mut self, record: JsonlRecordRef<'_>, kind: CursorRejectionKind, detail: String) {
+        let class = match kind {
+            CursorRejectionKind::MalformedJson => SourceBackedRecordRejectionClass::MalformedRecord,
+            CursorRejectionKind::UnsupportedShape => {
+                SourceBackedRecordRejectionClass::UnsupportedRecord
+            }
+        };
+        self.rejections.record(record, class, detail);
     }
 }
 
@@ -371,10 +361,12 @@ where
         #[cfg(any(test, feature = "test-support"))]
         observe_cursor_projected_record(&self.source);
         if record.oversized() {
-            return self.reject(
+            self.reject(
                 record,
+                CursorRejectionKind::MalformedJson,
                 format!("Cursor record exceeds the {MAX_PROVIDER_JSONL_LINE_BYTES} byte limit"),
             );
+            return Ok(());
         }
         let evidence = record.evidence();
         let events = match project_cursor_jsonl_record_with_rejection(
@@ -386,7 +378,10 @@ where
         )? {
             CursorJsonlRecordOutcome::Events(events) => events,
             CursorJsonlRecordOutcome::Ignored => return Ok(()),
-            CursorJsonlRecordOutcome::Rejected(detail) => return self.reject(record, detail),
+            CursorJsonlRecordOutcome::Rejected(kind, detail) => {
+                self.reject(record, kind, detail);
+                return Ok(());
+            }
         };
         for event in events {
             let duplicate_occurrence = next_event_occurrence::<B>(
@@ -419,11 +414,11 @@ where
     }
 
     fn rejected_records(&self) -> u64 {
-        self.rejected_records
+        self.rejections.count()
     }
 
     fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
-        std::mem::take(&mut self.record_rejections)
+        self.rejections.take_drafts()
     }
 }
 

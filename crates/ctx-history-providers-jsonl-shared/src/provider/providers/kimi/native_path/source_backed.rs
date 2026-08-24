@@ -37,8 +37,8 @@ use crate::{
         family::jsonl::{
             JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyWorkerContext,
-            JsonlOversizedRecordPolicy, JsonlRecordRef, SourceBackedRecordRejectionClass,
-            SourceBackedRecordRejectionDraft, SourceBackedRecordRejectionDrafts,
+            JsonlOversizedRecordPolicy, JsonlRecordRef, JsonlRecordRejections,
+            SourceBackedRecordRejectionDrafts,
         },
         FallbackEventIdentityState,
     },
@@ -264,52 +264,30 @@ impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for KimiJsonlAdapter<R> {
         .map_err(capture_error)?;
         Ok(Box::new(KimiProjector::<R> {
             compound,
-            source_selector: leaf.source_path().display().to_string(),
             session_id,
             fallback_timestamp,
             authority: Arc::clone(leaf.authority()),
             state,
             index,
             fallback_identities,
-            rejected_records: 0,
-            record_rejections: SourceBackedRecordRejectionDrafts::default(),
+            rejections: JsonlRecordRejections::new(
+                leaf.source().clone(),
+                CaptureProvider::KimiCodeCli,
+                leaf.source_path().display().to_string(),
+            ),
         }))
     }
 }
 
 struct KimiProjector<R: JsonlProviderRuntime> {
     compound: KimiCompoundObservation,
-    source_selector: String,
     session_id: StableEntityId,
     fallback_timestamp: DateTime<Utc>,
     authority: Arc<ProviderSourceRoot>,
     state: Option<OpenedProviderSourceFile>,
     index: Option<OpenedProviderSourceFile>,
     fallback_identities: FallbackEventIdentityState<R>,
-    rejected_records: u64,
-    record_rejections: SourceBackedRecordRejectionDrafts,
-}
-
-impl<R: JsonlProviderRuntime> KimiProjector<R> {
-    fn reject(&mut self, record: JsonlRecordRef<'_>, detail: String) -> crate::Result<()> {
-        self.rejected_records =
-            self.rejected_records
-                .checked_add(1)
-                .ok_or(CaptureError::SystemInvariant(
-                    "Kimi record rejection count overflowed",
-                ))?;
-        self.record_rejections
-            .record(SourceBackedRecordRejectionDraft {
-                source: self.compound.source.clone(),
-                provider: CaptureProvider::KimiCodeCli,
-                source_selector: self.source_selector.clone(),
-                line_number: record.evidence().physical_ordinal().saturating_add(1),
-                payload_type: None,
-                class: SourceBackedRecordRejectionClass::MalformedRecord,
-                detail,
-            });
-        Ok(())
-    }
+    rejections: JsonlRecordRejections,
 }
 
 impl<R: JsonlProviderRuntime> JsonlFamilyProjector for KimiProjector<R> {
@@ -322,21 +300,26 @@ impl<R: JsonlProviderRuntime> JsonlFamilyProjector for KimiProjector<R> {
         emit: &mut dyn FnMut(CoreRecord) -> crate::Result<()>,
     ) -> crate::Result<()> {
         let bytes = record.bytes();
-        if bytes.iter().all(u8::is_ascii_whitespace) {
-            return Ok(());
-        }
         if record.oversized() {
-            return self.reject(
+            self.rejections.malformed(
                 record,
                 format!(
                     "Kimi record exceeds the {} byte limit",
                     crate::MAX_PROVIDER_JSONL_LINE_BYTES
                 ),
             );
+            return Ok(());
+        }
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(());
         }
         let value = match serde_json::from_slice::<Value>(bytes) {
             Ok(value) => value,
-            Err(error) => return self.reject(record, format!("malformed Kimi JSONL: {error}")),
+            Err(error) => {
+                self.rejections
+                    .malformed(record, format!("malformed Kimi JSONL: {error}"));
+                return Ok(());
+            }
         };
         if value.get("type").and_then(Value::as_str) == Some("metadata") {
             return Ok(());
@@ -370,11 +353,11 @@ impl<R: JsonlProviderRuntime> JsonlFamilyProjector for KimiProjector<R> {
     }
 
     fn rejected_records(&self) -> u64 {
-        self.rejected_records
+        self.rejections.count()
     }
 
     fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
-        std::mem::take(&mut self.record_rejections)
+        self.rejections.take_drafts()
     }
 }
 

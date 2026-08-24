@@ -22,7 +22,9 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::{
-    provider_sources::SqliteSourceAccessError,
+    provider_sources::{
+        SqliteArtifactKind, SqliteCleanupStatus, SqliteFailurePhase, SqliteSourceAccessError,
+    },
     registration::{
         astrbot_scan_route_result, lingma_scan_route_result, AstrBotSourceBackedErrorV0,
         LingmaSourceBackedErrorV0,
@@ -878,10 +880,19 @@ fn warm_busy_source_is_carried_while_changed_exact_sibling_succeeds() {
     provider.reset_run();
     provider.fail_scan(
         busy_path,
-        sqlite_source_route_error(SqliteSourceAccessError::SqliteControl {
-            operation: "querying the busy test provider database",
-            code: rusqlite::ffi::SQLITE_BUSY,
-        }),
+        sqlite_source_route_error(
+            SqliteSourceAccessError::SqliteControl {
+                operation: "querying the busy test provider database",
+                code: rusqlite::ffi::SQLITE_BUSY,
+            }
+            .with_diagnostic(
+                SqliteFailurePhase::Projection,
+                SqliteArtifactKind::ProviderDatabase,
+                0,
+                0,
+                SqliteCleanupStatus::NotRequired,
+            ),
+        ),
     );
 
     let warm = run_provider(&data_root, provider, 4, cold_sources).unwrap();

@@ -46,8 +46,7 @@ use ctx_history_jsonl::{JsonlFamilyExecutionIo, JsonlPhysicalEncoding};
 pub(crate) const TREE_SOURCE_FORMAT: &str = "deepseek_harness_session_jsonl_tree";
 pub(crate) const EXPLICIT_SOURCE_FORMAT: &str = "deepseek_harness_session_jsonl";
 
-const PARSER_REVISION: &str =
-    "deepseek-harness-native-jsonl-v4-selected-core-activity-raw-recovery";
+const PARSER_REVISION: &str = "deepseek-harness-native-jsonl-v3-selected-core-activity";
 const EVENT_IDENTITY_REVISION: &str = "deepseek-harness-sequence-v1";
 
 #[derive(Debug, Clone, Copy)]
@@ -270,14 +269,15 @@ impl<R: JsonlProviderRuntime> DeepSeekHarnessSemanticExecutor<R> {
                     return Err(CaptureError::InvalidPayload(error));
                 }
                 Err(error) if project && (ordinal != 0 || row_index != 0) => {
-                    let span =
-                        rejected_sequence_span(self.encoding, self.expected_sequence, row, &error)?;
-                    let rejected = span.len;
+                    let span = sequence_span(row);
+                    let rejected = span.map_or(1, |span| span.len);
                     let line_number = self
                         .logical_complete_rows
                         .saturating_add(logical_complete_rows)
                         .saturating_add(1);
-                    self.validate_sequence(span)?;
+                    if let Some(span) = span {
+                        self.validate_sequence(span)?;
+                    }
                     logical_complete_rows = checked_add_rows(logical_complete_rows, rejected)?;
                     rejected_rows = checked_add_rows(rejected_rows, rejected)?;
                     self.record_rejections
@@ -515,26 +515,6 @@ fn checked_add_rows(current: u64, additional: u64) -> Result<u64> {
         ))
 }
 
-fn rejected_sequence_span(
-    encoding: JsonlPhysicalEncoding,
-    expected_sequence: u64,
-    row: &[u8],
-    parse_error: &str,
-) -> Result<SequenceSpan> {
-    if let Some(span) = sequence_span(row) {
-        return Ok(span);
-    }
-    if encoding == JsonlPhysicalEncoding::RawJsonl {
-        return Ok(SequenceSpan {
-            first: expected_sequence,
-            len: 1,
-        });
-    }
-    Err(CaptureError::InvalidPayload(format!(
-        "malformed packed DeepSeek Harness row has ambiguous sequence occurrence: {parse_error}"
-    )))
-}
-
 fn visit_frame_rows(
     bytes: &[u8],
     encoding: JsonlPhysicalEncoding,
@@ -677,32 +657,4 @@ fn decode_binding(leaf: &JsonlFamilyLeaf) -> Result<SessionHeader> {
 
 fn contract(error: impl std::fmt::Display) -> CaptureError {
     CaptureError::InvalidPayload(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn raw_malformed_row_has_one_provable_sequence_occurrence() {
-        let span =
-            rejected_sequence_span(JsonlPhysicalEncoding::RawJsonl, 7, b"{", "malformed JSON")
-                .unwrap();
-
-        assert_eq!(span.first, 7);
-        assert_eq!(span.len, 1);
-    }
-
-    #[test]
-    fn packed_malformed_row_without_sequence_is_source_fatal() {
-        let error = rejected_sequence_span(
-            JsonlPhysicalEncoding::ChecksummedZstdFrames,
-            7,
-            b"{",
-            "malformed JSON",
-        )
-        .unwrap_err();
-
-        assert!(matches!(error, CaptureError::InvalidPayload(_)));
-    }
 }

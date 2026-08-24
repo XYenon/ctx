@@ -706,7 +706,7 @@ pub(crate) fn sqlite_source_route_error_kind(
         SourceBackedRouteErrorKind::Unavailable
     } else if error.is_systemic_resource_failure() {
         SourceBackedRouteErrorKind::ResourceUnavailable
-    } else if error.is_busy_or_locked() {
+    } else if sqlite_provider_artifact_is_busy_or_locked(error) {
         SourceBackedRouteErrorKind::Unavailable
     } else if error.is_ctx_owned_corruption() {
         SourceBackedRouteErrorKind::Internal
@@ -717,6 +717,20 @@ pub(crate) fn sqlite_source_route_error_kind(
     } else {
         SourceBackedRouteErrorKind::InvalidSource
     }
+}
+
+fn sqlite_provider_artifact_is_busy_or_locked(
+    error: &crate::provider_sources::SqliteSourceAccessError,
+) -> bool {
+    error.is_busy_or_locked()
+        && error.diagnostic().is_some_and(|diagnostic| {
+            matches!(
+                diagnostic.artifact,
+                crate::provider_sources::SqliteArtifactKind::ProviderDatabase
+                    | crate::provider_sources::SqliteArtifactKind::ProviderWal
+                    | crate::provider_sources::SqliteArtifactKind::ProviderSharedMemory
+            )
+        })
 }
 
 pub(crate) fn sqlite_capture_route_error(
@@ -733,9 +747,6 @@ pub(crate) fn sqlite_capture_route_error(
             if crate::provider_sources::rusqlite_resource_failure(error) =>
         {
             Some(SourceBackedRouteErrorKind::ResourceUnavailable)
-        }
-        CaptureError::Sqlite(error) if crate::provider_sources::rusqlite_busy_or_locked(error) => {
-            Some(SourceBackedRouteErrorKind::Unavailable)
         }
         CaptureError::Io(_) | CaptureError::SystemIo { .. } | CaptureError::Sqlite(_) => {
             Some(SourceBackedRouteErrorKind::Internal)

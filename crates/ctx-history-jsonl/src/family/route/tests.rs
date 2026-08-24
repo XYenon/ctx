@@ -14,6 +14,7 @@ use super::super::{
     track_jsonl_prefix_hash_bytes, JsonlReader as RuntimeJsonlReader, JsonlRecordRef,
 };
 use super::*;
+use crate::family::JsonlRecordRejections;
 use ctx_history_capture_model::AttemptHistoryProgress;
 use ctx_history_capture_model::SourceRouteIdentity;
 use ctx_history_capture_runtime::{
@@ -23,9 +24,9 @@ use ctx_history_capture_runtime::{
     CorePreparationFailureKind, CorePreparationPort, ImmutableCaptureSnapshot, PresentCaptureRoute,
     SourceBackedGenerationSink as RuntimeSourceBackedGenerationSink,
     SourceBackedLogicalSourceFailures, SourceBackedReconciliationDemand,
-    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDraft,
-    SourceBackedRecordRejectionDrafts, SourceBackedRecordRejections,
-    SourceBackedRevalidationTarget, SourceBackedRouteResources, VerifiedCapture,
+    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDrafts,
+    SourceBackedRecordRejections, SourceBackedRevalidationTarget, SourceBackedRouteResources,
+    VerifiedCapture,
 };
 use ctx_history_core::{
     derive_event_id, derive_session_id, CertifiedSourceAppend, CertifiedSourceDeletion, CoreRecord,

@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use ctx_history_jsonl::{
     observe_opened_file, JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory,
     JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
-    JsonlFileObservation, JsonlOversizedRecordPolicy,
+    JsonlFileObservation,
 };
 use ctx_history_provider_runtime::{
     source_io::{OpenedProviderSourceFile, ProviderSourceRoot},
@@ -42,7 +42,7 @@ const LOGICAL_SESSION_KIND: &str = "mux-session";
 const LOGICAL_EVENT_KIND: &str = "mux-event";
 const SOURCE_SCHEMA_VARIANT: &str = "mux-session-tree-source-backed-v2";
 const PARSER_REVISION: &str =
-    "mux-source-backed-v16-multiplicity-aware-archive-seam-record-rejections";
+    "mux-source-backed-v15-multiplicity-aware-archive-seam-bounded-inventory";
 const EVENT_IDENTITY_REVISION: &str = "mux-content-occurrence-v1";
 const COMPOUND_REVISION_DOMAIN: &[u8] = b"ctx.mux.compound-source.v3\0";
 const PARTIAL_EVENT_SEQUENCE_BASE: u64 = 1_u64 << 62;
@@ -123,10 +123,6 @@ where
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
         JsonlFamilyAppendMode::Replacement
-    }
-
-    fn oversized_record_policy(&self) -> JsonlOversizedRecordPolicy {
-        JsonlOversizedRecordPolicy::RejectRecord
     }
 
     fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory<CaptureError>> {

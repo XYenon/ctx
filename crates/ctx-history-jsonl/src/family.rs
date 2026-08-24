@@ -21,6 +21,7 @@ mod checkpoint;
 mod framing;
 mod identity;
 mod physical;
+mod rejections;
 mod revalidation;
 mod route;
 mod single_file;
@@ -159,6 +160,7 @@ pub use physical::{
     MAX_STANDARD_ZSTD_DECOMPRESSED_BYTES, MAX_STANDARD_ZSTD_PARALLEL_STREAMS,
     MAX_STANDARD_ZSTD_TEMP_BYTES_PER_LEAF,
 };
+pub use rejections::JsonlRecordRejections;
 use revalidation::hash_prefix;
 pub use revalidation::revalidate_frozen_prefix;
 pub(crate) use revalidation::{
