@@ -59,7 +59,7 @@ fn unreadable_leaf_scope_accepts_only_stable_leaf_local_open_failures() {
 }
 
 #[test]
-fn source_claims_reject_cross_disposition_duplicates_and_digest_collisions() {
+fn source_claims_quarantine_exact_duplicates_and_reject_digest_collisions() {
     let key = ClaudeSessionKey {
         root_session_id: "duplicate-session".to_owned(),
         workflow_run_id: None,
@@ -67,11 +67,14 @@ fn source_claims_reject_cross_disposition_duplicates_and_digest_collisions() {
     };
     let source = source_key(None, &key).unwrap();
     let mut claims = HashMap::new();
-    super::claim_claude_source(&mut claims, &source).unwrap();
-    let duplicate = super::claim_claude_source(&mut claims, &source).unwrap_err();
-    assert!(duplicate
-        .to_string()
-        .contains("repeats a native session identity"));
+    assert_eq!(
+        super::claim_claude_source(&mut claims, &source).unwrap(),
+        super::ClaudeSourceClaim::New
+    );
+    assert_eq!(
+        super::claim_claude_source(&mut claims, &source).unwrap(),
+        super::ClaudeSourceClaim::Duplicate
+    );
 
     let other = source_key(
         None,

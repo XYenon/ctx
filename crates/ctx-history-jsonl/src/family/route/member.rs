@@ -70,7 +70,9 @@ impl JsonlFamilyRejectedLeaf {
     /// Binds the exact provider source claimed by this physical member.
     /// Core may also fill this from an exact prior certificate at the same
     /// path. It is retention/retry authority only and never admits rejected
-    /// bytes to the certified inventory.
+    /// bytes to the certified inventory. When several conflicting physical
+    /// members claim one source, every member carries this authority while one
+    /// deterministic member carries the logical-source diagnostic.
     pub fn with_quarantined_source(mut self, source: SourceKey) -> Self {
         self.quarantined_source = Some(source);
         self

@@ -12,7 +12,11 @@ use ctx_history_core::CaptureProvider;
 use ctx_history_index::{VerifiedIndex, WriterOptions};
 
 fn write_session(root: &Path, session: &str, uuid: &str, marker: &str) {
-    let path = root.join("project").join(format!("{session}.jsonl"));
+    write_project_session(root, "project", session, uuid, marker);
+}
+
+fn write_project_session(root: &Path, project: &str, session: &str, uuid: &str, marker: &str) {
+    let path = root.join(project).join(format!("{session}.jsonl"));
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         path,
@@ -26,6 +30,24 @@ fn write_session(root: &Path, session: &str, uuid: &str, marker: &str) {
             + "\n",
     )
     .unwrap();
+}
+
+fn assert_duplicate_source_failure(
+    receipt: &ctx_history_capture_composition::SourceBackedRefreshReceipt,
+    carried_forward: bool,
+) {
+    assert!(receipt.failed_routes.is_empty());
+    assert_eq!(receipt.logical_source_failures.total(), 1);
+    let [failure] = receipt.logical_source_failures.failures() else {
+        panic!("one duplicate Claude source failure expected");
+    };
+    assert_eq!(failure.class, SourceBackedSourceFailureClass::Unreadable);
+    assert_eq!(failure.carried_forward, carried_forward);
+    assert_eq!(failure.source.provider(), CaptureProvider::Claude.as_str());
+    assert!(
+        failure.detail.contains("repeats a native session identity"),
+        "{failure:?}"
+    );
 }
 
 fn registry(root: &Path) -> SourceBackedProviderRegistry {
@@ -143,6 +165,111 @@ fn warm_permission_denied_claude_file_carries_last_good_while_sibling_advances()
     assert_eq!(marker_count(&index, "healthyaftermarker"), 1);
     assert_eq!(marker_count(&index, "fragilebeforemarker"), 0);
     assert_eq!(marker_count(&index, "fragileaftermarker"), 1);
+}
+
+#[test]
+fn cold_duplicate_claude_source_quarantines_only_the_ambiguous_session_and_repairs() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("projects");
+    let index = temp.path().join("index");
+    write_project_session(
+        &root,
+        "project-a",
+        "duplicate",
+        "duplicate-a",
+        "duplicateamarker",
+    );
+    write_project_session(
+        &root,
+        "project-b",
+        "duplicate",
+        "duplicate-b",
+        "duplicatebmarker",
+    );
+    write_project_session(
+        &root,
+        "project-c",
+        "healthy",
+        "healthy-duplicate-peer",
+        "healthyduplicatemarker",
+    );
+
+    let cold = refresh(&root, &index);
+    assert_duplicate_source_failure(&cold, false);
+    assert_eq!(marker_count(&index, "duplicateamarker"), 0);
+    assert_eq!(marker_count(&index, "duplicatebmarker"), 0);
+    assert_eq!(marker_count(&index, "healthyduplicatemarker"), 1);
+
+    fs::remove_file(root.join("project-b/duplicate.jsonl")).unwrap();
+    let repaired = refresh(&root, &index);
+    assert!(repaired.failed_routes.is_empty());
+    assert!(repaired.logical_source_failures.is_empty());
+    assert_eq!(marker_count(&index, "duplicateamarker"), 1);
+    assert_eq!(marker_count(&index, "duplicatebmarker"), 0);
+    assert_eq!(marker_count(&index, "healthyduplicatemarker"), 1);
+}
+
+#[test]
+fn warm_unreadable_duplicate_claude_source_carries_last_good_while_sibling_advances() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("projects");
+    let index = temp.path().join("index");
+    write_project_session(
+        &root,
+        "project-a",
+        "fragile",
+        "fragile-before",
+        "fragileduplicatebeforemarker",
+    );
+    write_project_session(
+        &root,
+        "project-c",
+        "healthy",
+        "healthy-before",
+        "healthyduplicatebeforemarker",
+    );
+    let initial = refresh(&root, &index);
+    assert!(initial.logical_source_failures.is_empty());
+
+    write_project_session(
+        &root,
+        "project-a",
+        "fragile",
+        "fragile-after",
+        "fragileduplicateaftermarker",
+    );
+    write_project_session(
+        &root,
+        "project-b",
+        "fragile",
+        "fragile-unreadable",
+        "mustnotpublishduplicate",
+    );
+    let duplicate = root.join("project-b/fragile.jsonl");
+    set_mode(&duplicate, 0o000);
+    write_project_session(
+        &root,
+        "project-c",
+        "healthy",
+        "healthy-after",
+        "healthyduplicateaftermarker",
+    );
+
+    let quarantined = refresh(&root, &index);
+    assert_duplicate_source_failure(&quarantined, true);
+    assert_eq!(marker_count(&index, "fragileduplicatebeforemarker"), 1);
+    assert_eq!(marker_count(&index, "fragileduplicateaftermarker"), 0);
+    assert_eq!(marker_count(&index, "mustnotpublishduplicate"), 0);
+    assert_eq!(marker_count(&index, "healthyduplicatebeforemarker"), 0);
+    assert_eq!(marker_count(&index, "healthyduplicateaftermarker"), 1);
+
+    fs::remove_file(&duplicate).unwrap();
+    let repaired = refresh(&root, &index);
+    assert!(repaired.failed_routes.is_empty());
+    assert!(repaired.logical_source_failures.is_empty());
+    assert_eq!(marker_count(&index, "fragileduplicatebeforemarker"), 0);
+    assert_eq!(marker_count(&index, "fragileduplicateaftermarker"), 1);
+    assert_eq!(marker_count(&index, "healthyduplicateaftermarker"), 1);
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! Claude Code adapter for the shared borrowed JSONL replacement family.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -180,8 +180,9 @@ where
         )?;
 
         let mut claimed_sources = HashMap::<[u8; 32], SourceKey>::new();
-        let mut leaves = Vec::new();
-        let mut rejected_leaves = Vec::new();
+        let mut duplicate_sources = HashSet::new();
+        let mut source_owner_paths = HashMap::<[u8; 32], PathBuf>::new();
+        let mut prepared_observed = Vec::new();
         observed.sort_by(|left, right| left.0.cmp(&right.0));
         for (path, observation) in observed {
             let Some((project_dir, layout, key)) = classify_claude_path(&projects_root, &path)?
@@ -196,16 +197,22 @@ where
             };
             let source = source_key(binding.source_root_lineage, &binding.key)?;
             let relative_path = relative_to_authority(&authority, &path)?;
-            claim_claude_source(&mut claimed_sources, &source)?;
-            leaves.push(ProviderJsonlLeaf::bind_observed(
-                source,
-                path,
-                Arc::clone(&authority),
-                relative_path,
-                TypedKey::bytes(serde_json::to_vec(&binding)?).map_err(contract)?,
-                observation,
-            ));
+            let proof = TypedKey::bytes(serde_json::to_vec(&binding)?).map_err(contract)?;
+            let digest = source.exact_descriptor_digest();
+            if claim_claude_source(&mut claimed_sources, &source)? == ClaudeSourceClaim::Duplicate {
+                duplicate_sources.insert(digest);
+            }
+            source_owner_paths
+                .entry(digest)
+                .and_modify(|owner| {
+                    if path.as_path() < owner.as_path() {
+                        *owner = path.clone();
+                    }
+                })
+                .or_insert_with(|| path.clone());
+            prepared_observed.push((source, path, relative_path, proof, observation));
         }
+        let mut prepared_unreadable = Vec::new();
         unreadable.sort_by(|left, right| left.0.cmp(&right.0));
         for (path, detail) in unreadable {
             let Some((project_dir, layout, key)) = classify_claude_path(&projects_root, &path)?
@@ -220,23 +227,89 @@ where
             };
             let source = source_key(binding.source_root_lineage, &binding.key)?;
             let relative_path = relative_to_authority(&authority, &path)?;
-            claim_claude_source(&mut claimed_sources, &source)?;
-            rejected_leaves.push(
-                JsonlFamilyRejectedLeaf::bind_unobserved(
+            let digest = source.exact_descriptor_digest();
+            if claim_claude_source(&mut claimed_sources, &source)? == ClaudeSourceClaim::Duplicate {
+                duplicate_sources.insert(digest);
+            }
+            source_owner_paths
+                .entry(digest)
+                .and_modify(|owner| {
+                    if path.as_path() < owner.as_path() {
+                        *owner = path.clone();
+                    }
+                })
+                .or_insert_with(|| path.clone());
+            prepared_unreadable.push((
+                source,
+                path,
+                relative_path,
+                TypedKey::bytes(serde_json::to_vec(&binding)?).map_err(contract)?,
+                detail,
+            ));
+        }
+
+        let mut leaves = Vec::new();
+        let mut rejected_leaves = Vec::new();
+        for (source, path, relative_path, proof, observation) in prepared_observed {
+            let digest = source.exact_descriptor_digest();
+            if duplicate_sources.contains(&digest) {
+                let mut rejected = JsonlFamilyRejectedLeaf::bind_observed(
                     path.clone(),
                     relative_path,
-                    TypedKey::bytes(serde_json::to_vec(&binding)?).map_err(contract)?,
+                    observation,
+                    proof,
                     0,
                 )
-                .with_logical_source_failure(
-                    source.clone(),
-                    format!(
-                        "Claude transcript {} is unreadable: {detail}",
-                        path.display()
-                    ),
+                .with_quarantined_source(source.clone());
+                if source_owner_paths
+                    .get(&digest)
+                    .is_some_and(|owner| owner == &path)
+                {
+                    rejected = rejected.with_logical_source_failure(
+                        source.clone(),
+                        format!(
+                            "Claude transcript {} repeats a native session identity claimed by another transcript",
+                            path.display()
+                        ),
+                    );
+                }
+                rejected_leaves.push(rejected);
+            } else {
+                leaves.push(ProviderJsonlLeaf::bind_observed(
+                    source,
+                    path,
+                    Arc::clone(&authority),
+                    relative_path,
+                    proof,
+                    observation,
+                ));
+            }
+        }
+        for (source, path, relative_path, proof, detail) in prepared_unreadable {
+            let digest = source.exact_descriptor_digest();
+            let duplicate = duplicate_sources.contains(&digest);
+            let failure_detail = if duplicate {
+                format!(
+                    "Claude transcript {} repeats a native session identity claimed by another transcript and is unreadable: {detail}",
+                    path.display()
                 )
-                .with_quarantined_source(source),
-            );
+            } else {
+                format!(
+                    "Claude transcript {} is unreadable: {detail}",
+                    path.display()
+                )
+            };
+            let mut rejected =
+                JsonlFamilyRejectedLeaf::bind_unobserved(path.clone(), relative_path, proof, 0)
+                    .with_quarantined_source(source.clone());
+            if !duplicate
+                || source_owner_paths
+                    .get(&digest)
+                    .is_some_and(|owner| owner == &path)
+            {
+                rejected = rejected.with_logical_source_failure(source, failure_detail);
+            }
+            rejected_leaves.push(rejected);
         }
         ProviderJsonlInventory::present_with_rejected(
             self.provider(),
@@ -938,21 +1011,27 @@ fn is_quarantinable_claude_leaf_error(error: &CaptureError) -> bool {
         )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeSourceClaim {
+    New,
+    Duplicate,
+}
+
 fn claim_claude_source(
     claimed: &mut HashMap<[u8; 32], SourceKey>,
     source: &SourceKey,
-) -> Result<()> {
+) -> Result<ClaudeSourceClaim> {
     let digest = source.exact_descriptor_digest();
     if let Some(previous) = claimed.get(&digest) {
-        let detail = if previous.exact_descriptor_eq(source) {
-            "Claude inventory repeats a native session identity"
-        } else {
-            "Claude source descriptor digest collision"
-        };
-        return Err(CaptureError::InvalidPayload(detail.to_owned()));
+        if previous.exact_descriptor_eq(source) {
+            return Ok(ClaudeSourceClaim::Duplicate);
+        }
+        return Err(CaptureError::InvalidPayload(
+            "Claude source descriptor digest collision".to_owned(),
+        ));
     }
     claimed.insert(digest, source.clone());
-    Ok(())
+    Ok(ClaudeSourceClaim::New)
 }
 
 #[cfg(test)]

@@ -203,6 +203,75 @@ fn canonical_inventory_rejects_two_dispositions_for_one_physical_leaf() {
         .contains("physical inventory contains duplicate member"));
 }
 
+#[test]
+fn diagnosed_quarantine_owner_is_not_reclassified_as_pending() {
+    let temp = tempfile::tempdir().unwrap();
+    let owner_path = temp.path().join("owner.jsonl");
+    let peer_path = temp.path().join("peer.jsonl");
+    fs::write(&owner_path, b"{\"message\":\"incomplete\"").unwrap();
+    fs::write(&peer_path, TEST_RECORD).unwrap();
+
+    let discovered = TestAdapter.discover(temp.path()).unwrap();
+    let source = discovered
+        .accepted_leaves()
+        .find(|leaf| leaf.source_path() == owner_path)
+        .unwrap()
+        .source()
+        .clone();
+    let owner_observation = discovered
+        .accepted_leaves()
+        .find(|leaf| leaf.source_path() == owner_path)
+        .unwrap()
+        .observation()
+        .clone();
+    let peer_observation = discovered
+        .accepted_leaves()
+        .find(|leaf| leaf.source_path() == peer_path)
+        .unwrap()
+        .observation()
+        .clone();
+    let authority = Arc::clone(&discovered.authorities[0]);
+    let mut inventory = JsonlFamilyInventory::present_with_rejected(
+        CaptureProvider::Pi,
+        temp.path(),
+        authority,
+        Vec::new(),
+        vec![
+            JsonlFamilyRejectedLeaf::bind_observed(
+                owner_path,
+                PathBuf::from("owner.jsonl"),
+                owner_observation,
+                TypedKey::utf8("owner").unwrap(),
+                0,
+            )
+            .with_logical_source_failure(source.clone(), "duplicate source")
+            .with_quarantined_source(source.clone()),
+            JsonlFamilyRejectedLeaf::bind_observed(
+                peer_path,
+                PathBuf::from("peer.jsonl"),
+                peer_observation,
+                TypedKey::utf8("peer").unwrap(),
+                0,
+            )
+            .with_quarantined_source(source),
+        ],
+    )
+    .unwrap();
+
+    super::super::capture::classify_incomplete_first_records(&PendingOnlyAdapter, &mut inventory)
+        .unwrap();
+
+    assert_eq!(inventory.quarantined_len(), 2);
+    assert_eq!(inventory.pending_len(), 0);
+    assert_eq!(
+        inventory
+            .quarantined_leaves()
+            .filter(|leaf| leaf.logical_source_failure.is_some())
+            .count(),
+        1
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn unobserved_membership_uses_parent_enumeration_without_opening_the_leaf() {
