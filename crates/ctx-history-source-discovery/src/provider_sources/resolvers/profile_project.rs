@@ -16,8 +16,8 @@ use super::super::{
         SelectorReadError, SelectorReader, MAX_FINITE_SELECTOR_ENTRIES, MAX_SELECTOR_FILE_BYTES,
     },
     types::{
-        DiscoveryIssueKind, DiscoveryReport, ProviderSourceKind, ProviderSourceSpec,
-        ProviderSourceStatus,
+        DiscoveryIssueKind, DiscoveryReport, ProviderSourceKind, ProviderSourceRouteProvenance,
+        ProviderSourceSpec, ProviderSourceStatus,
     },
     StaticProviderProbeCatalog,
 };
@@ -182,14 +182,14 @@ fn push_unsupported_existing(
     spec: &ProviderSourceSpec,
     path: PathBuf,
     reason: &'static str,
+    route_provenance: ProviderSourceRouteProvenance,
 ) {
     if !ordinary_file(&path) {
         return;
     }
-    if !push_source_candidate(
-        &mut report.sources,
-        unsupported_source(spec, path.clone(), reason),
-    ) {
+    let mut source = unsupported_source(spec, path.clone(), reason);
+    source.route_provenance = route_provenance;
+    if !push_source_candidate(&mut report.sources, source) {
         issue_limit(report, spec.provider, path);
     }
 }

@@ -29,6 +29,7 @@ use super::{
 const UNSUPPORTED_SOURCE_ROOT_REASON: &str =
     "the selected provider path uses an unsupported, non-local, or unsafe source root";
 
+mod automatic_roles;
 mod config_project;
 mod manual_unsupported;
 mod platform;

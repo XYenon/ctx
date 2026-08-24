@@ -58,6 +58,19 @@ fn write(path: &Path, bytes: &[u8]) {
     fs::write(path, bytes).unwrap();
 }
 
+fn assert_automatic_role(source: &ProviderSource, components: &[&[u8]]) {
+    let expected = ctx_history_capture_model::ProviderRouteRole::from_dynamic(
+        components.iter().copied(),
+    )
+    .expect("expected test role should be bounded");
+    assert_eq!(
+        source.route_provenance.automatic_route_role(),
+        Some(&expected),
+        "unexpected route role for {}",
+        source.path.display()
+    );
+}
+
 fn write_firebender_chat_history_db(path: &Path) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let conn = Connection::open(path).unwrap();
@@ -524,6 +537,10 @@ fn mux_root_is_one_raw_supported_winner_when_active_and_archive_history_coexist(
         (&custom.join("sessions"), ProviderSourceStatus::Available)
     );
     assert!(supported.unsupported_reason.is_none());
+    assert!(matches!(
+        supported.route_provenance,
+        ctx_history_capture_model::ProviderSourceRouteProvenance::Unroled
+    ));
     assert!(report
         .sources
         .iter()
@@ -648,6 +665,73 @@ fn cline_selects_one_owned_legacy_root_and_only_installed_microsoft_hosts() {
         .iter()
         .all(|item| !item.path.starts_with(config.join("Cursor"))
             && !item.path.starts_with(context.home().join(".cline"))));
+    let selected_source = native
+        .iter()
+        .find(|source| source.path == selected)
+        .expect("selected Cline data root");
+    assert_automatic_role(
+        selected_source,
+        &[b"task-store", b"selected-data-root"],
+    );
+    let base_source = native
+        .iter()
+        .find(|source| source.path == code)
+        .expect("stable VS Code base Cline store");
+    assert_automatic_role(
+        base_source,
+        &[b"task-store", b"vscode", b"stable", b"base"],
+    );
+    let profile_source = native
+        .iter()
+        .find(|source| source.path == profile)
+        .expect("stable VS Code profile Cline store");
+    assert_automatic_role(
+        profile_source,
+        &[
+            b"task-store",
+            b"vscode",
+            b"stable",
+            b"profile",
+            b"native-id",
+            b"profile-a",
+        ],
+    );
+}
+
+#[test]
+fn cline_stable_and_insiders_base_stores_have_distinct_order_independent_roles() {
+    let temp = tempdir();
+    let context = context(temp.path(), DiscoveryPlatform::Windows);
+    let config = context.platform_dirs().config.as_ref().unwrap();
+    let stable = config.join("Code/User/globalStorage/saoudrizwan.claude-dev");
+    let insiders =
+        config.join("Code - Insiders/User/globalStorage/saoudrizwan.claude-dev");
+    write(&stable.join("tasks/stable/ui_messages.json"), b"[]");
+    write(&insiders.join("tasks/insiders/ui_messages.json"), b"[]");
+
+    let report = resolve(&context, spec(CaptureProvider::Cline));
+    let stable_source = report
+        .sources
+        .iter()
+        .find(|source| source.path == stable)
+        .expect("stable Cline host store");
+    let insiders_source = report
+        .sources
+        .iter()
+        .find(|source| source.path == insiders)
+        .expect("Cline Insiders host store");
+    assert_automatic_role(
+        stable_source,
+        &[b"task-store", b"vscode", b"stable", b"base"],
+    );
+    assert_automatic_role(
+        insiders_source,
+        &[b"task-store", b"vscode", b"insiders", b"base"],
+    );
+    assert_ne!(
+        stable_source.route_provenance.automatic_route_role(),
+        insiders_source.route_provenance.automatic_route_role()
+    );
 }
 
 #[test]
@@ -816,6 +900,11 @@ fn cline_common_data_root_publishes_separate_sdk_and_legacy_routes() {
     assert_eq!(sdk.import_support, ProviderImportSupport::Native);
     assert_eq!(legacy.path, sdk.path);
     assert_eq!(legacy.status, ProviderSourceStatus::Available);
+    assert_automatic_role(legacy, &[b"task-store", b"selected-data-root"]);
+    assert!(matches!(
+        sdk.route_provenance,
+        ctx_history_capture_model::ProviderSourceRouteProvenance::Unroled
+    ));
 
     let explicit = provider_source_for_path(CaptureProvider::Cline, sdk.path.clone());
     assert_eq!(explicit.path, sdk.path);
@@ -928,6 +1017,45 @@ fn cline_profile_enumeration_is_finite_and_sorted() {
         .collect::<Vec<_>>();
     assert_eq!(profiles.len(), MAX_FINITE_SELECTOR_ENTRIES);
     assert!(profiles.windows(2).all(|pair| pair[0].path < pair[1].path));
+    assert!(profiles
+        .iter()
+        .all(|source| source.route_provenance.automatic_route_role().is_some()));
+}
+
+#[test]
+fn cline_oversized_native_profile_id_keeps_its_source_with_a_bounded_stable_role() {
+    let temp = tempdir();
+    let context = context(temp.path(), DiscoveryPlatform::Linux);
+    let profile_id = "p".repeat(240);
+    let root = context
+        .platform_dirs()
+        .config
+        .as_ref()
+        .unwrap()
+        .join("Code/User/profiles")
+        .join(&profile_id)
+        .join("globalStorage/saoudrizwan.claude-dev");
+    write(&root.join("tasks/t/ui_messages.json"), b"[]");
+
+    let first = resolve(&context, spec(CaptureProvider::Cline));
+    let source = first
+        .sources
+        .iter()
+        .find(|source| source.path == root)
+        .expect("oversized provider-native profile should remain selected");
+    let role = source
+        .route_provenance
+        .automatic_route_role()
+        .expect("oversized profile should retain an automatic role");
+    assert!(role.as_bytes().len() <= ctx_history_capture_model::MAX_PROVIDER_ROUTE_ROLE_BYTES);
+    assert!(role
+        .as_bytes()
+        .windows(b"native-id-sha256".len())
+        .any(|window| window == b"native-id-sha256"));
+    assert_eq!(
+        first.sources,
+        resolve(&context, spec(CaptureProvider::Cline)).sources
+    );
 }
 
 #[test]

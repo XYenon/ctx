@@ -5,6 +5,9 @@ use std::{
 
 use serde_json::{Map, Value};
 
+use super::super::automatic_roles::{
+    automatic_route_provenance, AUTOMATIC_ROUTE_ROLE_UNAVAILABLE_REASON,
+};
 use super::{
     absolute_from_cwd, env_text, expand_leading_tilde, issue_limit, issue_manual, issue_selector,
     ordinary_file, path_presence, push_source_candidate, push_unsupported_existing,
@@ -100,10 +103,23 @@ pub(super) fn resolve(
 
     for agent_id in agent_ids {
         let agent_root = state_root.join("agents").join(&agent_id);
+        let route_provenance =
+            match automatic_route_provenance([b"agent".as_slice(), agent_id.as_bytes()]) {
+                Ok(route_provenance) => route_provenance,
+                Err(_) => {
+                    report.issues.push(super::issue(
+                        spec.provider,
+                        Some(agent_root),
+                        super::DiscoveryIssueKind::SelectorUnreconstructible,
+                        AUTOMATIC_ROUTE_ROLE_UNAVAILABLE_REASON,
+                    ));
+                    continue;
+                }
+            };
         let sqlite = agent_root.join("agent/openclaw-agent.sqlite");
         let sqlite_probe = has_openclaw_agent_sqlite_v17(context.data_root(), &sqlite);
         if sqlite_probe == BoundedProbe::Found {
-            let source = source_from_parts_with_data_root(
+            let mut source = source_from_parts_with_data_root(
                 probes,
                 context.data_root(),
                 spec,
@@ -111,6 +127,7 @@ pub(super) fn resolve(
                 ctx_history_openclaw_schema::OPENCLAW_AGENT_SQLITE_SOURCE_FORMAT,
                 ProviderSourceKind::NativeHistory,
             );
+            source.route_provenance = route_provenance;
             if !push_source_candidate(&mut report.sources, source) {
                 issue_limit(&mut report, spec.provider, sqlite);
             }
@@ -118,13 +135,14 @@ pub(super) fn resolve(
         }
 
         let sessions = agent_root.join("sessions");
-        let jsonl = source_from_parts(
+        let mut jsonl = source_from_parts(
             probes,
             spec,
             sessions.clone(),
             OPENCLAW_JSONL_SOURCE_FORMAT,
             ProviderSourceKind::NativeHistory,
         );
+        jsonl.route_provenance = route_provenance.clone();
         if jsonl.status == ProviderSourceStatus::Available {
             if !push_source_candidate(&mut report.sources, jsonl) {
                 issue_limit(&mut report, spec.provider, sessions);
@@ -140,6 +158,7 @@ pub(super) fn resolve(
                         spec,
                         sqlite,
                         OPENCLAW_UNSUPPORTED_REASON,
+                        route_provenance,
                     )
                 }
                 BoundedProbe::Found => {}

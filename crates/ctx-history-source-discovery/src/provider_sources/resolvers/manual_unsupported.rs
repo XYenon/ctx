@@ -16,6 +16,10 @@ use super::super::{
     StaticProviderProbeCatalog,
 };
 use super::{
+    automatic_roles::{
+        automatic_route_provenance, automatic_route_provenance_with_native_id,
+        AUTOMATIC_ROUTE_ROLE_UNAVAILABLE_REASON,
+    },
     issue, path_presence, push_source_candidate, select_current_or_legacy,
     source_from_parts_with_data_root, unsupported_source, PathPresence,
 };
@@ -27,6 +31,37 @@ const MANUAL_SELECTOR_REASON: &str =
     "the provider selector cannot be safely reconstructed; use an exact --path";
 const UNSAFE_SELECTED_PATH_REASON: &str =
     "the selected provider path is unreadable, non-ordinary, or crosses a link; use an exact real --path";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClineMicrosoftClient {
+    Stable,
+    Insiders,
+}
+
+impl ClineMicrosoftClient {
+    const fn directory_name(self) -> &'static str {
+        match self {
+            Self::Stable => "Code",
+            Self::Insiders => "Code - Insiders",
+        }
+    }
+
+    const fn role_component(self) -> &'static [u8] {
+        match self {
+            Self::Stable => b"stable",
+            Self::Insiders => b"insiders",
+        }
+    }
+}
+
+enum ClineTaskStoreRole<'a> {
+    SelectedDataRoot,
+    MicrosoftBase(ClineMicrosoftClient),
+    MicrosoftProfile {
+        client: ClineMicrosoftClient,
+        profile_id: &'a [u8],
+    },
+}
 
 pub(super) fn resolve(
     probes: &StaticProviderProbeCatalog,
@@ -456,14 +491,16 @@ fn resolve_cline(
     let mut report = DiscoveryReport::default();
     let selected_legacy = cline_legacy_root(context, spec, &mut report);
     if let Some(path) = selected_legacy.as_ref() {
-        push_selected_source(
+        push_cline_task_store_source(
             &mut report,
+            spec,
             native_source(
                 spec,
                 path.clone(),
                 "cline_task_directory_json",
                 inspect_cline_legacy(path),
             ),
+            ClineTaskStoreRole::SelectedDataRoot,
         );
         if has_safe_cline_sdk_catalog(path) {
             push_selected_source(
@@ -530,20 +567,22 @@ fn add_cline_microsoft_host_roots(
         return;
     };
     let mut profile_count = 0usize;
-    for host in ["Code", "Code - Insiders"] {
-        let user = config.join(host).join("User");
+    for client in [ClineMicrosoftClient::Stable, ClineMicrosoftClient::Insiders] {
+        let user = config.join(client.directory_name()).join("User");
         if !matches!(safe_path_kind(&user), SafePathKind::Directory) {
             continue;
         }
         let default = user.join("globalStorage").join("saoudrizwan.claude-dev");
-        push_selected_source(
+        push_cline_task_store_source(
             report,
+            spec,
             native_source(
                 spec,
                 default.clone(),
                 "cline_task_directory_json",
                 inspect_cline_legacy(&default),
             ),
+            ClineTaskStoreRole::MicrosoftBase(client),
         );
 
         let profiles = user.join("profiles");
@@ -571,17 +610,74 @@ fn add_cline_microsoft_host_roots(
                 continue;
             }
             profile_count += 1;
+            let Some(profile_id) = profile.file_name() else {
+                report.issues.push(issue(
+                    spec.provider,
+                    None,
+                    DiscoveryIssueKind::SelectorUnreconstructible,
+                    AUTOMATIC_ROUTE_ROLE_UNAVAILABLE_REASON,
+                ));
+                continue;
+            };
             let root = profile.join("globalStorage").join("saoudrizwan.claude-dev");
-            push_selected_source(
+            push_cline_task_store_source(
                 report,
+                spec,
                 native_source(
                     spec,
                     root.clone(),
                     "cline_task_directory_json",
                     inspect_cline_legacy(&root),
                 ),
+                ClineTaskStoreRole::MicrosoftProfile {
+                    client,
+                    profile_id: profile_id.as_encoded_bytes(),
+                },
             );
         }
+    }
+}
+
+fn push_cline_task_store_source(
+    report: &mut DiscoveryReport,
+    spec: &ProviderSourceSpec,
+    mut source: ProviderSource,
+    role: ClineTaskStoreRole<'_>,
+) {
+    let route_provenance = match role {
+        ClineTaskStoreRole::SelectedDataRoot => {
+            automatic_route_provenance([b"task-store".as_slice(), b"selected-data-root".as_slice()])
+        }
+        ClineTaskStoreRole::MicrosoftBase(client) => automatic_route_provenance([
+            b"task-store".as_slice(),
+            b"vscode".as_slice(),
+            client.role_component(),
+            b"base".as_slice(),
+        ]),
+        ClineTaskStoreRole::MicrosoftProfile { client, profile_id } => {
+            automatic_route_provenance_with_native_id(
+                &[
+                    b"task-store",
+                    b"vscode",
+                    client.role_component(),
+                    b"profile",
+                ],
+                profile_id,
+                &[],
+            )
+        }
+    };
+    match route_provenance {
+        Ok(route_provenance) => {
+            source.route_provenance = route_provenance;
+            push_selected_source(report, source);
+        }
+        Err(_) => report.issues.push(issue(
+            spec.provider,
+            None,
+            DiscoveryIssueKind::SelectorUnreconstructible,
+            AUTOMATIC_ROUTE_ROLE_UNAVAILABLE_REASON,
+        )),
     }
 }
 

@@ -13,7 +13,10 @@ use super::{
             ordinary_empty_file, SelectorDocument, SelectorFormat, SelectorReadError,
             SelectorReader, MAX_PROJECT_ANCESTORS,
         },
-        types::{DiscoveryIssueKind, DiscoveryReport, ProviderSourceKind, ProviderSourceSpec},
+        types::{
+            DiscoveryIssueKind, DiscoveryReport, ProviderSourceKind, ProviderSourceRouteProvenance,
+            ProviderSourceSpec,
+        },
         StaticProviderProbeCatalog,
     },
     dedupe_report, issue, path_presence, push_source_candidate, source_from_parts, PathPresence,
@@ -75,6 +78,24 @@ fn add_source(
     path: PathBuf,
     format: &'static str,
 ) {
+    add_source_with_route_provenance(
+        probes,
+        report,
+        spec,
+        path,
+        format,
+        ProviderSourceRouteProvenance::Unroled,
+    );
+}
+
+fn add_source_with_route_provenance(
+    probes: &StaticProviderProbeCatalog,
+    report: &mut DiscoveryReport,
+    spec: &ProviderSourceSpec,
+    path: PathBuf,
+    format: &'static str,
+    route_provenance: ProviderSourceRouteProvenance,
+) {
     if !path_is_safe_for_automatic_read(&path) {
         report.issues.push(issue(
             spec.provider,
@@ -84,16 +105,15 @@ fn add_source(
         ));
         return;
     }
-    if !push_source_candidate(
-        &mut report.sources,
-        source_from_parts(
-            probes,
-            spec,
-            path,
-            format,
-            ProviderSourceKind::NativeHistory,
-        ),
-    ) {
+    let mut source = source_from_parts(
+        probes,
+        spec,
+        path,
+        format,
+        ProviderSourceKind::NativeHistory,
+    );
+    source.route_provenance = route_provenance;
+    if !push_source_candidate(&mut report.sources, source) {
         report.issues.push(issue(
             spec.provider,
             None,

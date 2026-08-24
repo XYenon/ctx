@@ -132,6 +132,34 @@ impl WarpInstalledSurfaceKey {
     }
 }
 
+impl WarpInstalledPlatform {
+    pub(crate) const fn role_component(self) -> &'static [u8] {
+        match self {
+            Self::Linux => b"linux",
+            Self::MacOS => b"macos",
+            Self::Windows => b"windows",
+        }
+    }
+}
+
+impl WarpReleaseChannel {
+    pub(crate) const fn role_component(self) -> &'static [u8] {
+        match self {
+            Self::Stable => b"stable",
+            Self::Preview => b"preview",
+        }
+    }
+}
+
+impl WarpTerminalSurface {
+    pub(crate) const fn role_component(self) -> &'static [u8] {
+        match self {
+            Self::Gui => b"gui",
+            Self::Tui => b"tui",
+        }
+    }
+}
+
 impl fmt::Display for WarpInstalledSurfaceKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
