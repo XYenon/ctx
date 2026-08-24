@@ -6,7 +6,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use ctx_history_capture::{ProviderRootDefinition, MAX_CONFIGURED_PROVIDER_ROOTS};
+use ctx_history_capture::{
+    provider_paths_equivalent, ProviderRootDefinition, MAX_CONFIGURED_PROVIDER_ROOTS,
+};
 use ctx_history_core::CaptureProvider;
 use ctx_history_platform::platform_security::{
     establish_private_data_root, validate_provider_source_outside_data_root,

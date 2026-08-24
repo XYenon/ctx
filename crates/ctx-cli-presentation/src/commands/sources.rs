@@ -158,7 +158,7 @@ mod tests {
                 replace: false,
                 ..
             }) if provider.capture_provider() == ctx_history_core::CaptureProvider::Claude
-                && root == PathBuf::from("/tmp/claude")
+                && root == std::path::Path::new("/tmp/claude")
                 && group == "work"
         ));
 

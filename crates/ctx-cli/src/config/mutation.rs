@@ -115,6 +115,17 @@ pub fn add_provider_root(
         path: root,
         group: group.map(str::to_owned),
     };
+    if let Some(conflicting) = current.provider_roots.values().find(|existing| {
+        existing.id != id
+            && existing.provider == provider
+            && provider_paths_equivalent(&existing.path, &desired.path)
+    }) {
+        bail!(
+            "{} history root `{id}` resolves to the same physical root as `{}`",
+            provider.as_str(),
+            conflicting.id
+        );
+    }
     if let Some(existing) = current.provider_roots.get(id) {
         if existing == &desired {
             return Ok(ProviderRootMutation {

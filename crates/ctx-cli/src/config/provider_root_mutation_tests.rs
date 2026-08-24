@@ -126,6 +126,42 @@ fn provider_root_replace_rejects_provider_changes_under_a_stable_name() {
 }
 
 #[test]
+fn provider_root_mutation_rejects_a_second_name_for_the_same_physical_root() {
+    let data_root = tempfile::tempdir().unwrap();
+    let provider_root = tempfile::tempdir().unwrap();
+    add_provider_root(
+        data_root.path(),
+        "personal",
+        CaptureProvider::Claude,
+        provider_root.path(),
+        None,
+        false,
+    )
+    .unwrap();
+    let config_path = data_root.path().join(CONFIG_FILE);
+    let before = fs::read(&config_path).unwrap();
+
+    let error = format!(
+        "{:#}",
+        add_provider_root(
+            data_root.path(),
+            "work",
+            CaptureProvider::Claude,
+            provider_root.path(),
+            None,
+            false,
+        )
+        .unwrap_err()
+    );
+
+    assert!(
+        error.contains("same physical root as `personal`"),
+        "{error}"
+    );
+    assert_eq!(fs::read(&config_path).unwrap(), before);
+}
+
+#[test]
 fn provider_root_replace_adds_an_absent_name_and_remove_rejects_a_missing_name() {
     let data_root = tempfile::tempdir().unwrap();
     let provider_root = tempfile::tempdir().unwrap();
