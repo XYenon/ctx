@@ -216,6 +216,23 @@ fn row_local_projection_failure_rejects_only_its_chat_record() {
 }
 
 #[test]
+fn row_local_projection_filter_preserves_core_invariants() {
+    assert!(lingma_row_projection_error(
+        &LingmaSourceBackedErrorV0::EmptySelectedBody
+    ));
+    for error in [
+        LingmaSourceBackedErrorV0::Projection(ProjectionContractError::SourceChanged),
+        LingmaSourceBackedErrorV0::Projection(ProjectionContractError::InvalidDerivedIdentity),
+        LingmaSourceBackedErrorV0::CoreRecord(CoreRecordError::Projection(
+            ProjectionContractError::SourceChanged,
+        )),
+        LingmaSourceBackedErrorV0::CoreRecord(CoreRecordError::InvalidIdentityRelationship),
+    ] {
+        assert!(!lingma_row_projection_error(&error), "{error:?}");
+    }
+}
+
+#[test]
 fn finite_inventory_certifies_complete_bodies_and_order_independent_ids() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     let first_path = temp.path().join("vscode-local.db");

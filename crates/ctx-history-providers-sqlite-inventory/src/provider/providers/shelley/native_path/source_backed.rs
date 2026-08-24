@@ -60,7 +60,7 @@ const SHELLEY_SOURCE_ANCHOR_NAMESPACE: &str = "shelley.exact-cwd-slot";
 const SHELLEY_SOURCE_ANCHOR_KEY: &str = "shelley.db";
 const SHELLEY_SOURCE_SCHEMA_VARIANT: &str = "shelley-exact-cwd-sqlite-v1";
 pub(crate) const SHELLEY_SOURCE_PARSER_REVISION: &str =
-    "shelley-source-backed-v4-neutral-core-agent-scope";
+    "shelley-source-backed-v5-record-rejections";
 const SHELLEY_LOGICAL_SESSION_KIND: &str = "shelley-conversation";
 const SHELLEY_NATIVE_SESSION_NAMESPACE: &str = "shelley.conversation";
 const SHELLEY_LOGICAL_EVENT_KIND: &str = "shelley-message";
@@ -734,9 +734,20 @@ fn build_record(
 fn shelley_row_projection_error(error: &ShelleySourceBackedError) -> bool {
     matches!(
         error,
-        ShelleySourceBackedError::Projection(_)
-            | ShelleySourceBackedError::CoreRecord(_)
-            | ShelleySourceBackedError::MissingLexicalBody
+        ShelleySourceBackedError::Projection(ProjectionContractError::EmptyField {
+            field: "typed_key_utf8",
+        }) | ShelleySourceBackedError::Projection(ProjectionContractError::FieldTooLarge {
+            field: "typed_key_utf8" | "typed_composite_key",
+            ..
+        }) | ShelleySourceBackedError::CoreRecord(CoreRecordError::EmptyField {
+            field: "provider_declared_fact.value",
+        }) | ShelleySourceBackedError::CoreRecord(CoreRecordError::FieldTooLarge {
+            field: "normalized_body"
+                | "structured_content"
+                | "selected_content"
+                | "provider_declared_fact.value",
+            ..
+        }) | ShelleySourceBackedError::MissingLexicalBody
             | ShelleySourceBackedError::InvalidResultShape(_)
     )
 }

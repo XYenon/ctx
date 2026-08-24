@@ -2,10 +2,16 @@ use std::collections::BTreeSet;
 
 #[cfg(test)]
 use ctx_history_core::CertifiedSourceInventory;
-use ctx_history_core::{CertifiedSource, CoreRecord, ScannedSourceCounts, SourceKey};
+use ctx_history_core::{
+    CaptureProvider, CertifiedSource, CoreRecord, ScannedSourceCounts, SourceKey,
+};
 use sha2::Digest;
 
 use crate::{
+    provider::source_backed::{
+        record_sqlite_rejection, SourceBackedRecordRejectionClass,
+        SourceBackedRecordRejectionDrafts,
+    },
     provider::sqlite::sqlite_schema_fingerprint,
     provider_sources::{SqliteLogicalSnapshot, SqliteSourceReadSnapshot},
     CaptureError,
@@ -21,7 +27,8 @@ use super::{discovery::LingmaRootAuthorizedSource, INVENTORY_DISCOVERY_REVISION}
 use super::{
     discovery::{LingmaDatabaseSourceV0, LingmaSourceInventoryV0},
     identity::{project_row, ParsedRow},
-    LingmaSourceBackedErrorV0, LingmaSourceBackedResultV0, PARSER_REVISION,
+    lingma_row_projection_error, LingmaSourceBackedErrorV0, LingmaSourceBackedResultV0,
+    PARSER_REVISION,
 };
 
 const SOURCE_BACKED_PAGE_ROWS: usize = 64;
@@ -107,10 +114,15 @@ where
         let root_authority = LingmaRootAuthorizedSource::retain(data_root, &database.path)?;
         let sqlite_snapshot = root_authority.open_snapshot()?;
         let mut records = Vec::new();
-        let certificate = scan_lingma_snapshot_v0(database, sqlite_snapshot, &mut |record| {
-            records.push(record);
-            Ok(())
-        })?;
+        let certificate = scan_lingma_snapshot_v0(
+            database,
+            sqlite_snapshot,
+            &mut |record| {
+                records.push(record);
+                Ok(())
+            },
+            &mut SourceBackedRecordRejectionDrafts::default(),
+        )?;
         root_authority.source_root.revalidate()?;
         databases.push(LingmaDatabaseScanV0 {
             certificate,
@@ -151,6 +163,7 @@ pub(crate) fn scan_lingma_snapshot_v0(
     database: &LingmaDatabaseSourceV0,
     sqlite_snapshot: SqliteSourceReadSnapshot,
     sink: &mut impl LingmaSourceBackedSinkV0,
+    rejections: &mut SourceBackedRecordRejectionDrafts,
 ) -> LingmaSourceBackedResultV0<CertifiedSource> {
     let scan = (|| {
         let source = database.source_key()?;
@@ -160,7 +173,14 @@ pub(crate) fn scan_lingma_snapshot_v0(
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .map_err(CaptureError::from)?;
         let schema_fingerprint = sqlite_schema_fingerprint(connection)?;
-        let parsed = scan_rows(connection, encoding, &source, sink)?;
+        let parsed = scan_rows(
+            connection,
+            encoding,
+            &source,
+            database.path(),
+            sink,
+            rejections,
+        )?;
         before_database_certification();
         let schema_evidence = format!(
             "user_version={user_version}\0schema={schema_fingerprint}\0encoding={}",
@@ -215,7 +235,9 @@ fn scan_rows(
     connection: &rusqlite::Connection,
     encoding: SqliteEncoding,
     source: &SourceKey,
+    source_path: &std::path::Path,
     sink: &mut impl LingmaSourceBackedSinkV0,
+    rejections: &mut SourceBackedRecordRejectionDrafts,
 ) -> LingmaSourceBackedResultV0<ParsedScan> {
     let mut after_rowid = None;
     let mut physical_ordinal = 0_u64;
@@ -249,8 +271,10 @@ fn scan_rows(
                     None,
                     encoding,
                     source,
+                    source_path,
                     &duplicate_requests,
                     sink,
+                    rejections,
                     &mut page,
                     &mut hasher,
                     &mut physical_ordinal,
@@ -274,8 +298,10 @@ fn scan_rows(
                 Some(raw),
                 encoding,
                 source,
+                source_path,
                 &duplicate_requests,
                 sink,
+                rejections,
                 &mut page,
                 &mut hasher,
                 &mut physical_ordinal,
@@ -295,8 +321,10 @@ fn scan_rows(
                 None,
                 encoding,
                 source,
+                source_path,
                 &duplicate_requests,
                 sink,
+                rejections,
                 &mut page,
                 &mut hasher,
                 &mut physical_ordinal,
@@ -336,8 +364,10 @@ fn process_candidate(
     raw: Option<RawRow>,
     encoding: SqliteEncoding,
     source: &SourceKey,
+    source_path: &std::path::Path,
     duplicate_requests: &BTreeSet<DuplicateRequestIdentity>,
     sink: &mut impl LingmaSourceBackedSinkV0,
+    rejections: &mut SourceBackedRecordRejectionDrafts,
     page: &mut Vec<CoreRecord>,
     hasher: &mut sha2::Sha256,
     physical_ordinal: &mut u64,
@@ -404,18 +434,41 @@ fn process_candidate(
                     }
                     page.extend(projected);
                 }
-                Err(
-                    LingmaSourceBackedErrorV0::Projection(_)
-                    | LingmaSourceBackedErrorV0::CoreRecord(_)
-                    | LingmaSourceBackedErrorV0::EmptySelectedBody,
-                ) => {
+                Err(error) if lingma_row_projection_error(&error) => {
                     *rejected_records = rejected_records.saturating_add(1);
+                    record_sqlite_rejection(
+                        rejections,
+                        source,
+                        CaptureProvider::Lingma,
+                        source_path,
+                        u64::try_from(candidate.rowid)
+                            .unwrap_or(physical_ordinal.saturating_add(1)),
+                        SourceBackedRecordRejectionClass::UnsupportedRecord,
+                        error.to_string(),
+                    );
                 }
                 Err(error) => return Err(error),
             }
         }
         None => {
             *rejected_records = rejected_records.saturating_add(1);
+            record_sqlite_rejection(
+                rejections,
+                source,
+                CaptureProvider::Lingma,
+                source_path,
+                u64::try_from(candidate.rowid).unwrap_or(physical_ordinal.saturating_add(1)),
+                if candidate.can_decode() {
+                    SourceBackedRecordRejectionClass::MalformedRecord
+                } else {
+                    SourceBackedRecordRejectionClass::UnsupportedRecord
+                },
+                if candidate.can_decode() {
+                    "Lingma SQLite row could not be decoded"
+                } else {
+                    "Lingma SQLite row exceeds the supported shape or size bound"
+                },
+            );
         }
     }
     *physical_ordinal = physical_ordinal.saturating_add(1);

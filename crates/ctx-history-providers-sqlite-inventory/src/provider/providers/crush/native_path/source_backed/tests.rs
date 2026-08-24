@@ -280,10 +280,30 @@ fn row_local_projection_failure_becomes_a_record_rejection() {
         panic!("expected the oversized identity row to reach Core projection");
     };
 
-    assert!(project_core_record(&source, &row, &session, &projection)
-        .unwrap()
-        .is_none());
+    let error = core_record(&source, &row, &session, &projection).unwrap_err();
+    assert!(crush_row_projection_error(&error));
     assert!(finish_opened_source(source).unwrap());
+}
+
+#[test]
+fn row_local_projection_filter_preserves_core_invariants() {
+    assert!(crush_row_projection_error(
+        &CrushSourceBackedErrorV0::Projection(ProjectionContractError::FieldTooLarge {
+            field: "typed_key_utf8",
+            actual: 2,
+            maximum: 1,
+        })
+    ));
+    for error in [
+        CrushSourceBackedErrorV0::Projection(ProjectionContractError::SourceChanged),
+        CrushSourceBackedErrorV0::Projection(ProjectionContractError::InvalidDerivedIdentity),
+        CrushSourceBackedErrorV0::CoreRecord(CoreRecordError::Projection(
+            ProjectionContractError::SourceChanged,
+        )),
+        CrushSourceBackedErrorV0::CoreRecord(CoreRecordError::InvalidSessionRelationship),
+    ] {
+        assert!(!crush_row_projection_error(&error), "{error:?}");
+    }
 }
 
 #[test]

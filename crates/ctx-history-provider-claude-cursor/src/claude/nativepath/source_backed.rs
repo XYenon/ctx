@@ -1,7 +1,7 @@
 //! Claude Code adapter for the shared borrowed JSONL replacement family.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -26,17 +26,18 @@ use super::{
 use crate::CLAUDE_PROJECTS_SOURCE_FORMAT;
 use ctx_history_jsonl::{
     fit_jsonl_activity, selected_content_fits, JsonlActivityObservedBytes, JsonlFamilyAdapter,
-    JsonlFamilyBaseScope, JsonlOversizedRecordPolicy,
+    JsonlFamilyBaseScope, JsonlOversizedRecordPolicy, JsonlRecordRejections,
+    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDrafts,
 };
 use ctx_history_provider_runtime::{
     observe_opened_file,
     source_io::{OpenedProviderSourceFile, ProviderSourceRoot},
     CaptureError, JsonlAppendOccurrenceState, JsonlFamilyAppendMode, JsonlFamilyProjectionMode,
-    JsonlFamilyProjector, JsonlFileObservation, JsonlRecordRef, ProviderBaseEventLookup,
-    ProviderJsonlInventory, ProviderJsonlLeaf, ProviderJsonlReader, ProviderJsonlRuntime,
-    ProviderJsonlWorkerContext, ProviderRuntimeBinding, Result,
+    JsonlFamilyProjector, JsonlFamilyRejectedLeaf, JsonlFileObservation, JsonlRecordRef,
+    ProviderBaseEventLookup, ProviderJsonlInventory, ProviderJsonlLeaf, ProviderJsonlReader,
+    ProviderJsonlRuntime, ProviderJsonlWorkerContext, ProviderRuntimeBinding, Result,
 };
-use ctx_history_source_io::visit_bounded_tree_files;
+use ctx_history_source_io::visit_bounded_tree_files_isolating_selected;
 
 type JsonlFamilyLeaf = ProviderJsonlLeaf;
 type JsonlReader = ProviderJsonlReader;
@@ -50,7 +51,7 @@ const FALLBACK_EVENT_ID_DOMAIN: &[u8] = b"ctx-claude-fallback-event-id-v1\0";
 const LOGICAL_SESSION_KIND: &str = "claude-session";
 const LOGICAL_EVENT_KIND: &str = "claude-event";
 const SOURCE_SCHEMA_VARIANT: &str = "claude-nativepath-jsonl-v6";
-const PARSER_REVISION: &str = "claude-shared-jsonl-core-activity-v1";
+const PARSER_REVISION: &str = "claude-shared-jsonl-core-activity-v2-record-rejections";
 
 mod binding;
 mod normalized_body;
@@ -148,8 +149,9 @@ where
         let projects_root = claude_projects_root(&canonical_root);
         let source_root_lineage = self.source_root_lineage;
         let authority = Arc::new(ProviderSourceRoot::open(&canonical_root)?);
-        let mut paths = BTreeSet::new();
-        visit_bounded_tree_files::<CaptureError, _>(
+        let mut observed = Vec::new();
+        let mut unreadable = Vec::new();
+        visit_bounded_tree_files_isolating_selected::<CaptureError, _>(
             &canonical_root,
             &mut |candidate| {
                 candidate
@@ -159,14 +161,23 @@ where
                     == Some("jsonl")
             },
             &mut |source_file| {
-                paths.insert(fs::canonicalize(source_file.path())?);
+                let path = source_file.path().to_path_buf();
+                let relative_path = relative_to_authority(&authority, &path)?;
+                let opened = authority.open_file(&relative_path)?;
+                observed.push((path.clone(), observe_opened_file(&path, &opened)?));
+                Ok(())
+            },
+            &mut |path, error| {
+                unreadable.push((path.to_path_buf(), error.to_string()));
                 Ok(())
             },
         )?;
 
         let mut selected = HashMap::<[u8; 32], JsonlFileObservation>::new();
         let mut leaves = Vec::new();
-        for path in paths {
+        let mut rejected_leaves = Vec::new();
+        observed.sort_by(|left, right| left.0.cmp(&right.0));
+        for (path, observation) in observed {
             let Some((project_dir, layout, key)) = classify_claude_path(&projects_root, &path)?
             else {
                 continue;
@@ -179,8 +190,6 @@ where
             };
             let source = source_key(binding.source_root_lineage, &binding.key)?;
             let relative_path = relative_to_authority(&authority, &path)?;
-            let opened = authority.open_file(&relative_path)?;
-            let observation = observe_opened_file(&path, &opened)?;
             let digest = source.exact_descriptor_digest();
             if let Some(previous) = selected.get(&digest) {
                 if previous == &observation {
@@ -191,15 +200,56 @@ where
                 ));
             }
             selected.insert(digest, observation);
-            leaves.push(ProviderJsonlLeaf::observe(
+            leaves.push(ProviderJsonlLeaf::bind_observed(
                 source,
                 path,
                 Arc::clone(&authority),
                 relative_path,
                 TypedKey::bytes(serde_json::to_vec(&binding)?).map_err(contract)?,
-            )?);
+                selected
+                    .get(&digest)
+                    .expect("selected Claude observation was just inserted")
+                    .clone(),
+            ));
         }
-        ProviderJsonlInventory::present(self.provider(), root, authority, leaves)
+        unreadable.sort_by(|left, right| left.0.cmp(&right.0));
+        for (path, detail) in unreadable {
+            let Some((project_dir, layout, key)) = classify_claude_path(&projects_root, &path)?
+            else {
+                continue;
+            };
+            let binding = Binding {
+                project_dir,
+                source_root_lineage,
+                key,
+                layout,
+            };
+            let source = source_key(binding.source_root_lineage, &binding.key)?;
+            let relative_path = relative_to_authority(&authority, &path)?;
+            rejected_leaves.push(
+                JsonlFamilyRejectedLeaf::bind_unobserved(
+                    path.clone(),
+                    relative_path,
+                    TypedKey::bytes(serde_json::to_vec(&binding)?).map_err(contract)?,
+                    0,
+                )
+                .with_logical_source_failure(
+                    source.clone(),
+                    format!(
+                        "Claude transcript {} is unreadable: {detail}",
+                        path.display()
+                    ),
+                )
+                .with_quarantined_source(source),
+            );
+        }
+        ProviderJsonlInventory::present_with_rejected(
+            self.provider(),
+            root,
+            authority,
+            leaves,
+            rejected_leaves,
+        )
     }
 
     fn projector_with_provider_checkpoint(
@@ -226,7 +276,11 @@ where
             session: ClaudeSessionMetadata::new(binding.key.clone()),
             binding,
             identities,
-            rejected_records: 0,
+            rejections: JsonlRecordRejections::new(
+                leaf.source().clone(),
+                CaptureProvider::Claude,
+                leaf.source_path().to_string_lossy(),
+            ),
             fallback_identities: match (mode, base_event_lookup) {
                 (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
                     JsonlAppendOccurrenceState::for_append(base_lookup)
@@ -250,7 +304,7 @@ struct ClaudeProjector<B: ProviderRuntimeBinding> {
     binding: Binding,
     identities: Identities,
     session: ClaudeSessionMetadata,
-    rejected_records: u64,
+    rejections: JsonlRecordRejections,
     fallback_identities: JsonlAppendOccurrenceState<[u8; 32], ProviderBaseEventLookup<B>>,
 }
 
@@ -261,10 +315,13 @@ struct FallbackEventIdentity {
 }
 
 impl<B: ProviderRuntimeBinding> ClaudeProjector<B> {
-    fn reject_record(&mut self) -> Result<()> {
-        self.rejected_records = self.rejected_records.checked_add(1).ok_or_else(|| {
-            CaptureError::InvalidPayload("Claude rejected-record count overflowed".to_owned())
-        })?;
+    fn reject_record(
+        &mut self,
+        record: JsonlRecordRef<'_>,
+        class: SourceBackedRecordRejectionClass,
+        detail: impl Into<String>,
+    ) -> Result<()> {
+        self.rejections.record(record, class, detail);
         Ok(())
     }
 }
@@ -291,7 +348,11 @@ where
 
     fn retry_replacement(&mut self) {
         self.session = ClaudeSessionMetadata::new(self.binding.key.clone());
-        self.rejected_records = 0;
+        self.rejections = JsonlRecordRejections::new(
+            self.source.clone(),
+            CaptureProvider::Claude,
+            self.source_path.clone(),
+        );
         self.fallback_identities = JsonlAppendOccurrenceState::default();
     }
 
@@ -302,7 +363,11 @@ where
         emit: &mut dyn FnMut(CoreRecord) -> Result<()>,
     ) -> Result<()> {
         if record.oversized() {
-            return self.reject_record();
+            return self.reject_record(
+                record,
+                SourceBackedRecordRejectionClass::UnsupportedRecord,
+                "Claude JSONL record exceeds the supported size bound",
+            );
         }
         let evidence = record.evidence();
         let ordinal = evidence.physical_ordinal();
@@ -318,17 +383,31 @@ where
         };
         let parsed = match parse_native_record(record.bytes(), ordinal, &locator) {
             Ok(parsed) => parsed,
-            Err(_) => return self.reject_record(),
+            Err(error) => {
+                return self.reject_record(
+                    record,
+                    SourceBackedRecordRejectionClass::MalformedRecord,
+                    format!("malformed Claude JSONL record: {error}"),
+                );
+            }
         };
         if parsed_record_is_rejected(&parsed, &self.binding) {
-            return self.reject_record();
+            return self.reject_record(
+                record,
+                SourceBackedRecordRejectionClass::UnsupportedRecord,
+                "Claude JSONL record is outside the admitted session shape",
+            );
         }
         for row in &parsed.rows {
             match stable_native_event_identity(row, &self.source, self.identities.session_id) {
                 Ok(_) => {}
                 Err(error) => match scope_claude_row_validation_error(error) {
-                    ClaudePreflightError::RecordRejection { .. } => {
-                        return self.reject_record();
+                    ClaudePreflightError::RecordRejection { detail } => {
+                        return self.reject_record(
+                            record,
+                            SourceBackedRecordRejectionClass::UnsupportedRecord,
+                            detail,
+                        );
                     }
                     ClaudePreflightError::Internal(error) => return Err(error),
                     ClaudePreflightError::LogicalSourceFailure { .. } => {
@@ -344,8 +423,12 @@ where
                 parsed.git_branch.as_deref(),
             ) {
                 Ok(()) => {}
-                Err(ClaudePreflightError::RecordRejection { .. }) => {
-                    return self.reject_record();
+                Err(ClaudePreflightError::RecordRejection { detail }) => {
+                    return self.reject_record(
+                        record,
+                        SourceBackedRecordRejectionClass::UnsupportedRecord,
+                        detail,
+                    );
                 }
                 Err(ClaudePreflightError::Internal(error)) => return Err(error),
                 Err(ClaudePreflightError::LogicalSourceFailure { .. }) => {
@@ -399,7 +482,11 @@ where
     }
 
     fn rejected_records(&self) -> u64 {
-        self.rejected_records
+        self.rejections.count()
+    }
+
+    fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
+        self.rejections.take_drafts()
     }
 }
 

@@ -4,7 +4,7 @@ use super::*;
 pub struct JsonlFamilyRejectedLeaf {
     pub(super) source_path: PathBuf,
     pub(super) authority_path: PathBuf,
-    pub(super) observation: JsonlFileObservation,
+    pub(super) observation: Option<JsonlFileObservation>,
     pub(super) proof: TypedKey,
     pub(super) rejected_records: u64,
     pub(super) logical_source_failure: Option<(SourceKey, String)>,
@@ -23,7 +23,28 @@ impl JsonlFamilyRejectedLeaf {
         Self {
             source_path,
             authority_path,
-            observation,
+            observation: Some(observation),
+            proof,
+            rejected_records,
+            logical_source_failure: None,
+            quarantined_source: None,
+            physical_encoding: JsonlPhysicalEncoding::RawJsonl,
+        }
+    }
+
+    /// Binds a selected physical member that could not be opened or observed.
+    /// The retained root authority and terminal membership observation fence
+    /// publication; no unread bytes are admitted as source evidence.
+    pub fn bind_unobserved(
+        source_path: PathBuf,
+        authority_path: PathBuf,
+        proof: TypedKey,
+        rejected_records: u64,
+    ) -> Self {
+        Self {
+            source_path,
+            authority_path,
+            observation: None,
             proof,
             rejected_records,
             logical_source_failure: None,

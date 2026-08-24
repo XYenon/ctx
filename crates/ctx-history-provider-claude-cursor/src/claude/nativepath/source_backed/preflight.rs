@@ -183,7 +183,7 @@ pub(super) fn validate_source(
                 let count =
                     checked_preflight_identity_count(identities.len(), record_identities.len())?;
                 identities
-                    .try_reserve_exact(count - identities.len())
+                    .try_reserve(count - identities.len())
                     .map_err(|_| {
                         ClaudePreflightError::internal(CaptureError::SystemInvariant(
                             "Claude preflight source identity allocation failed",

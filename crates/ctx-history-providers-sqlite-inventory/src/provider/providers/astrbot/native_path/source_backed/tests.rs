@@ -134,9 +134,12 @@ fn transferred_snapshot_scan_failure_reports_cleanup_fatal_error() {
     )
     .unwrap();
 
-    let error = scan_astrbot_snapshot_v0(&source, snapshot, &mut |_record| {
-        Err(AstrBotSourceBackedErrorV0::CountOverflow)
-    })
+    let error = scan_astrbot_snapshot_v0(
+        &source,
+        snapshot,
+        &mut |_record| Err(AstrBotSourceBackedErrorV0::CountOverflow),
+        &mut crate::lifecycle::SourceBackedRecordRejectionDrafts::default(),
+    )
     .unwrap_err();
     let AstrBotSourceBackedErrorV0::SnapshotCleanup { primary, cleanup } = error else {
         panic!("expected typed primary-plus-cleanup failure");
@@ -344,6 +347,27 @@ fn row_local_projection_failure_rejects_only_its_conversation() {
     assert_eq!(certificate.counts().retained_records, 1);
     assert_eq!(certificate.counts().rejected_records, 1);
     assert_eq!(certificate.counts().indexed_documents, 1);
+}
+
+#[test]
+fn row_local_projection_filter_preserves_core_invariants() {
+    assert!(astrbot_row_projection_error(
+        &AstrBotSourceBackedErrorV0::Projection(ProjectionContractError::FieldTooLarge {
+            field: "typed_key_utf8",
+            actual: 2,
+            maximum: 1,
+        })
+    ));
+    for error in [
+        AstrBotSourceBackedErrorV0::Projection(ProjectionContractError::SourceChanged),
+        AstrBotSourceBackedErrorV0::Projection(ProjectionContractError::InvalidDerivedIdentity),
+        AstrBotSourceBackedErrorV0::CoreRecord(CoreRecordError::Projection(
+            ProjectionContractError::SourceChanged,
+        )),
+        AstrBotSourceBackedErrorV0::CoreRecord(CoreRecordError::InvalidIdentityRelationship),
+    ] {
+        assert!(!astrbot_row_projection_error(&error), "{error:?}");
+    }
 }
 
 #[test]

@@ -369,11 +369,15 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
         .members()
         .iter()
         .filter_map(|member| match member {
-            JsonlFamilyInventoryMember::Quarantined { leaf, .. } => Some((
-                leaf.source_path.as_path(),
-                leaf.authority_path.as_path(),
-                &leaf.observation,
-            )),
+            JsonlFamilyInventoryMember::Quarantined { leaf, .. } => {
+                leaf.observation.as_ref().map(|observation| {
+                    (
+                        leaf.source_path.as_path(),
+                        leaf.authority_path.as_path(),
+                        observation,
+                    )
+                })
+            }
             JsonlFamilyInventoryMember::Pending { leaf, .. } => Some((
                 leaf.source_path.as_path(),
                 leaf.authority_path.as_path(),
@@ -592,27 +596,33 @@ fn classify_incomplete_first_records<R: JsonlFamilyRuntime>(
                 });
             }
             JsonlFamilyInventoryMember::Quarantined { identity, leaf } => {
-                let authority = exact_member_authority(
-                    &opening.authorities,
-                    &leaf.source_path,
-                    &leaf.authority_path,
-                )?;
-                if first_record_is_incomplete(
-                    &leaf.source_path,
-                    authority,
-                    &leaf.authority_path,
-                    &leaf.observation,
-                    leaf.physical_encoding,
-                    adapter.record_framing(),
-                    false,
-                )? {
+                let incomplete = if let Some(observation) = &leaf.observation {
+                    let authority = exact_member_authority(
+                        &opening.authorities,
+                        &leaf.source_path,
+                        &leaf.authority_path,
+                    )?;
+                    first_record_is_incomplete(
+                        &leaf.source_path,
+                        authority,
+                        &leaf.authority_path,
+                        observation,
+                        leaf.physical_encoding,
+                        adapter.record_framing(),
+                        false,
+                    )?
+                } else {
+                    false
+                };
+                if incomplete {
                     changed = true;
                     classified.push(JsonlFamilyInventoryMember::Pending {
                         identity,
                         leaf: JsonlFamilyPendingLeaf::bind_observed(
                             leaf.source_path,
                             leaf.authority_path,
-                            leaf.observation,
+                            leaf.observation
+                                .expect("incomplete quarantined leaf has an admitted observation"),
                             leaf.proof,
                             leaf.quarantined_source,
                         ),
