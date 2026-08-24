@@ -14,8 +14,8 @@ use ctx_history_core::{
     derive_event_id, derive_native_session_id, ActivityInvocation, ActivityJsonCapture,
     ActivityResult, ActivityTextCapture, AgentScope, CaptureProvider, CoreActivity, CoreRecord,
     EventIdentityInput, EventType, LiteralFactKind, NativeItemKey, PositionStability,
-    ProviderDeclaredFact, ProviderNativeSessionRelationship, SourceKey, StableEntityId,
-    SubrecordSelector, TypedKey, CORE_ACTIVITY_REVISION, MAX_CORE_CONTENT_BYTES,
+    ProviderDeclaredFact, ProviderNativeSessionRelationship, SourceAnchorScope, SourceKey,
+    StableEntityId, SubrecordSelector, TypedKey, CORE_ACTIVITY_REVISION, MAX_CORE_CONTENT_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -54,14 +54,30 @@ const MAX_RETAINED_NATIVE_IDS: usize = 4_096;
 const MAX_RETAINED_NATIVE_ID_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MistralVibeJsonlAdapter<B>(PhantomData<fn() -> B>);
+pub(crate) struct MistralVibeJsonlAdapter<B> {
+    source_anchor_scope: SourceAnchorScope,
+    binding: PhantomData<fn() -> B>,
+}
 
 pub(crate) fn mistral_vibe_jsonl_adapter<B>(
 ) -> Arc<dyn JsonlFamilyAdapter<Runtime = ProviderJsonlRuntime<B>>>
 where
     B: ProviderRuntimeBinding,
 {
-    Arc::new(MistralVibeJsonlAdapter(PhantomData))
+    mistral_vibe_jsonl_adapter_with_source_root_lineage(None)
+}
+
+pub(crate) fn mistral_vibe_jsonl_adapter_with_source_root_lineage<B>(
+    source_root_lineage: Option<[u8; 32]>,
+) -> Arc<dyn JsonlFamilyAdapter<Runtime = ProviderJsonlRuntime<B>>>
+where
+    B: ProviderRuntimeBinding,
+{
+    Arc::new(MistralVibeJsonlAdapter {
+        source_anchor_scope: source_root_lineage
+            .map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+        binding: PhantomData,
+    })
 }
 
 #[derive(Debug)]
@@ -166,7 +182,7 @@ where
                     "Mistral Vibe inventory repeats a session ID".to_owned(),
                 ));
             }
-            let source = source_key(&session.provider_session_id)?;
+            let source = source_key_scoped(&session.provider_session_id, self.source_anchor_scope)?;
             let session_id = session_identity(&source, &session.provider_session_id)?;
             let revision_digest = admitted.revision_digest(&source)?;
             drafts.push(Draft {
@@ -192,9 +208,10 @@ where
             let parent_session_id = draft
                 .parent_provider_session_id
                 .as_deref()
-                .map(provider_session_identity)
+                .map(|parent| provider_session_identity(parent, self.source_anchor_scope))
                 .transpose()?;
-            let root_session_id = root_session_identity(draft, &by_session)?;
+            let root_session_id =
+                root_session_identity(draft, &by_session, self.source_anchor_scope)?;
             let binding = Binding {
                 metadata_relative_path: draft.metadata_relative_path.clone(),
                 provider_session_id: draft.provider_session_id.clone(),
@@ -669,14 +686,23 @@ fn relative_to_authority(authority: &ProviderSourceRoot, path: &Path) -> Result<
         })
 }
 
+#[cfg(test)]
 fn source_key(native_session_id: &str) -> Result<SourceKey> {
-    SourceKey::derive_provider_native(
+    source_key_scoped(native_session_id, SourceAnchorScope::Unqualified)
+}
+
+fn source_key_scoped(
+    native_session_id: &str,
+    source_anchor_scope: SourceAnchorScope,
+) -> Result<SourceKey> {
+    SourceKey::derive_provider_native_scoped(
         CaptureProvider::MistralVibe.as_str(),
         MISTRAL_VIBE_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         1,
         SOURCE_ANCHOR_NAMESPACE,
         TypedKey::utf8(native_session_id).map_err(contract)?,
+        source_anchor_scope,
     )
     .map_err(contract)
 }
@@ -691,14 +717,18 @@ fn session_identity(source: &SourceKey, native_session_id: &str) -> Result<Stabl
     .map_err(contract)
 }
 
-fn provider_session_identity(native_session_id: &str) -> Result<StableEntityId> {
-    let source = source_key(native_session_id)?;
+fn provider_session_identity(
+    native_session_id: &str,
+    source_anchor_scope: SourceAnchorScope,
+) -> Result<StableEntityId> {
+    let source = source_key_scoped(native_session_id, source_anchor_scope)?;
     session_identity(&source, native_session_id)
 }
 
 fn root_session_identity(
     lineage: &Draft,
     lineages: &BTreeMap<&str, &Draft>,
+    source_anchor_scope: SourceAnchorScope,
 ) -> Result<StableEntityId> {
     let mut current = lineage;
     let mut root = lineage.session_id;
@@ -712,7 +742,7 @@ fn root_session_identity(
         let Some(parent_id) = current.parent_provider_session_id.as_deref() else {
             return Ok(root);
         };
-        root = provider_session_identity(parent_id)?;
+        root = provider_session_identity(parent_id, source_anchor_scope)?;
         let Some(parent) = lineages.get(parent_id) else {
             return Ok(root);
         };
@@ -760,6 +790,23 @@ fn contract(error: impl std::fmt::Display) -> CaptureError {
 mod tests {
     use super::*;
     use ctx_history_jsonl::FallbackEventIdentityMode;
+
+    #[test]
+    fn source_and_related_session_identities_are_root_scoped() {
+        let released = source_key("same-session").unwrap();
+        let compatibility =
+            source_key_scoped("same-session", SourceAnchorScope::Unqualified).unwrap();
+        let first = source_key_scoped("same-session", SourceAnchorScope::Lineage([1; 32])).unwrap();
+        let second =
+            source_key_scoped("same-session", SourceAnchorScope::Lineage([2; 32])).unwrap();
+
+        assert!(released.exact_descriptor_eq(&compatibility));
+        assert_ne!(first.identity(), second.identity());
+        assert_ne!(
+            provider_session_identity("parent", SourceAnchorScope::Lineage([1; 32])).unwrap(),
+            provider_session_identity("parent", SourceAnchorScope::Lineage([2; 32])).unwrap()
+        );
+    }
 
     #[derive(Clone)]
     struct EmptyLookup;

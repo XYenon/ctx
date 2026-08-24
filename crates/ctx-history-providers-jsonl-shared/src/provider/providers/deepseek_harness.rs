@@ -9,12 +9,12 @@ use std::{
 use ctx_history_core::{
     derive_event_id, AgentScope, CaptureProvider, CoreActivity, CoreContentPolicyStatus,
     CoreRecord, EventIdentityInput, LiteralFactKind, NativeItemKey, ProviderDeclaredFact,
-    SourceKey, StableEntityId, TypedKey, CORE_ACTIVITY_REVISION,
+    SourceAnchorScope, SourceKey, StableEntityId, TypedKey, CORE_ACTIVITY_REVISION,
 };
 use ctx_history_native_jsonl_parsers::deepseek_harness::{
     agent_scope, exact_file_references, is_session_leaf, is_zstd_session_leaf, parse_row,
-    sequence_span, session_identity, source_key, visit_storage_rows, ParsedRow, SemanticEvent,
-    SequenceSpan, SessionHeader, StorageRowsError, SOURCE_SCHEMA_VARIANT,
+    sequence_span, session_identity, source_key_scoped, visit_storage_rows, ParsedRow,
+    SemanticEvent, SequenceSpan, SessionHeader, StorageRowsError, SOURCE_SCHEMA_VARIANT,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -50,17 +50,31 @@ const PARSER_REVISION: &str = "deepseek-harness-native-jsonl-v3-selected-core-ac
 const EVENT_IDENTITY_REVISION: &str = "deepseek-harness-sequence-v1";
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DeepSeekHarnessJsonlAdapter<R>(PhantomData<fn() -> R>);
+pub(crate) struct DeepSeekHarnessJsonlAdapter<R> {
+    source_anchor_scope: SourceAnchorScope,
+    runtime: PhantomData<fn() -> R>,
+}
 
 pub(crate) fn jsonl_adapter<R: JsonlProviderRuntime>(
     source_format: &'static str,
+) -> Result<Arc<dyn JsonlFamilyAdapter<Runtime = R>>> {
+    jsonl_adapter_with_source_root_lineage(source_format, None)
+}
+
+pub(crate) fn jsonl_adapter_with_source_root_lineage<R: JsonlProviderRuntime>(
+    source_format: &'static str,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> Result<Arc<dyn JsonlFamilyAdapter<Runtime = R>>> {
     if !matches!(source_format, TREE_SOURCE_FORMAT | EXPLICIT_SOURCE_FORMAT) {
         return Err(CaptureError::InvalidPayload(format!(
             "unknown DeepSeek Harness source format {source_format:?}"
         )));
     }
-    Ok(Arc::new(DeepSeekHarnessJsonlAdapter(PhantomData)))
+    Ok(Arc::new(DeepSeekHarnessJsonlAdapter {
+        source_anchor_scope: source_root_lineage
+            .map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+        runtime: PhantomData,
+    }))
 }
 
 impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for DeepSeekHarnessJsonlAdapter<R> {
@@ -156,7 +170,12 @@ impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for DeepSeekHarnessJsonlAdapter
                     "DeepSeek Harness inventory repeats a native session identity".to_owned(),
                 ));
             }
-            let source = source_key(EXPLICIT_SOURCE_FORMAT, &binding.id).map_err(contract)?;
+            let source = source_key_scoped(
+                EXPLICIT_SOURCE_FORMAT,
+                &binding.id,
+                self.source_anchor_scope,
+            )
+            .map_err(contract)?;
             leaves.push(JsonlFamilyLeaf::observe(
                 source,
                 path,

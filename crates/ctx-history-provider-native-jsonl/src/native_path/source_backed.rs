@@ -9,8 +9,8 @@ use chrono::{DateTime, Utc};
 use ctx_history_core::{
     admit_provider_declared_fact, derive_event_id, derive_native_session_id, CaptureProvider,
     CoreActivity, CoreRecord, CoreRecordError, EventIdentityInput, LiteralFactKind, NativeItemKey,
-    PositionStability, ProjectionContractError, ProviderDeclaredFact, SourceKey, StableEntityId,
-    SubrecordSelector, TypedKey, CORE_ACTIVITY_REVISION, MAX_CORE_CONTENT_BYTES,
+    PositionStability, ProjectionContractError, ProviderDeclaredFact, SourceAnchorScope, SourceKey,
+    StableEntityId, SubrecordSelector, TypedKey, CORE_ACTIVITY_REVISION, MAX_CORE_CONTENT_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -87,6 +87,7 @@ pub struct DirectJsonlFamilyAdapter<R: NativeJsonlRuntime> {
     source_format: &'static str,
     schema_variant: &'static str,
     parser_revision: &'static str,
+    source_anchor_scope: SourceAnchorScope,
     runtime: std::marker::PhantomData<R>,
 }
 
@@ -110,8 +111,20 @@ impl<R: NativeJsonlRuntime> DirectJsonlFamilyAdapter<R> {
             source_format,
             schema_variant,
             parser_revision,
+            source_anchor_scope: SourceAnchorScope::Unqualified,
             runtime: std::marker::PhantomData,
         }
+    }
+
+    /// Qualifies provider-native source anchors for one durable provider root.
+    ///
+    /// `None` preserves the released unqualified source identity exactly.
+    pub const fn with_source_root_lineage(mut self, source_root_lineage: Option<[u8; 32]>) -> Self {
+        self.source_anchor_scope = match source_root_lineage {
+            Some(lineage) => SourceAnchorScope::Lineage(lineage),
+            None => SourceAnchorScope::Unqualified,
+        };
+        self
     }
 
     const fn effective_parser_revision(self) -> &'static str {
@@ -122,13 +135,14 @@ impl<R: NativeJsonlRuntime> DirectJsonlFamilyAdapter<R> {
     }
 
     fn source_key(self, native_session_id: &str) -> DirectJsonlAdapterResult<SourceKey> {
-        Ok(SourceKey::derive_provider_native(
+        Ok(SourceKey::derive_provider_native_scoped(
             self.provider.as_str(),
             self.source_format,
             self.schema_variant,
             DIRECT_JSONL_SOURCE_IDENTITY_VERSION,
             format!("{}.direct-jsonl-session", self.provider.as_str()),
             TypedKey::utf8(native_session_id)?,
+            self.source_anchor_scope,
         )?)
     }
 
@@ -935,6 +949,53 @@ fn capture_error(error: DirectJsonlAdapterError) -> CaptureError {
     match error {
         DirectJsonlAdapterError::Capture(error) => error,
         other => CaptureError::InvalidPayload(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod source_scope_tests {
+    use crate::{
+        native_path::{
+            antigravity_source_backed_adapter, copilot_source_backed_adapter,
+            factory_droid_source_backed_adapter, grok_build_source_backed_adapter,
+            qoder_source_backed_adapter, qwen_code_source_backed_adapter,
+            tabnine_source_backed_adapter,
+        },
+        test_support::NativeJsonlTestRuntime,
+    };
+
+    #[test]
+    fn direct_jsonl_source_and_session_identities_are_root_scoped() {
+        let adapters = [
+            antigravity_source_backed_adapter::<NativeJsonlTestRuntime>(),
+            copilot_source_backed_adapter::<NativeJsonlTestRuntime>(),
+            factory_droid_source_backed_adapter::<NativeJsonlTestRuntime>(),
+            grok_build_source_backed_adapter::<NativeJsonlTestRuntime>(),
+            qoder_source_backed_adapter::<NativeJsonlTestRuntime>(),
+            qwen_code_source_backed_adapter::<NativeJsonlTestRuntime>(),
+            tabnine_source_backed_adapter::<NativeJsonlTestRuntime>(),
+        ];
+
+        for adapter in adapters {
+            let released = adapter.source_key("shared-native-session").unwrap();
+            let compatibility = adapter
+                .with_source_root_lineage(None)
+                .source_key("shared-native-session")
+                .unwrap();
+            let first = adapter
+                .with_source_root_lineage(Some([1; 32]))
+                .session_identity("shared-native-session")
+                .unwrap();
+            let second = adapter
+                .with_source_root_lineage(Some([2; 32]))
+                .session_identity("shared-native-session")
+                .unwrap();
+
+            assert!(released.exact_descriptor_eq(&compatibility));
+            assert_ne!(released.identity(), first.0.identity());
+            assert_ne!(first.0.identity(), second.0.identity());
+            assert_ne!(first.1, second.1);
+        }
     }
 }
 

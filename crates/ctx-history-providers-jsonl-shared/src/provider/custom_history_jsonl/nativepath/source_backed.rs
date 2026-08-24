@@ -26,8 +26,8 @@ use ctx_history_core::{
     CtxHistoryJsonlLineageContract, CtxHistoryJsonlRecord, NativeSessionKey,
     ProjectionContractError, ProviderDeclaredFact, ProviderNativeCopyProof,
     ProviderNativeSessionRelationship, ScannedSourceCounts, SessionIdentityInput, SourceAnchor,
-    SourceFrontier, SourceKey, StableEntityId, TypedKey, CTX_HISTORY_JSONL_SCHEMA_VERSION,
-    MAX_CORE_CONTENT_BYTES, MAX_PROVIDER_DECLARED_FACTS,
+    SourceAnchorScope, SourceFrontier, SourceKey, StableEntityId, TypedKey,
+    CTX_HISTORY_JSONL_SCHEMA_VERSION, MAX_CORE_CONTENT_BYTES, MAX_PROVIDER_DECLARED_FACTS,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -171,6 +171,7 @@ pub(crate) type CustomHistorySourceBackedResult<T> = Result<T, CustomHistorySour
 pub(crate) struct CustomHistorySourceBackedInput {
     path: PathBuf,
     catalog_lineage: [u8; 32],
+    source_anchor_scope: SourceAnchorScope,
 }
 
 impl CustomHistorySourceBackedInput {
@@ -178,6 +179,20 @@ impl CustomHistorySourceBackedInput {
         Self {
             path: path.into(),
             catalog_lineage,
+            source_anchor_scope: SourceAnchorScope::Unqualified,
+        }
+    }
+
+    pub(crate) fn explicit_with_source_root_lineage(
+        path: impl Into<PathBuf>,
+        catalog_lineage: [u8; 32],
+        source_root_lineage: Option<[u8; 32]>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            catalog_lineage,
+            source_anchor_scope: source_root_lineage
+                .map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
         }
     }
 
@@ -186,12 +201,13 @@ impl CustomHistorySourceBackedInput {
     }
 
     pub(crate) fn source_key(&self) -> CustomHistorySourceBackedResult<SourceKey> {
-        Ok(SourceKey::derive(
+        Ok(SourceKey::derive_scoped(
             CaptureProvider::Custom.as_str(),
             CUSTOM_ROUTE_SOURCE_FORMAT,
             CUSTOM_SOURCE_SCHEMA_VARIANT,
             CUSTOM_SOURCE_IDENTITY_VERSION,
             SourceAnchor::CatalogLineage(self.catalog_lineage),
+            self.source_anchor_scope,
         )?)
     }
 }
