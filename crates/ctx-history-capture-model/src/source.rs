@@ -9,6 +9,7 @@ pub enum DiscoveryIssueKind {
     NoDiskHistory,
     SelectorUnreconstructible,
     InsufficientOfficialEvidence,
+    ConfiguredRootConflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,6 +245,10 @@ mod tests {
             (
                 DiscoveryIssueKind::InsufficientOfficialEvidence,
                 "InsufficientOfficialEvidence",
+            ),
+            (
+                DiscoveryIssueKind::ConfiguredRootConflict,
+                "ConfiguredRootConflict",
             ),
         ] {
             assert_eq!(format!("{value:?}"), spelling);

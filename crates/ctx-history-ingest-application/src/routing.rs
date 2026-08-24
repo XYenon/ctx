@@ -167,6 +167,9 @@ pub(crate) fn validate_selected_provider(
                 "{} has no official automatic history location established",
                 guidance.display_name
             ),
+            DiscoveryIssueKind::ConfiguredRootConflict => {
+                format!("{} configured history roots overlap", guidance.display_name)
+            }
         };
         return Err(anyhow!(
             "{summary}: {}; use `{}`",

@@ -197,6 +197,33 @@ fn configured_claude_roots_add_to_automatic_discovery() {
 }
 
 #[test]
+fn distinct_configured_root_ids_cannot_share_one_physical_root() {
+    let temp = tempdir();
+    let base = context(&temp, DiscoveryPlatform::Linux);
+    let shared = temp.path().join("claude-shared");
+    fs::create_dir_all(shared.join("projects")).unwrap();
+    let definition = |id: &str| ctx_history_capture_model::ProviderRootDefinition {
+        id: id.to_owned(),
+        provider: CaptureProvider::Claude,
+        path: shared.clone(),
+        group: None,
+    };
+    let report = resolve_provider(
+        &base
+            .with_automatic_provider_discovery(false)
+            .with_configured_provider_roots(vec![definition("personal"), definition("work")]),
+        CaptureProvider::Claude,
+    );
+
+    assert!(report.sources.is_empty());
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(
+        report.issues[0].kind,
+        DiscoveryIssueKind::ConfiguredRootConflict
+    );
+}
+
+#[test]
 fn global_automatic_disable_keeps_only_named_provider_roots() {
     let temp = tempdir();
     let base = context(&temp, DiscoveryPlatform::Linux);

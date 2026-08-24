@@ -416,6 +416,39 @@ impl SourceBackedProviderRegistry {
         self.applied_provider_roots.as_ref()
     }
 
+    /// Keeps the last generation's route ownership for an unchanged configured
+    /// root whose current no-follow discovery could not safely reconstruct any
+    /// route. Desired-state removal is handled separately by refresh execution.
+    pub fn retain_unavailable_provider_root_routes(
+        &mut self,
+        retained: &[AppliedProviderRoot],
+    ) -> SourceBackedCoordinatorResult<()> {
+        let Some((_, _, current)) = self.applied_provider_roots.as_mut() else {
+            return Ok(());
+        };
+        for root in current.iter_mut().filter(|root| root.routes().is_empty()) {
+            let definition = root.definition();
+            let Some(previous) = retained.iter().find(|previous| {
+                let previous_definition = previous.definition();
+                previous_definition.id == definition.id
+                    && previous_definition.provider == definition.provider
+                    && previous_definition.path == definition.path
+            }) else {
+                continue;
+            };
+            if previous.routes().is_empty() {
+                continue;
+            }
+            *root = AppliedProviderRoot::with_source_identity(
+                definition.clone(),
+                root.source_identity(),
+                previous.routes().to_vec(),
+            )
+            .map_err(SourceBackedCoordinatorError::Index)?;
+        }
+        Ok(())
+    }
+
     pub fn executable_route_identities(&self) -> Vec<SourceRouteIdentity> {
         self.routes
             .iter()

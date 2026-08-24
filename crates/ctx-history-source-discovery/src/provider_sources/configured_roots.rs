@@ -9,7 +9,8 @@ use super::{
     context::DiscoveryContext,
     reasons::path_presence_unknown_reason,
     resolvers::{
-        issue, path_presence, push_source_candidate, source_from_parts_with_data_root, PathPresence,
+        issue, path_presence, provider_paths_equivalent, push_source_candidate,
+        source_from_parts_with_data_root, PathPresence,
     },
     selectors::encoded_path_within_limit,
     types::{DiscoveryIssueKind, DiscoveryReport, ProviderSourceKind, ProviderSourceSpec},
@@ -20,6 +21,8 @@ const CONFIGURED_ROOT_SYMLINK_REASON: &str =
     "the selected history path uses a symlink component; use a trusted real provider root";
 const CONFIGURED_ROOT_PATH_LIMIT_REASON: &str =
     "the selected provider history path exceeds the discovery path limit";
+const CONFIGURED_ROOT_CONFLICT_REASON: &str =
+    "distinct configured roots resolve to the same physical provider root";
 
 /// Filesystem kind required by a configured-root capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,11 +316,26 @@ pub(super) fn expand_configured_roots_for_provider(
         ConfiguredRootExpander::CodexHomeV1 => CODEX_ROUTES,
     };
     let mut report = DiscoveryReport::default();
-    for root in context
+    let roots = context
         .configured_provider_roots()
         .iter()
         .filter(|root| root.provider == spec.provider)
-    {
+        .collect::<Vec<_>>();
+    if let Some(conflicting) = roots.iter().enumerate().find_map(|(index, left)| {
+        roots[index + 1..]
+            .iter()
+            .find(|right| provider_paths_equivalent(&left.path, &right.path))
+            .copied()
+    }) {
+        report.issues.push(issue(
+            spec.provider,
+            Some(conflicting.path.clone()),
+            DiscoveryIssueKind::ConfiguredRootConflict,
+            CONFIGURED_ROOT_CONFLICT_REASON,
+        ));
+        return report;
+    }
+    for root in roots {
         for expansion in expansions {
             add_configured_source(
                 probes,

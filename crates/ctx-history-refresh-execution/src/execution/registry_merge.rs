@@ -94,14 +94,25 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
     let previous_provider_root_routes = retained_generation
         .as_ref()
         .map(|generation| {
+            let desired_root_ids = discovery
+                .configured_provider_roots()
+                .iter()
+                .map(|root| root.id.as_str())
+                .collect::<BTreeSet<_>>();
             generation
                 .manifest()
                 .provider_roots()
                 .iter()
+                .filter(|root| !desired_root_ids.contains(root.definition().id.as_str()))
                 .flat_map(|root| root.routes().iter().cloned())
                 .collect::<BTreeSet<_>>()
         })
         .unwrap_or_default();
+    if let Some(retained) = retained_generation.as_ref() {
+        build
+            .registry
+            .retain_unavailable_provider_root_routes(retained.manifest().provider_roots())?;
+    }
     let current_provider_root_routes = build
         .registry
         .applied_provider_roots()

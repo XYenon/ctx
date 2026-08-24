@@ -308,6 +308,7 @@ fn discovery_issue_code(kind: DiscoveryIssueKind) -> &'static str {
         DiscoveryIssueKind::NoDiskHistory => "no_disk_history",
         DiscoveryIssueKind::SelectorUnreconstructible => "selector_unreconstructible",
         DiscoveryIssueKind::InsufficientOfficialEvidence => "insufficient_official_evidence",
+        DiscoveryIssueKind::ConfiguredRootConflict => "configured_root_conflict",
     }
 }
 

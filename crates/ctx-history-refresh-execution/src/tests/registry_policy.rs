@@ -178,6 +178,15 @@ fn only_unscopable_registry_safety_issues_block_globally() {
     };
     let error = reject_blocking_automatic_registry_issues(&[unsafe_overlap]).unwrap_err();
     assert!(format!("{error:#}").contains("injected unsafe root overlap"));
+
+    let configured_conflict = SourceBackedAutomaticRegistryIssue::Discovery(DiscoveryIssue {
+        provider: CaptureProvider::Claude,
+        path: Some(PathBuf::from("/configured/claude")),
+        kind: DiscoveryIssueKind::ConfiguredRootConflict,
+        reason: "injected configured root conflict",
+    });
+    let error = reject_blocking_automatic_registry_issues(&[configured_conflict]).unwrap_err();
+    assert!(format!("{error:#}").contains("injected configured root conflict"));
 }
 
 #[test]

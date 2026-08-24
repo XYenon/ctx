@@ -460,6 +460,9 @@ fn render_discovery_issue(context: &RenderContext, issue: &DiscoveryIssue) -> Do
             format!("{provider} has no established automatic history location"),
             issue.reason,
         ),
+        DiscoveryIssueKind::ConfiguredRootConflict => {
+            (format!("{provider} configured roots overlap"), issue.reason)
+        }
     };
     let command = manual_path_guidance(issue.provider);
     diagnostic(

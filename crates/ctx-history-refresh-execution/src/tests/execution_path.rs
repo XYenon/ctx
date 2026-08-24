@@ -1079,6 +1079,152 @@ fn naming_a_failing_automatic_home_carries_it_while_named_peer_advances() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn unchanged_symlinked_configured_root_retains_history_while_peer_advances() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let fixture = fs::canonicalize(temp.path()).unwrap();
+    let data_root = fixture.join("data");
+    let index_root = source_backed_index_root(&data_root);
+    ctx_history_platform::platform_security::establish_private_data_root(&data_root).unwrap();
+    let (_, _, discovery) = discovery_fixture(&fixture);
+    let retained_home = fixture.join("claude-retained");
+    let peer_home = fixture.join("claude-peer");
+    let retained_session =
+        retained_home.join("projects/project/019fb700-0000-7000-8000-000000000717.jsonl");
+    let peer_session =
+        peer_home.join("projects/project/019fb700-0000-7000-8000-000000000718.jsonl");
+    fs::create_dir_all(retained_session.parent().unwrap()).unwrap();
+    fs::create_dir_all(peer_session.parent().unwrap()).unwrap();
+    let claude_message = |uuid: &str, session_id: &str, content: &str| {
+        format!(
+            "{}\n",
+            json!({
+                "type": "user",
+                "uuid": uuid,
+                "sessionId": session_id,
+                "message": {"role": "user", "content": content}
+            })
+        )
+    };
+    fs::write(
+        &retained_session,
+        claude_message(
+            "019fb710-0000-7000-8000-000000000717",
+            "019fb700-0000-7000-8000-000000000717",
+            "retainedsymlinkfixture",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &peer_session,
+        claude_message(
+            "019fb710-0000-7000-8000-000000000718",
+            "019fb700-0000-7000-8000-000000000718",
+            "peer initial",
+        ),
+    )
+    .unwrap();
+    let definition = |id: &str, path: PathBuf| ctx_history_capture::ProviderRootDefinition {
+        id: id.to_owned(),
+        provider: CaptureProvider::Claude,
+        path,
+        group: Some(id.to_owned()),
+    };
+    let definitions = vec![
+        definition("retained", retained_home.clone()),
+        definition("peer", peer_home.clone()),
+    ];
+    let discovery = discovery
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(definitions);
+    let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
+    refresh_all_provider_sources(
+        &discovery,
+        ctx_history_capture::discover_provider_sources_with_context(&discovery),
+        StdDuration::ZERO,
+        &data_root,
+        &index_root,
+        None,
+        SourceBackedRefreshScope::All,
+        &mut progress,
+    )
+    .unwrap();
+    let first = VerifiedIndex::open(&index_root).unwrap();
+    let retained_routes = first
+        .manifest()
+        .provider_roots()
+        .iter()
+        .find(|root| root.definition().id == "retained")
+        .unwrap()
+        .routes()
+        .to_vec();
+    drop(first);
+
+    let displaced_home = fixture.join("claude-retained-displaced");
+    fs::rename(&retained_home, &displaced_home).unwrap();
+    symlink(&displaced_home, &retained_home).unwrap();
+    fs::write(
+        &peer_session,
+        format!(
+            "{}{}",
+            claude_message(
+                "019fb710-0000-7000-8000-000000000718",
+                "019fb700-0000-7000-8000-000000000718",
+                "peer initial",
+            ),
+            claude_message(
+                "019fb710-0000-7000-8000-000000000719",
+                "019fb700-0000-7000-8000-000000000718",
+                "advancedsymlinkpeerfixture",
+            )
+        ),
+    )
+    .unwrap();
+    let report = ctx_history_capture::discover_provider_sources_with_context(&discovery);
+    assert!(report.issues.iter().any(|issue| {
+        issue.provider == CaptureProvider::Claude
+            && issue.kind == DiscoveryIssueKind::SelectorUnreconstructible
+    }));
+    let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
+    refresh_all_provider_sources(
+        &discovery,
+        report,
+        StdDuration::ZERO,
+        &data_root,
+        &index_root,
+        None,
+        SourceBackedRefreshScope::All,
+        &mut progress,
+    )
+    .unwrap();
+
+    let published = VerifiedIndex::open(&index_root).unwrap();
+    let retained_root = published
+        .manifest()
+        .provider_roots()
+        .iter()
+        .find(|root| root.definition().id == "retained")
+        .unwrap();
+    assert_eq!(retained_root.routes(), retained_routes);
+    assert_eq!(
+        published
+            .search_event_candidates("retainedsymlinkfixture", 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        published
+            .search_event_candidates("advancedsymlinkpeerfixture", 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn removing_last_configured_claude_home_returns_to_one_automatic_route() {
     let temp = tempfile::tempdir().unwrap();
