@@ -25,7 +25,9 @@ use super::*;
 use ctx_history_jsonl::{
     fit_jsonl_activity, FallbackEventIdentityState, JsonlActivityObservedBytes, JsonlFamilyAdapter,
     JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode,
-    JsonlFamilyProjector, JsonlFamilyWorkerContext, JsonlRecordRef,
+    JsonlFamilyProjector, JsonlFamilyWorkerContext, JsonlOversizedRecordPolicy, JsonlRecordRef,
+    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDraft,
+    SourceBackedRecordRejectionDrafts,
 };
 use ctx_history_provider_runtime::{
     source_io::{OpenedProviderSourceFile, ProviderSourceRoot},
@@ -44,7 +46,7 @@ const NATIVE_EVENT_REUSED_TOOL_CALL_POSITION_KIND: &str =
     "mistral-vibe-duplicate-tool-call-id-ordinal";
 const LOGICAL_SESSION_KIND: &str = "mistral-vibe-session";
 const LOGICAL_EVENT_KIND: &str = "mistral-vibe-event";
-const PARSER_REVISION: &str = "mistral-vibe-source-backed-v14-optional-admission";
+const PARSER_REVISION: &str = "mistral-vibe-source-backed-v15-optional-admission-record-rejections";
 const EVENT_IDENTITY_REVISION: &str = "mistral-vibe-content-occurrence-v1";
 const FALLBACK_FINGERPRINT_DOMAIN: &[u8] = b"ctx.mistral-vibe.fallback-event-fingerprint.v1\0";
 const SOURCE_REVISION_DIGEST_DOMAIN: &[u8] = b"ctx.mistral-vibe.source-revision.v1\0";
@@ -120,6 +122,10 @@ where
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
         JsonlFamilyAppendMode::Replacement
+    }
+
+    fn oversized_record_policy(&self) -> JsonlOversizedRecordPolicy {
+        JsonlOversizedRecordPolicy::RejectRecord
     }
 
     fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory<CaptureError>> {
@@ -245,6 +251,7 @@ where
         let binding = decode_binding(leaf)?;
         Ok(Box::new(MistralProjector::<B> {
             source: leaf.source().clone(),
+            source_selector: leaf.source_path().display().to_string(),
             fallback_identities: FallbackEventIdentityState::new(
                 leaf.source().clone(),
                 binding.session_id,
@@ -256,15 +263,42 @@ where
             )?,
             native_identities: MistralNativeIdentityTracker::default(),
             binding,
+            rejected_records: 0,
+            record_rejections: SourceBackedRecordRejectionDrafts::default(),
         }))
     }
 }
 
 struct MistralProjector<B: ProviderRuntimeBinding> {
     source: SourceKey,
+    source_selector: String,
     binding: Binding,
     fallback_identities: FallbackEventIdentityState<ProviderBaseEventLookup<B>, CaptureError>,
     native_identities: MistralNativeIdentityTracker,
+    rejected_records: u64,
+    record_rejections: SourceBackedRecordRejectionDrafts,
+}
+
+impl<B: ProviderRuntimeBinding> MistralProjector<B> {
+    fn reject(&mut self, record: JsonlRecordRef<'_>, detail: String) -> Result<()> {
+        self.rejected_records =
+            self.rejected_records
+                .checked_add(1)
+                .ok_or(CaptureError::SystemInvariant(
+                    "Mistral Vibe record rejection count overflowed",
+                ))?;
+        self.record_rejections
+            .record(SourceBackedRecordRejectionDraft {
+                source: self.source.clone(),
+                provider: CaptureProvider::MistralVibe,
+                source_selector: self.source_selector.clone(),
+                line_number: record.evidence().physical_ordinal().saturating_add(1),
+                payload_type: None,
+                class: SourceBackedRecordRejectionClass::MalformedRecord,
+                detail,
+            });
+        Ok(())
+    }
 }
 
 impl<B> JsonlFamilyProjector for MistralProjector<B>
@@ -279,6 +313,17 @@ where
         _worker: &mut JsonlFamilyWorkerContext<Self::Runtime>,
         emit: &mut dyn FnMut(CoreRecord) -> Result<()>,
     ) -> Result<()> {
+        if record.oversized() {
+            return self.reject(
+                record,
+                format!(
+                    "Mistral Vibe record exceeds the {MAX_PROVIDER_JSONL_LINE_BYTES} byte limit"
+                ),
+            );
+        }
+        if let Err(error) = serde_json::from_slice::<Value>(record.bytes()) {
+            return self.reject(record, format!("malformed Mistral Vibe JSONL: {error}"));
+        }
         if let Some(document) = core_record(
             &self.source,
             &self.binding,
@@ -293,6 +338,14 @@ where
 
     fn finish(&mut self) -> Result<()> {
         self.fallback_identities.finish()
+    }
+
+    fn rejected_records(&self) -> u64 {
+        self.rejected_records
+    }
+
+    fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
+        std::mem::take(&mut self.record_rejections)
     }
 }
 

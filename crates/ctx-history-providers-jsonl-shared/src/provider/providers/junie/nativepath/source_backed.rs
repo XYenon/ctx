@@ -24,7 +24,7 @@ use crate::{
         family::jsonl::{
             JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyWorkerContext,
-            JsonlRecordRef,
+            JsonlOversizedRecordPolicy, JsonlRecordRef,
         },
         FallbackEventIdentityState,
     },
@@ -42,7 +42,8 @@ const NATIVE_SESSION_NAMESPACE: &str = "junie.session";
 const LOGICAL_SESSION_KIND: &str = "junie-session";
 const LOGICAL_EVENT_KIND: &str = "junie-event";
 const SOURCE_SCHEMA_VARIANT: &str = "junie-session-events-v2";
-const PARSER_REVISION: &str = "junie-source-backed-v7-optional-activity-admission";
+const PARSER_REVISION: &str =
+    "junie-source-backed-v8-optional-activity-admission-record-rejections";
 const EVENT_IDENTITY_REVISION: &str = "junie-content-occurrence-v2";
 const FALLBACK_FINGERPRINT_DOMAIN: &[u8] = b"ctx.junie.fallback-event-fingerprint.v1\0";
 
@@ -87,6 +88,10 @@ impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for JunieJsonlAdapter<R> {
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
         JsonlFamilyAppendMode::Replacement
+    }
+
+    fn oversized_record_policy(&self) -> JsonlOversizedRecordPolicy {
+        JsonlOversizedRecordPolicy::RejectRecord
     }
 
     fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory> {
@@ -232,6 +237,10 @@ impl<R: JsonlProviderRuntime> JsonlFamilyProjector for JunieProjector<R> {
         let rows = self.projection.finish()?;
         self.emit_rows(rows, emit)?;
         self.fallback_identities.finish()
+    }
+
+    fn rejected_records(&self) -> u64 {
+        self.projection.rejected_records()
     }
 }
 

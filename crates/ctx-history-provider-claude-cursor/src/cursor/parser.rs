@@ -15,6 +15,12 @@ pub(crate) enum CursorRejectionKind {
     UnsupportedShape,
 }
 
+pub(super) enum CursorJsonlRecordOutcome {
+    Events(Vec<super::projection::CursorNativeEvent>),
+    Ignored,
+    Rejected(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum CursorSafePart {
     BodyFree {
@@ -80,12 +86,38 @@ pub(super) fn project_cursor_jsonl_record(
     byte_start: u64,
     byte_end_exclusive: u64,
 ) -> Result<Option<Vec<super::projection::CursorNativeEvent>>> {
+    Ok(
+        match project_cursor_jsonl_record_with_rejection(
+            bytes,
+            semantic_ordinal,
+            physical_ordinal,
+            byte_start,
+            byte_end_exclusive,
+        )? {
+            CursorJsonlRecordOutcome::Events(events) => Some(events),
+            CursorJsonlRecordOutcome::Ignored | CursorJsonlRecordOutcome::Rejected(_) => None,
+        },
+    )
+}
+
+pub(super) fn project_cursor_jsonl_record_with_rejection(
+    bytes: &[u8],
+    semantic_ordinal: u64,
+    physical_ordinal: u64,
+    byte_start: u64,
+    byte_end_exclusive: u64,
+) -> Result<CursorJsonlRecordOutcome> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
-        return Ok(None);
+        return Ok(CursorJsonlRecordOutcome::Ignored);
     }
     let classification = match classify_cursor_line(bytes) {
         Ok(classification) => classification,
-        Err(_) => return Ok(None),
+        Err(CursorRejectionKind::UnsupportedShape) => return Ok(CursorJsonlRecordOutcome::Ignored),
+        Err(CursorRejectionKind::MalformedJson) => {
+            return Ok(CursorJsonlRecordOutcome::Rejected(
+                "Cursor record is malformed JSON or repeats a critical selector".to_owned(),
+            ))
+        }
     };
     let sanitized = match decode_sanitized_record(
         bytes,
@@ -96,9 +128,15 @@ pub(super) fn project_cursor_jsonl_record(
         &classification,
     ) {
         Ok(record) => record,
-        Err(_) => return Ok(None),
+        Err(error) => {
+            return Ok(CursorJsonlRecordOutcome::Rejected(format!(
+                "Cursor record could not be decoded safely: {error}"
+            )))
+        }
     };
-    Ok(Some(super::projection::project_cursor_record(sanitized)?))
+    Ok(CursorJsonlRecordOutcome::Events(
+        super::projection::project_cursor_record(sanitized)?,
+    ))
 }
 
 fn decode_sanitized_record(

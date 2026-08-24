@@ -2,6 +2,71 @@ use super::*;
 use ctx_history_capture_runtime::{CaptureLifecycleOpenOutcome, CaptureLifecycleSink};
 
 #[test]
+fn newline_record_rejections_resume_after_malformed_and_oversized_rows() {
+    for oversized in [false, true] {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        fs::create_dir_all(&root).unwrap();
+        let mut fixture = br#"{"message":"first"}
+"#
+        .to_vec();
+        if oversized {
+            fixture.extend_from_slice(br#"{"message":"#);
+            fixture.extend(std::iter::repeat_n(b'x', MAX_PROVIDER_JSONL_LINE_BYTES));
+            fixture.extend_from_slice(b"\"}\n");
+        } else {
+            fixture.extend_from_slice(b"{\n");
+        }
+        fixture.extend_from_slice(b"{\"message\":\"last\"}\n");
+        fs::write(root.join("boundaries.jsonl"), fixture).unwrap();
+
+        let adapter = RecordRejectionTestAdapter;
+        let inventory = adapter.discover(&root).unwrap();
+        let leaf = inventory.accepted_leaves().next().unwrap();
+        let writer = match TestLifecycle::open(&temp.path().join("index"), ()).unwrap() {
+            CaptureLifecycleOpenOutcome::Ready(writer) => writer,
+            CaptureLifecycleOpenOutcome::RecoveryRequired { .. } => unreachable!(),
+        };
+        let mut emitted = 0;
+        let mut emit = |event| {
+            match event {
+                JsonlLeafOutputEvent::Page { records, .. } => emitted += records.len(),
+                JsonlLeafOutputEvent::Record { .. } => emitted += 1,
+                JsonlLeafOutputEvent::Flush => {}
+            }
+            Ok(())
+        };
+        let mut output = JsonlLeafOutput::new(&mut emit);
+        let mut worker = JsonlFamilyWorkerContext::default();
+        let prepared = prepare_leaf(
+            &adapter,
+            leaf,
+            None,
+            &writer.base_event_identity_lookup(),
+            &mut worker,
+            &mut output,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(emitted, 2);
+        let counts = prepared.certificate.counts();
+        assert_eq!(counts.complete_records, 3);
+        assert_eq!(counts.retained_records, 2);
+        assert_eq!(counts.rejected_records, 1);
+        assert_eq!(counts.ignored_records, 0);
+        let (rejections, omitted) = prepared.record_rejections.into_parts();
+        assert_eq!(omitted, 0);
+        assert_eq!(rejections.len(), 1);
+        assert_eq!(rejections[0].line_number, 2);
+        assert_eq!(
+            rejections[0].class,
+            SourceBackedRecordRejectionClass::MalformedRecord
+        );
+    }
+}
+
+#[test]
 fn rejected_leaf_exact_proof_rejects_change_since_discovery() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     let root = temp.path().join("sessions");

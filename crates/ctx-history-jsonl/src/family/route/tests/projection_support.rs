@@ -142,6 +142,114 @@ impl_standard_jsonl_test_adapter!(
     }
 );
 
+pub(super) struct RecordRejectionTestAdapter;
+
+pub(super) struct RecordRejectionTestProjector {
+    source: SourceKey,
+    source_selector: String,
+    rejected_records: u64,
+    record_rejections: SourceBackedRecordRejectionDrafts,
+}
+
+impl JsonlFamilyAdapter for RecordRejectionTestAdapter {
+    type Runtime = TestJsonlRuntime;
+
+    fn provider(&self) -> CaptureProvider {
+        CaptureProvider::Pi
+    }
+
+    fn source_format(&self) -> &'static str {
+        TEST_SOURCE_FORMAT
+    }
+
+    fn schema_variant(&self) -> &'static str {
+        TEST_SCHEMA
+    }
+
+    fn parser_revision(&self) -> &'static str {
+        "record-rejection-test-parser-v1"
+    }
+
+    fn append_mode(&self) -> JsonlFamilyAppendMode {
+        JsonlFamilyAppendMode::CertifiedSuffix
+    }
+
+    fn oversized_record_policy(&self) -> JsonlOversizedRecordPolicy {
+        JsonlOversizedRecordPolicy::RejectRecord
+    }
+
+    fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory> {
+        TestAdapter.discover(root)
+    }
+
+    fn projector(
+        &self,
+        leaf: &JsonlFamilyLeaf,
+        _source_file: Arc<OpenedProviderSourceFile>,
+        _imported_at: DateTime<Utc>,
+    ) -> Result<Box<JsonlFamilyProjectorObject>> {
+        Ok(Box::new(RecordRejectionTestProjector {
+            source: leaf.source().clone(),
+            source_selector: leaf.source_path().display().to_string(),
+            rejected_records: 0,
+            record_rejections: SourceBackedRecordRejectionDrafts::default(),
+        }))
+    }
+}
+
+impl JsonlFamilyProjector for RecordRejectionTestProjector {
+    type Runtime = TestJsonlRuntime;
+
+    fn project(
+        &mut self,
+        record: JsonlRecordRef<'_>,
+        _worker: &mut JsonlFamilyWorkerContext,
+        emit: &mut dyn FnMut(CoreRecord) -> Result<()>,
+    ) -> Result<()> {
+        if record.bytes().iter().all(u8::is_ascii_whitespace) {
+            return Ok(());
+        }
+        let detail = if record.oversized() {
+            Some("test record exceeds the JSONL record bound".to_owned())
+        } else {
+            serde_json::from_slice::<serde_json::Value>(record.bytes())
+                .err()
+                .map(|error| format!("malformed test JSONL: {error}"))
+        };
+        if let Some(detail) = detail {
+            self.rejected_records =
+                self.rejected_records
+                    .checked_add(1)
+                    .ok_or(CaptureError::SystemInvariant(
+                        "test record rejection count overflowed",
+                    ))?;
+            self.record_rejections
+                .record(SourceBackedRecordRejectionDraft {
+                    source: self.source.clone(),
+                    provider: CaptureProvider::Pi,
+                    source_selector: self.source_selector.clone(),
+                    line_number: record.evidence().physical_ordinal().saturating_add(1),
+                    payload_type: None,
+                    class: SourceBackedRecordRejectionClass::MalformedRecord,
+                    detail,
+                });
+            return Ok(());
+        }
+        emit(emission_test_record(
+            &self.source,
+            record.evidence().physical_ordinal(),
+        )?)
+    }
+
+    fn rejected_records(&self) -> u64 {
+        self.rejected_records
+    }
+
+    fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
+        std::mem::take(&mut self.record_rejections)
+    }
+}
+
 pub(super) struct FramingPolicyTestAdapter {
     pub(super) projected: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(super) record_framing: JsonlRecordFraming,

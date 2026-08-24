@@ -301,8 +301,20 @@ impl<R: crate::JsonlProviderRuntime> JsonlFamilyProjector for OpenClawProjector<
         if bytes.iter().all(u8::is_ascii_whitespace) {
             return Ok(());
         }
-        let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
-            return Ok(());
+        if record.oversized() {
+            return self.reject_record(
+                record,
+                format!(
+                    "OpenClaw record exceeds the {} byte limit",
+                    crate::MAX_PROVIDER_JSONL_LINE_BYTES
+                ),
+            );
+        }
+        let value = match serde_json::from_slice::<Value>(bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.reject_record(record, format!("malformed OpenClaw JSONL: {error}"))
+            }
         };
         if !value.is_object() {
             return Ok(());
@@ -367,6 +379,36 @@ impl<R: crate::JsonlProviderRuntime> JsonlFamilyProjector for OpenClawProjector<
 
     fn provider_checkpoint(&self) -> Result<Option<TypedKey>> {
         encode_projector_checkpoint(self).map(Some)
+    }
+
+    fn rejected_records(&self) -> u64 {
+        self.rejected_records
+    }
+
+    fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
+        std::mem::take(&mut self.record_rejections)
+    }
+}
+
+impl<R: crate::JsonlProviderRuntime> OpenClawProjector<R> {
+    fn reject_record(&mut self, record: JsonlRecordRef<'_>, detail: String) -> Result<()> {
+        self.rejected_records =
+            self.rejected_records
+                .checked_add(1)
+                .ok_or(CaptureError::SystemInvariant(
+                    "OpenClaw record rejection count overflowed",
+                ))?;
+        self.record_rejections
+            .record(SourceBackedRecordRejectionDraft {
+                source: self.source.clone(),
+                provider: CaptureProvider::OpenClaw,
+                source_selector: self.source_selector.clone(),
+                line_number: record.evidence().physical_ordinal().saturating_add(1),
+                payload_type: None,
+                class: SourceBackedRecordRejectionClass::MalformedRecord,
+                detail,
+            });
+        Ok(())
     }
 }
 

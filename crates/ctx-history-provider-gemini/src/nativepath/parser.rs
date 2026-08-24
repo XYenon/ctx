@@ -142,6 +142,31 @@ pub(crate) struct GeminiBorrowedRecordParser {
     page_physical_records: usize,
 }
 
+pub(crate) struct GeminiBorrowedRecordProjection {
+    pub(crate) events: Vec<GeminiRetainedEvent>,
+    pub(crate) rejection_reason: Option<String>,
+}
+
+impl GeminiBorrowedRecordProjection {
+    fn events(events: Vec<GeminiRetainedEvent>) -> Self {
+        Self {
+            events,
+            rejection_reason: None,
+        }
+    }
+
+    fn ignored() -> Self {
+        Self::events(Vec::new())
+    }
+
+    fn rejected(reason: impl Into<String>) -> Self {
+        Self {
+            events: Vec::new(),
+            rejection_reason: Some(reason.into()),
+        }
+    }
+}
+
 impl GeminiBorrowedRecordParser {
     pub(crate) fn new(source: GeminiTranscriptSource, session: GeminiSession) -> Self {
         Self {
@@ -160,7 +185,7 @@ impl GeminiBorrowedRecordParser {
         byte_start: u64,
         byte_end_exclusive: u64,
         record_digest: [u8; 32],
-    ) -> GeminiScanResult<Vec<GeminiRetainedEvent>> {
+    ) -> GeminiScanResult<GeminiBorrowedRecordProjection> {
         if self.page_physical_records == MAX_GEMINI_NATIVE_PAGE_RECORDS {
             self.page_native_event_ids = GeminiNativeEventIds::default();
             self.page_physical_records = 0;
@@ -168,11 +193,15 @@ impl GeminiBorrowedRecordParser {
         self.page_physical_records = self.page_physical_records.saturating_add(1);
 
         if payload.iter().all(u8::is_ascii_whitespace) {
-            return Ok(Vec::new());
+            return Ok(GeminiBorrowedRecordProjection::ignored());
         }
         let probe = match serde_json::from_slice::<GeminiRecordProbe>(payload) {
             Ok(probe) => probe,
-            Err(_) => return Ok(Vec::new()),
+            Err(error) => {
+                return Ok(GeminiBorrowedRecordProjection::rejected(format!(
+                    "malformed Gemini JSONL: {error}"
+                )))
+            }
         };
         let class = probe.classify();
         if class == GeminiRecordClass::Header {
@@ -196,10 +225,10 @@ impl GeminiBorrowedRecordParser {
                 return Err(GeminiError::SourceChangedDuringCapture.into());
             }
             self.header_seen = true;
-            return Ok(Vec::new());
+            return Ok(GeminiBorrowedRecordProjection::ignored());
         }
         if !self.header_seen {
-            return Ok(Vec::new());
+            return Ok(GeminiBorrowedRecordProjection::ignored());
         }
 
         let native_event_id = nonempty(probe.id.clone());
@@ -209,7 +238,7 @@ impl GeminiBorrowedRecordParser {
                 .validate(native_event_id, raw_ordinal)
                 .is_err()
             {
-                return Ok(Vec::new());
+                return Ok(GeminiBorrowedRecordProjection::ignored());
             }
         }
 
@@ -222,14 +251,16 @@ impl GeminiBorrowedRecordParser {
             GeminiRecordClass::Result => {
                 let decoded = match decode_result_record(payload, raw_ordinal, source_record) {
                     Ok(decoded) => decoded,
-                    Err(_) => return Ok(Vec::new()),
+                    Err(reason) => return Ok(GeminiBorrowedRecordProjection::rejected(reason)),
                 };
                 if decoded
                     .events
                     .iter()
                     .any(|(_, bytes)| *bytes > MAX_GEMINI_SINGLE_RECORD_PAGE_BYTES)
                 {
-                    return Ok(Vec::new());
+                    return Ok(GeminiBorrowedRecordProjection::rejected(
+                        "Gemini result record exceeds the bounded event size",
+                    ));
                 }
                 decoded.events.into_iter().map(|(event, _)| event).collect()
             }
@@ -241,17 +272,19 @@ impl GeminiBorrowedRecordParser {
                     match decode_retained_event(payload, class, raw_ordinal, source_record) {
                         Ok(decoded) => decoded,
                         Err(GeminiDecodingError::Invalid(reason)) => {
-                            drop(reason);
-                            return Ok(Vec::new());
+                            return Ok(GeminiBorrowedRecordProjection::rejected(reason));
                         }
                     };
                 let mut events = Vec::with_capacity(decoded.len());
                 for decoded in decoded {
-                    let Ok(event_bytes) = retained_event_bytes(&decoded) else {
-                        return Ok(Vec::new());
+                    let event_bytes = match retained_event_bytes(&decoded) {
+                        Ok(event_bytes) => event_bytes,
+                        Err(reason) => return Ok(GeminiBorrowedRecordProjection::rejected(reason)),
                     };
                     if event_bytes > MAX_GEMINI_SINGLE_RECORD_PAGE_BYTES {
-                        return Ok(Vec::new());
+                        return Ok(GeminiBorrowedRecordProjection::rejected(
+                            "Gemini record exceeds the bounded event size",
+                        ));
                     }
                     let mut event = decoded.event;
                     if event.occurred_at.is_none() {
@@ -267,7 +300,7 @@ impl GeminiBorrowedRecordParser {
             self.page_native_event_ids
                 .commit_at(native_event_id, raw_ordinal);
         }
-        Ok(events)
+        Ok(GeminiBorrowedRecordProjection::events(events))
     }
 
     pub(crate) fn finish(&self) -> GeminiScanResult<()> {

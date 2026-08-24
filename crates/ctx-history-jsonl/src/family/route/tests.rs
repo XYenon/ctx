@@ -23,8 +23,9 @@ use ctx_history_capture_runtime::{
     CorePreparationFailureKind, CorePreparationPort, ImmutableCaptureSnapshot, PresentCaptureRoute,
     SourceBackedGenerationSink as RuntimeSourceBackedGenerationSink,
     SourceBackedLogicalSourceFailures, SourceBackedReconciliationDemand,
-    SourceBackedRecordRejections, SourceBackedRevalidationTarget, SourceBackedRouteResources,
-    VerifiedCapture,
+    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDraft,
+    SourceBackedRecordRejectionDrafts, SourceBackedRecordRejections,
+    SourceBackedRevalidationTarget, SourceBackedRouteResources, VerifiedCapture,
 };
 use ctx_history_core::{
     derive_event_id, derive_session_id, CertifiedSourceAppend, CertifiedSourceDeletion, CoreRecord,

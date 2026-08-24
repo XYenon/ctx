@@ -17,8 +17,10 @@ use sha2::{Digest, Sha256};
 
 use ctx_history_jsonl::{
     fit_jsonl_activity, FallbackEventIdentityState, JsonlActivityObservedBytes,
-    JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyWorkerContext, JsonlReader,
-    JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity,
+    JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyWorkerContext,
+    JsonlOversizedRecordPolicy, JsonlReader, JsonlRecordFraming, JsonlRecordRef,
+    JsonlSourceIdentity, SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDraft,
+    SourceBackedRecordRejectionDrafts,
 };
 use ctx_history_provider_runtime::{
     source_io::ProviderSourceRoot, CaptureError, ProviderBaseEventLookup, ProviderJsonlRuntime,
@@ -51,6 +53,8 @@ pub(super) struct MuxProjector<L: BaseEventLookup> {
     seen_native_record_ids: HashSet<String>,
     next_history_sequence: u64,
     archive_seam: MuxArchiveSeam,
+    rejected_records: u64,
+    record_rejections: SourceBackedRecordRejectionDrafts,
 }
 
 impl<L> MuxProjector<L>
@@ -81,7 +85,40 @@ where
             seen_native_record_ids: HashSet::new(),
             next_history_sequence: 0,
             archive_seam: MuxArchiveSeam::new(),
+            rejected_records: 0,
+            record_rejections: SourceBackedRecordRejectionDrafts::default(),
         })
+    }
+
+    fn reject(
+        &mut self,
+        stream: MuxStreamKind,
+        record: JsonlRecordRef<'_>,
+        detail: String,
+    ) -> Result<()> {
+        let selector = self
+            .authority
+            .named_path()
+            .join(&bound_stream(&self.binding, stream)?.relative_path)
+            .display()
+            .to_string();
+        self.rejected_records =
+            self.rejected_records
+                .checked_add(1)
+                .ok_or(CaptureError::SystemInvariant(
+                    "Mux record rejection count overflowed",
+                ))?;
+        self.record_rejections
+            .record(SourceBackedRecordRejectionDraft {
+                source: self.source.clone(),
+                provider: ctx_history_core::CaptureProvider::Mux,
+                source_selector: selector,
+                line_number: record.evidence().physical_ordinal().saturating_add(1),
+                payload_type: None,
+                class: SourceBackedRecordRejectionClass::MalformedRecord,
+                detail,
+            });
+        Ok(())
     }
 
     pub(super) fn project_record(
@@ -94,8 +131,21 @@ where
         if bytes.iter().all(u8::is_ascii_whitespace) {
             return Ok(());
         }
-        let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
-            return Ok(());
+        if record.oversized() {
+            return self.reject(
+                stream,
+                record,
+                format!(
+                    "Mux record exceeds the {} byte limit",
+                    ctx_history_source_io::MAX_PROVIDER_JSONL_LINE_BYTES
+                ),
+            );
+        }
+        let value = match serde_json::from_slice::<Value>(bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.reject(stream, record, format!("malformed Mux JSONL: {error}"))
+            }
         };
         if !value.is_object() {
             return Ok(());
@@ -299,6 +349,9 @@ where
                 JsonlRecordFraming::ordinary(),
             )?
         };
+        if !stream.is_partial() {
+            reader.set_oversized_record_policy(JsonlOversizedRecordPolicy::RejectRecord);
+        }
         while reader
             .visit_page(&mut |record| self.project_record(stream, record, emit))?
             .is_some()
@@ -313,6 +366,14 @@ where
 
     pub(super) fn finish(&self) -> Result<()> {
         self.fallback_identities.finish()
+    }
+
+    pub(super) fn rejected_records(&self) -> u64 {
+        self.rejected_records
+    }
+
+    pub(super) fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
+        std::mem::take(&mut self.record_rejections)
     }
 }
 
@@ -491,6 +552,14 @@ where
             }
         }
         self.inner.finish()
+    }
+
+    fn rejected_records(&self) -> u64 {
+        self.inner.rejected_records()
+    }
+
+    fn take_record_rejections(&mut self) -> SourceBackedRecordRejectionDrafts {
+        self.inner.take_record_rejections()
     }
 }
 

@@ -8,6 +8,10 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use ctx_history_capture_runtime::{CaptureLifecycleSink, SourceBackedRouteDriver};
+pub use ctx_history_capture_runtime::{
+    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDraft,
+    SourceBackedRecordRejectionDrafts,
+};
 use ctx_history_source_io::{
     MappedOpenedProviderSourceFile, MappedOpenedProviderSourcePath, MappedProviderSourceDirectory,
     MappedProviderSourceRoot, SourceIoError, MAX_PROVIDER_JSONL_LINE_BYTES,
