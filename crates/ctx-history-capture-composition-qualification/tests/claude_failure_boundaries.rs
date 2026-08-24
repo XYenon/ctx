@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use std::{fs, os::unix::fs::symlink, path::Path};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 use ctx_history_capture_composition::{
     refresh_source_backed_generation, register_landed_source_backed_route, ProviderCatalogSupport,
@@ -72,6 +72,10 @@ fn marker_count(index: &Path, marker: &str) -> usize {
         .len()
 }
 
+fn set_mode(path: &Path, mode: u32) {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
 fn assert_unreadable_failure(
     receipt: &ctx_history_capture_composition::SourceBackedRefreshReceipt,
     carried_forward: bool,
@@ -88,19 +92,21 @@ fn assert_unreadable_failure(
 }
 
 #[test]
-fn cold_unreadable_claude_file_quarantines_only_that_session_and_repairs() {
+fn cold_permission_denied_claude_file_quarantines_only_that_session_and_repairs() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("projects");
     let index = temp.path().join("index");
     write_session(&root, "healthy", "healthy-cold", "healthycoldmarker");
+    write_session(&root, "broken", "broken-cold", "mustnotpublish");
     let broken = root.join("project/broken.jsonl");
-    symlink(root.join("missing-target.jsonl"), &broken).unwrap();
+    set_mode(&broken, 0o000);
 
     let cold = refresh(&root, &index);
     assert_unreadable_failure(&cold, false);
     assert_eq!(marker_count(&index, "healthycoldmarker"), 1);
+    assert_eq!(marker_count(&index, "mustnotpublish"), 0);
 
-    fs::remove_file(&broken).unwrap();
+    set_mode(&broken, 0o600);
     write_session(&root, "broken", "broken-repaired", "coldrepairedmarker");
     let repaired = refresh(&root, &index);
     assert!(repaired.failed_routes.is_empty());
@@ -110,7 +116,7 @@ fn cold_unreadable_claude_file_quarantines_only_that_session_and_repairs() {
 }
 
 #[test]
-fn warm_unreadable_claude_file_carries_last_good_while_sibling_advances() {
+fn warm_permission_denied_claude_file_carries_last_good_while_sibling_advances() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("projects");
     let index = temp.path().join("index");
@@ -120,8 +126,7 @@ fn warm_unreadable_claude_file_carries_last_good_while_sibling_advances() {
     assert!(initial.logical_source_failures.is_empty());
 
     let fragile = root.join("project/fragile.jsonl");
-    fs::remove_file(&fragile).unwrap();
-    symlink(root.join("missing-target.jsonl"), &fragile).unwrap();
+    set_mode(&fragile, 0o000);
     write_session(&root, "healthy", "healthy-after", "healthyaftermarker");
 
     let quarantined = refresh(&root, &index);
@@ -130,7 +135,7 @@ fn warm_unreadable_claude_file_carries_last_good_while_sibling_advances() {
     assert_eq!(marker_count(&index, "healthyaftermarker"), 1);
     assert_eq!(marker_count(&index, "fragilebeforemarker"), 1);
 
-    fs::remove_file(&fragile).unwrap();
+    set_mode(&fragile, 0o600);
     write_session(&root, "fragile", "fragile-after", "fragileaftermarker");
     let repaired = refresh(&root, &index);
     assert!(repaired.failed_routes.is_empty());

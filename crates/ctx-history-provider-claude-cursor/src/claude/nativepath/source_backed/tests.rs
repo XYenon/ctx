@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use ctx_history_core::{
     ActivityJsonCapture, ActivityTextCapture, LiteralFactKind, ProjectionContractError, TypedKey,
@@ -15,6 +15,79 @@ use super::{
     claude_annotation, parse_native_record, session_identity, session_typed_key, source_key,
     ClaudePhysicalLocator, ClaudeSessionKey,
 };
+
+#[test]
+fn unreadable_leaf_scope_accepts_only_stable_leaf_local_open_failures() {
+    let permission = ctx_history_provider_runtime::CaptureError::Io(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "denied",
+    ));
+    assert!(super::is_quarantinable_claude_leaf_error(&permission));
+
+    for reason in [
+        ctx_history_source_io::SYMLINK_PROVIDER_SOURCE_REASON,
+        ctx_history_source_io::REPARSE_PROVIDER_SOURCE_REASON,
+        ctx_history_source_io::NON_REGULAR_PROVIDER_SOURCE_REASON,
+    ] {
+        let rejected = ctx_history_provider_runtime::CaptureError::InvalidProviderTranscriptPath {
+            path: PathBuf::from("rejected.jsonl"),
+            reason,
+        };
+        assert!(super::is_quarantinable_claude_leaf_error(&rejected));
+    }
+
+    for systemic in [
+        ctx_history_provider_runtime::CaptureError::SourceChangedDuringCapture,
+        ctx_history_provider_runtime::CaptureError::SystemInvariant("invariant"),
+        ctx_history_provider_runtime::CaptureError::WorkerPanicked("worker"),
+        ctx_history_provider_runtime::CaptureError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "race",
+        )),
+        ctx_history_provider_runtime::CaptureError::Io(std::io::Error::other("resource")),
+        ctx_history_provider_runtime::CaptureError::SystemIo {
+            operation: "read",
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "system denied"),
+        },
+        ctx_history_provider_runtime::CaptureError::InvalidProviderTranscriptPath {
+            path: PathBuf::from("other.jsonl"),
+            reason: "other invalid path",
+        },
+    ] {
+        assert!(!super::is_quarantinable_claude_leaf_error(&systemic));
+    }
+}
+
+#[test]
+fn source_claims_reject_cross_disposition_duplicates_and_digest_collisions() {
+    let key = ClaudeSessionKey {
+        root_session_id: "duplicate-session".to_owned(),
+        workflow_run_id: None,
+        agent_id: None,
+    };
+    let source = source_key(None, &key).unwrap();
+    let mut claims = HashMap::new();
+    super::claim_claude_source(&mut claims, &source).unwrap();
+    let duplicate = super::claim_claude_source(&mut claims, &source).unwrap_err();
+    assert!(duplicate
+        .to_string()
+        .contains("repeats a native session identity"));
+
+    let other = source_key(
+        None,
+        &ClaudeSessionKey {
+            root_session_id: "other-session".to_owned(),
+            workflow_run_id: None,
+            agent_id: None,
+        },
+    )
+    .unwrap();
+    let mut collision = HashMap::from([(source.exact_descriptor_digest(), other)]);
+    let collision = super::claim_claude_source(&mut collision, &source).unwrap_err();
+    assert!(collision
+        .to_string()
+        .contains("source descriptor digest collision"));
+}
 
 #[test]
 fn identical_native_sessions_under_distinct_logical_roots_have_distinct_sources() {
@@ -73,7 +146,7 @@ fn repeated_native_uuid_and_subrecord_index_repeat_the_stable_event_identity() {
         workflow_run_id: None,
         agent_id: None,
     };
-    let source = source_key(&key).unwrap();
+    let source = source_key(None, &key).unwrap();
     let session_id = session_identity(&source, session_typed_key(&key).unwrap()).unwrap();
     let parse = |body: &str| {
         let bytes = serde_json::to_vec(&serde_json::json!({

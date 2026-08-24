@@ -203,6 +203,60 @@ fn canonical_inventory_rejects_two_dispositions_for_one_physical_leaf() {
         .contains("physical inventory contains duplicate member"));
 }
 
+#[cfg(unix)]
+#[test]
+fn unobserved_membership_uses_parent_enumeration_without_opening_the_leaf() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("denied.jsonl");
+    fs::write(&path, TEST_RECORD).unwrap();
+    let discovered = TestAdapter.discover(&root).unwrap();
+    let source = discovered
+        .accepted_leaves()
+        .next()
+        .unwrap()
+        .source()
+        .clone();
+    let authority = Arc::clone(&discovered.authorities[0]);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    let inventory = JsonlFamilyInventory::present_with_rejected(
+        CaptureProvider::Pi,
+        &root,
+        authority,
+        Vec::new(),
+        vec![JsonlFamilyRejectedLeaf::bind_unobserved(
+            path.clone(),
+            PathBuf::from("denied.jsonl"),
+            TypedKey::utf8("denied").unwrap(),
+            0,
+        )
+        .with_logical_source_failure(source.clone(), "permission denied")
+        .with_quarantined_source(source)],
+    )
+    .unwrap();
+
+    let opening = JsonlFamilyMembershipObservation::observe(&root, &inventory).unwrap();
+    let unchanged = JsonlFamilyMembershipObservation::observe(&root, &inventory).unwrap();
+    assert!(opening.admits(
+        &unchanged,
+        JsonlFamilyInventoryMode::Exact,
+        &HashMap::new(),
+        &HashMap::new(),
+    ));
+
+    fs::remove_file(&path).unwrap();
+    let removed = JsonlFamilyMembershipObservation::observe(&root, &inventory).unwrap();
+    assert!(!opening.admits(
+        &removed,
+        JsonlFamilyInventoryMode::Exact,
+        &HashMap::new(),
+        &HashMap::new(),
+    ));
+}
+
 #[test]
 fn canonical_inventory_rejects_duplicate_logical_sources_before_staging() {
     let temp = tempfile::tempdir().unwrap();

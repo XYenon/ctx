@@ -33,11 +33,14 @@ use ctx_history_provider_runtime::{
     observe_opened_file,
     source_io::{OpenedProviderSourceFile, ProviderSourceRoot},
     CaptureError, JsonlAppendOccurrenceState, JsonlFamilyAppendMode, JsonlFamilyProjectionMode,
-    JsonlFamilyProjector, JsonlFamilyRejectedLeaf, JsonlFileObservation, JsonlRecordRef,
-    ProviderBaseEventLookup, ProviderJsonlInventory, ProviderJsonlLeaf, ProviderJsonlReader,
-    ProviderJsonlRuntime, ProviderJsonlWorkerContext, ProviderRuntimeBinding, Result,
+    JsonlFamilyProjector, JsonlFamilyRejectedLeaf, JsonlRecordRef, ProviderBaseEventLookup,
+    ProviderJsonlInventory, ProviderJsonlLeaf, ProviderJsonlReader, ProviderJsonlRuntime,
+    ProviderJsonlWorkerContext, ProviderRuntimeBinding, Result,
 };
-use ctx_history_source_io::visit_bounded_tree_files_isolating_selected;
+use ctx_history_source_io::{
+    visit_bounded_tree_files_isolating_selected, NON_REGULAR_PROVIDER_SOURCE_REASON,
+    REPARSE_PROVIDER_SOURCE_REASON, SYMLINK_PROVIDER_SOURCE_REASON,
+};
 
 type JsonlFamilyLeaf = ProviderJsonlLeaf;
 type JsonlReader = ProviderJsonlReader;
@@ -168,12 +171,15 @@ where
                 Ok(())
             },
             &mut |path, error| {
+                if !is_quarantinable_claude_leaf_error(&error) {
+                    return Err(error);
+                }
                 unreadable.push((path.to_path_buf(), error.to_string()));
                 Ok(())
             },
         )?;
 
-        let mut selected = HashMap::<[u8; 32], JsonlFileObservation>::new();
+        let mut claimed_sources = HashMap::<[u8; 32], SourceKey>::new();
         let mut leaves = Vec::new();
         let mut rejected_leaves = Vec::new();
         observed.sort_by(|left, right| left.0.cmp(&right.0));
@@ -190,26 +196,14 @@ where
             };
             let source = source_key(binding.source_root_lineage, &binding.key)?;
             let relative_path = relative_to_authority(&authority, &path)?;
-            let digest = source.exact_descriptor_digest();
-            if let Some(previous) = selected.get(&digest) {
-                if previous == &observation {
-                    continue;
-                }
-                return Err(CaptureError::InvalidPayload(
-                    "Claude inventory repeats a native session identity".to_owned(),
-                ));
-            }
-            selected.insert(digest, observation);
+            claim_claude_source(&mut claimed_sources, &source)?;
             leaves.push(ProviderJsonlLeaf::bind_observed(
                 source,
                 path,
                 Arc::clone(&authority),
                 relative_path,
                 TypedKey::bytes(serde_json::to_vec(&binding)?).map_err(contract)?,
-                selected
-                    .get(&digest)
-                    .expect("selected Claude observation was just inserted")
-                    .clone(),
+                observation,
             ));
         }
         unreadable.sort_by(|left, right| left.0.cmp(&right.0));
@@ -226,6 +220,7 @@ where
             };
             let source = source_key(binding.source_root_lineage, &binding.key)?;
             let relative_path = relative_to_authority(&authority, &path)?;
+            claim_claude_source(&mut claimed_sources, &source)?;
             rejected_leaves.push(
                 JsonlFamilyRejectedLeaf::bind_unobserved(
                     path.clone(),
@@ -930,6 +925,34 @@ fn fallback_event_key_parts(identity: FallbackEventIdentity) -> Result<Vec<Typed
 
 fn contract(error: impl std::fmt::Display) -> CaptureError {
     CaptureError::InvalidPayload(error.to_string())
+}
+
+fn is_quarantinable_claude_leaf_error(error: &CaptureError) -> bool {
+    matches!(error, CaptureError::Io(source) if source.kind() == io::ErrorKind::PermissionDenied)
+        || matches!(
+            error,
+            CaptureError::InvalidProviderTranscriptPath { reason, .. }
+                if *reason == SYMLINK_PROVIDER_SOURCE_REASON
+                    || *reason == REPARSE_PROVIDER_SOURCE_REASON
+                    || *reason == NON_REGULAR_PROVIDER_SOURCE_REASON
+        )
+}
+
+fn claim_claude_source(
+    claimed: &mut HashMap<[u8; 32], SourceKey>,
+    source: &SourceKey,
+) -> Result<()> {
+    let digest = source.exact_descriptor_digest();
+    if let Some(previous) = claimed.get(&digest) {
+        let detail = if previous.exact_descriptor_eq(source) {
+            "Claude inventory repeats a native session identity"
+        } else {
+            "Claude source descriptor digest collision"
+        };
+        return Err(CaptureError::InvalidPayload(detail.to_owned()));
+    }
+    claimed.insert(digest, source.clone());
+    Ok(())
 }
 
 #[cfg(test)]
