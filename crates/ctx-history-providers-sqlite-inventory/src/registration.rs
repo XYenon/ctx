@@ -9,7 +9,7 @@ use ctx_history_capture_runtime::{
     SourceBackedRouteResult, SourceBackedRouteSelection, SourceBackedRouteWatchTargets,
     SourceBackedSelectorAuthority,
 };
-use ctx_history_core::{CaptureProvider, CertifiedSource, TypedKey};
+use ctx_history_core::{CaptureProvider, CertifiedSource, SourceAnchorScope, TypedKey};
 use ctx_history_source_discovery::{LingmaDiscoveredInventory, LingmaDiscoveryUnavailable};
 
 use sha2::Digest;
@@ -20,7 +20,7 @@ use crate::provider::providers::lingma::native_path::{
     LingmaSourceInventoryV0, LINGMA_SOURCE_BACKED_PARSER_REVISION,
 };
 use crate::provider::providers::shelley::native_path::source_backed::{
-    discover_shelley_source_backed_exact_cwd, ShelleySourceBackedAdapter,
+    discover_shelley_source_backed_exact_cwd_scoped, ShelleySourceBackedAdapter,
     SHELLEY_SOURCE_PARSER_REVISION,
 };
 use crate::{
@@ -42,7 +42,7 @@ use super::*;
 mod crush;
 mod shared;
 
-pub use crush::crush_registration;
+pub use crush::{crush_registration, crush_registration_scoped};
 use shared::{
     sqlite_inventory_authority_fingerprint, SqliteInventoryCatalog, SqliteInventoryCatalogLeaf,
     SqliteInventoryDocumentAdapter, SqliteInventoryProvider,
@@ -129,13 +129,42 @@ where
     L: CaptureLifecycleSink + 'static,
     S: DocumentRecordSpool,
 {
+    astrbot_registration_scoped(
+        source,
+        selection,
+        data_root,
+        discovery,
+        SourceAnchorScope::Unqualified,
+    )
+}
+
+pub fn astrbot_registration_scoped<L, S>(
+    source: ProviderSource,
+    selection: SourceBackedRouteSelection,
+    data_root: &Path,
+    discovery: DiscoveryContext,
+    source_scope: SourceAnchorScope,
+) -> SqliteInventoryRegistration<
+    impl ReplacementDocumentTree<
+        Lifecycle = L,
+        Spool = S,
+        RouteControl = crate::ProviderRouteControlExpectation,
+    >,
+>
+where
+    L: CaptureLifecycleSink + 'static,
+    S: DocumentRecordSpool,
+{
     let watch_primary = source.path.clone();
     let watch_discovery = discovery.clone();
     let adapter = SqliteInventoryDocumentAdapter::new(
         data_root,
         CaptureProvider::AstrBot,
         ASTRBOT_SQLITE_SOURCE_FORMAT,
-        AstrBotInventoryProvider { discovery },
+        AstrBotInventoryProvider {
+            discovery,
+            source_scope,
+        },
     );
     SqliteInventoryRegistration::new(
         source,
@@ -143,17 +172,18 @@ where
         SourceBackedSelectorAuthority::DiscoveredWinner,
         adapter,
         Some(Box::new(move || {
-            let mut targets = AstrBotSourceBackedInventoryV0::discover(&watch_discovery)
-                .ok()
-                .map(|inventory| {
-                    sqlite_inventory_watch_targets(
-                        inventory
-                            .sources()
-                            .iter()
-                            .map(AstrBotSourceBackedSourceV0::path),
-                    )
-                })
-                .unwrap_or_default();
+            let mut targets =
+                AstrBotSourceBackedInventoryV0::discover_scoped(&watch_discovery, source_scope)
+                    .ok()
+                    .map(|inventory| {
+                        sqlite_inventory_watch_targets(
+                            inventory
+                                .sources()
+                                .iter()
+                                .map(AstrBotSourceBackedSourceV0::path),
+                        )
+                    })
+                    .unwrap_or_default();
             // Retain exact provider authority roots even when an inventory probe
             // fails. That keeps warm observation indeterminate while ensuring a
             // healthy watcher still dirties the route for selected-root changes,
@@ -174,6 +204,7 @@ where
 
 pub struct AstrBotInventoryProvider {
     discovery: DiscoveryContext,
+    source_scope: SourceAnchorScope,
 }
 
 impl<L, S> SqliteInventoryProvider<L, S> for AstrBotInventoryProvider
@@ -188,8 +219,9 @@ where
     }
 
     fn discover(&self) -> SourceBackedRouteResult<SqliteInventoryCatalog<Self::Leaf>> {
-        let inventory = AstrBotSourceBackedInventoryV0::discover(&self.discovery)
-            .map_err(astrbot_inventory_route_error)?;
+        let inventory =
+            AstrBotSourceBackedInventoryV0::discover_scoped(&self.discovery, self.source_scope)
+                .map_err(astrbot_inventory_route_error)?;
         let authority_fingerprint =
             sqlite_inventory_authority_fingerprint(inventory.observation())?;
         let leaves = inventory
@@ -300,15 +332,44 @@ where
     L: CaptureLifecycleSink + 'static,
     S: DocumentRecordSpool,
 {
+    shelley_registration_scoped(
+        source,
+        selection,
+        data_root,
+        exact_cwd,
+        SourceAnchorScope::Unqualified,
+    )
+}
+
+pub fn shelley_registration_scoped<L, S>(
+    source: ProviderSource,
+    selection: SourceBackedRouteSelection,
+    data_root: &Path,
+    exact_cwd: impl Into<PathBuf>,
+    source_scope: SourceAnchorScope,
+) -> SourceBackedRouteResult<
+    SqliteInventoryRegistration<
+        impl ReplacementDocumentTree<
+            Lifecycle = L,
+            Spool = S,
+            RouteControl = crate::ProviderRouteControlExpectation,
+        >,
+    >,
+>
+where
+    L: CaptureLifecycleSink + 'static,
+    S: DocumentRecordSpool,
+{
     let exact_cwd = exact_cwd.into();
-    let adapter = discover_shelley_source_backed_exact_cwd(data_root, &exact_cwd)
-        .map_err(shelley_inventory_route_error)?
-        .ok_or_else(|| {
-            SourceBackedRouteError::new(
-                SourceBackedRouteErrorKind::SourceChanged,
-                "the exact Shelley CWD no longer contains an admitted database".to_owned(),
-            )
-        })?;
+    let adapter =
+        discover_shelley_source_backed_exact_cwd_scoped(data_root, &exact_cwd, source_scope)
+            .map_err(shelley_inventory_route_error)?
+            .ok_or_else(|| {
+                SourceBackedRouteError::new(
+                    SourceBackedRouteErrorKind::SourceChanged,
+                    "the exact Shelley CWD no longer contains an admitted database".to_owned(),
+                )
+            })?;
     if adapter.database_path() != source.path {
         return Err(SourceBackedRouteError::new(
             SourceBackedRouteErrorKind::InvalidSource,
@@ -439,9 +500,39 @@ where
     L: CaptureLifecycleSink + 'static,
     S: DocumentRecordSpool,
 {
+    lingma_registration_scoped(
+        source,
+        selection,
+        data_root,
+        authority_key,
+        databases,
+        SourceAnchorScope::Unqualified,
+    )
+}
+
+pub fn lingma_registration_scoped<L, S>(
+    source: ProviderSource,
+    selection: SourceBackedRouteSelection,
+    data_root: &Path,
+    authority_key: TypedKey,
+    databases: Vec<(PathBuf, TypedKey)>,
+    source_scope: SourceAnchorScope,
+) -> Result<
+    SqliteInventoryRegistration<
+        impl ReplacementDocumentTree<
+            Lifecycle = L,
+            Spool = S,
+            RouteControl = crate::ProviderRouteControlExpectation,
+        >,
+    >,
+>
+where
+    L: CaptureLifecycleSink + 'static,
+    S: DocumentRecordSpool,
+{
     let databases = databases
         .into_iter()
-        .map(|(path, lineage)| LingmaDatabaseSourceV0::new(path, lineage))
+        .map(|(path, lineage)| LingmaDatabaseSourceV0::new_scoped(path, lineage, source_scope))
         .collect::<LingmaSourceBackedResultV0<Vec<_>>>()
         .map_err(|error| CaptureError::InvalidPayload(error.to_string()))?;
     let inventory = LingmaSourceInventoryV0::new(authority_key, databases)
@@ -471,6 +562,7 @@ impl LingmaInventorySource for FixedLingmaInventorySource {
 
 struct DiscoveredLingmaInventorySource<F> {
     observe: F,
+    source_scope: SourceAnchorScope,
 }
 
 impl<F> LingmaInventorySource for DiscoveredLingmaInventorySource<F>
@@ -482,7 +574,7 @@ where
     fn observe(&self) -> LingmaSourceBackedResultV0<LingmaSourceInventoryV0> {
         (self.observe)()
             .map_err(lingma_discovery_adapter_error)
-            .and_then(lingma_adapter_inventory)
+            .and_then(|inventory| lingma_adapter_inventory(inventory, self.source_scope))
     }
 }
 
@@ -688,7 +780,40 @@ where
         + Sync
         + 'static,
 {
-    let inventory = discovered_lingma_inventory_source(&source, observe)?;
+    discovered_lingma_registration_scoped(
+        source,
+        selection,
+        data_root,
+        observe,
+        SourceAnchorScope::Unqualified,
+    )
+}
+
+pub fn discovered_lingma_registration_scoped<L, S, F>(
+    source: ProviderSource,
+    selection: SourceBackedRouteSelection,
+    data_root: &Path,
+    observe: F,
+    source_scope: SourceAnchorScope,
+) -> std::result::Result<
+    SqliteInventoryRegistration<
+        impl ReplacementDocumentTree<
+            Lifecycle = L,
+            Spool = S,
+            RouteControl = crate::ProviderRouteControlExpectation,
+        >,
+    >,
+    LingmaRegistrationError,
+>
+where
+    L: CaptureLifecycleSink + 'static,
+    S: DocumentRecordSpool,
+    F: Fn() -> std::result::Result<LingmaDiscoveredInventory, LingmaDiscoveryUnavailable>
+        + Send
+        + Sync
+        + 'static,
+{
+    let inventory = discovered_lingma_inventory_source(&source, observe, source_scope)?;
     Ok(lingma_inventory_registration(
         source, selection, data_root, inventory,
     ))
@@ -697,6 +822,7 @@ where
 fn discovered_lingma_inventory_source<F>(
     selected_source: &ProviderSource,
     observe: F,
+    source_scope: SourceAnchorScope,
 ) -> std::result::Result<Arc<dyn LingmaInventorySource>, LingmaRegistrationError>
 where
     F: Fn() -> std::result::Result<LingmaDiscoveredInventory, LingmaDiscoveryUnavailable>
@@ -704,7 +830,10 @@ where
         + Sync
         + 'static,
 {
-    let source = DiscoveredLingmaInventorySource { observe };
+    let source = DiscoveredLingmaInventorySource {
+        observe,
+        source_scope,
+    };
     let opening = (source.observe)()
         .map_err(|error| LingmaRegistrationError::SelectorAuthorityUnavailable(error.detail()))?;
     if !opening
@@ -716,7 +845,7 @@ where
             "Lingma selected database is absent from its installed-client inventory",
         ));
     }
-    lingma_adapter_inventory(opening)
+    lingma_adapter_inventory(opening, source_scope)
         .map_err(|error| LingmaRegistrationError::RegistrationRejected(error.to_string()))?;
     Ok(Arc::new(source))
 }
@@ -787,6 +916,7 @@ pub(crate) fn sqlite_capture_route_error(
 
 fn lingma_adapter_inventory(
     inventory: LingmaDiscoveredInventory,
+    source_scope: SourceAnchorScope,
 ) -> LingmaSourceBackedResultV0<LingmaSourceInventoryV0> {
     let authority_key = inventory
         .authority_key()
@@ -799,7 +929,7 @@ fn lingma_adapter_inventory(
                 .catalog_lineage()
                 .typed_key()
                 .map_err(lingma_discovery_adapter_error)?;
-            LingmaDatabaseSourceV0::new(database.path(), lineage)
+            LingmaDatabaseSourceV0::new_scoped(database.path(), lineage, source_scope)
         })
         .collect::<LingmaSourceBackedResultV0<Vec<_>>>()?;
     LingmaSourceInventoryV0::new(authority_key, databases)

@@ -7,7 +7,8 @@ use std::{
 #[cfg(test)]
 use ctx_history_core::CertifiedSourceInventory;
 use ctx_history_core::{
-    CaptureProvider, SourceAnchor, SourceInventoryObservation, SourceKey, TypedKey,
+    CaptureProvider, SourceAnchor, SourceAnchorScope, SourceInventoryObservation, SourceKey,
+    TypedKey,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -66,6 +67,13 @@ pub(crate) struct AstrBotSourceBackedInventoryV0 {
 
 impl AstrBotSourceBackedInventoryV0 {
     pub(crate) fn discover(context: &DiscoveryContext) -> AstrBotSourceBackedResultV0<Self> {
+        Self::discover_scoped(context, SourceAnchorScope::Unqualified)
+    }
+
+    pub(crate) fn discover_scoped(
+        context: &DiscoveryContext,
+        source_scope: SourceAnchorScope,
+    ) -> AstrBotSourceBackedResultV0<Self> {
         let report =
             discover_provider_sources_for_provider_with_context(context, CaptureProvider::AstrBot);
         if !report.issues.is_empty() {
@@ -103,7 +111,7 @@ impl AstrBotSourceBackedInventoryV0 {
                 }
                 selected_core = true;
             }
-            let source_key = source_key(&identity)?;
+            let source_key = source_key_scoped(&identity, source_scope)?;
             if !seen.insert(source_key.identity().digest()) {
                 return Err(AstrBotSourceBackedErrorV0::DuplicateSourceIdentity(
                     source_key.identity().to_string(),
@@ -197,6 +205,13 @@ pub(super) fn open_root_authorized_snapshot_with_hook(
 pub(super) fn source_key(
     identity: &AstrBotSourceIdentityV0,
 ) -> AstrBotSourceBackedResultV0<SourceKey> {
+    source_key_scoped(identity, SourceAnchorScope::Unqualified)
+}
+
+pub(super) fn source_key_scoped(
+    identity: &AstrBotSourceIdentityV0,
+    source_scope: SourceAnchorScope,
+) -> AstrBotSourceBackedResultV0<SourceKey> {
     let (namespace, key) = match identity {
         AstrBotSourceIdentityV0::SelectedCore => {
             (SELECTED_SOURCE_NAMESPACE, TypedKey::utf8("selected-core")?)
@@ -205,12 +220,13 @@ pub(super) fn source_key(
             (LAUNCHER_SOURCE_NAMESPACE, TypedKey::utf8(instance.clone())?)
         }
     };
-    Ok(SourceKey::derive(
+    Ok(SourceKey::derive_scoped(
         CaptureProvider::AstrBot.as_str(),
         ASTRBOT_SQLITE_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         SOURCE_IDENTITY_VERSION,
         SourceAnchor::provider_native(namespace, key)?,
+        source_scope,
     )?)
 }
 

@@ -33,6 +33,48 @@ use current_schema::create_current_fixture;
 
 const OVER_LIMIT_OPTIONAL_METADATA_BYTES: usize = 64 * 1024 + 1;
 
+#[test]
+fn root_scope_separates_identical_opencode_family_sessions_and_unqualified_is_released() {
+    use ctx_history_core::{SourceAnchor, SourceAnchorScope, SourceKey};
+
+    let family = OpenCodeNativeSchemaFamily::SessionMessageSeq;
+    for dialect in [
+        &crate::provider::providers::opencode::OPENCODE_SQLITE_DIALECT,
+        &crate::provider::providers::opencode::KILO_SQLITE_DIALECT,
+        &crate::provider::providers::opencode::MIMOCODE_SQLITE_DIALECT,
+    ] {
+        let anchor = SourceAnchor::provider_native(
+            format!("{}.sqlite-authority", dialect.provider.as_str()),
+            TypedKey::utf8(SOURCE_ANCHOR_KEY).unwrap(),
+        )
+        .unwrap();
+        let released = SourceKey::derive(
+            dialect.provider.as_str(),
+            dialect.source_format,
+            format!("opencode-family-{}-v1", family.label()),
+            SOURCE_IDENTITY_VERSION,
+            anchor,
+        )
+        .unwrap();
+        let unqualified =
+            source_key_scoped(dialect, family, SourceAnchorScope::Unqualified).unwrap();
+        assert!(released.exact_descriptor_eq(&unqualified));
+        assert_eq!(
+            released.identity().encode_canonical().unwrap(),
+            unqualified.identity().encode_canonical().unwrap()
+        );
+
+        let first =
+            source_key_scoped(dialect, family, SourceAnchorScope::Lineage([0x11; 32])).unwrap();
+        let second =
+            source_key_scoped(dialect, family, SourceAnchorScope::Lineage([0x22; 32])).unwrap();
+        assert_ne!(
+            session_id(&first, "shared-session").unwrap(),
+            session_id(&second, "shared-session").unwrap()
+        );
+    }
+}
+
 fn write_current_schema(
     path: &Path,
     directory: &Path,

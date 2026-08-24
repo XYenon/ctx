@@ -56,6 +56,14 @@ impl HermesSourceCandidate {
         data_root: impl Into<PathBuf>,
         source: ProviderSource,
     ) -> HermesSourceBackedResult<Self> {
+        Self::automatic_scoped(data_root, source, SourceAnchorScope::Unqualified)
+    }
+
+    pub(crate) fn automatic_scoped(
+        data_root: impl Into<PathBuf>,
+        source: ProviderSource,
+        source_scope: SourceAnchorScope,
+    ) -> HermesSourceBackedResult<Self> {
         let profile = hermes_automatic_profile_name(&source.path)?;
         let anchor = SourceAnchor::provider_native(
             HERMES_SOURCE_ANCHOR_NAMESPACE,
@@ -64,7 +72,7 @@ impl HermesSourceCandidate {
         Ok(Self {
             data_root: data_root.into(),
             path: source.path,
-            source: hermes_source_key(anchor)?,
+            source: hermes_source_key_scoped(anchor, source_scope)?,
         })
     }
 }
@@ -76,11 +84,20 @@ pub(crate) fn hermes_source_backed_explicit(
     path: impl Into<PathBuf>,
     anchor: SourceAnchor,
 ) -> HermesSourceBackedResult<HermesSourceCandidate> {
+    hermes_source_backed_explicit_scoped(data_root, path, anchor, SourceAnchorScope::Unqualified)
+}
+
+pub(crate) fn hermes_source_backed_explicit_scoped(
+    data_root: impl Into<PathBuf>,
+    path: impl Into<PathBuf>,
+    anchor: SourceAnchor,
+    source_scope: SourceAnchorScope,
+) -> HermesSourceBackedResult<HermesSourceCandidate> {
     let path = path.into();
     Ok(HermesSourceCandidate {
         data_root: data_root.into(),
         path,
-        source: hermes_source_key(anchor)?,
+        source: hermes_source_key_scoped(anchor, source_scope)?,
     })
 }
 
@@ -121,12 +138,20 @@ fn valid_automatic_profile_name(name: &str) -> bool {
 }
 
 fn hermes_source_key(anchor: SourceAnchor) -> HermesSourceBackedResult<SourceKey> {
-    Ok(SourceKey::derive(
+    hermes_source_key_scoped(anchor, SourceAnchorScope::Unqualified)
+}
+
+fn hermes_source_key_scoped(
+    anchor: SourceAnchor,
+    source_scope: SourceAnchorScope,
+) -> HermesSourceBackedResult<SourceKey> {
+    Ok(SourceKey::derive_scoped(
         CaptureProvider::Hermes.as_str(),
         HERMES_SQLITE_SOURCE_FORMAT,
         HERMES_PROFILE_SOURCE_SCHEMA_VARIANT,
         1,
         anchor,
+        source_scope,
     )?)
 }
 

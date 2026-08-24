@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::ffi::OsString;
 
 use ctx_history_core::{
-    CaptureProvider, SourceAnchor, SourceInventoryObservation, SourceKey, TypedKey,
+    CaptureProvider, SourceAnchor, SourceAnchorScope, SourceInventoryObservation, SourceKey,
+    TypedKey,
 };
 use sha2::{Digest, Sha256};
 
@@ -76,6 +77,7 @@ impl LingmaRootAuthorizedSource {
 pub(crate) struct LingmaDatabaseSourceV0 {
     pub(super) path: PathBuf,
     catalog_lineage: TypedKey,
+    source_scope: SourceAnchorScope,
 }
 
 impl LingmaDatabaseSourceV0 {
@@ -83,9 +85,18 @@ impl LingmaDatabaseSourceV0 {
         path: impl Into<PathBuf>,
         catalog_lineage: TypedKey,
     ) -> LingmaSourceBackedResultV0<Self> {
+        Self::new_scoped(path, catalog_lineage, SourceAnchorScope::Unqualified)
+    }
+
+    pub(crate) fn new_scoped(
+        path: impl Into<PathBuf>,
+        catalog_lineage: TypedKey,
+        source_scope: SourceAnchorScope,
+    ) -> LingmaSourceBackedResultV0<Self> {
         let source = Self {
             path: path.into(),
             catalog_lineage,
+            source_scope,
         };
         source.source_key()?;
         Ok(source)
@@ -94,12 +105,13 @@ impl LingmaDatabaseSourceV0 {
     pub(crate) fn source_key(&self) -> LingmaSourceBackedResultV0<SourceKey> {
         let anchor =
             SourceAnchor::provider_native(SOURCE_ANCHOR_NAMESPACE, self.catalog_lineage.clone())?;
-        Ok(SourceKey::derive(
+        Ok(SourceKey::derive_scoped(
             CaptureProvider::Lingma.as_str(),
             LINGMA_SQLITE_SOURCE_FORMAT,
             SOURCE_SCHEMA_VARIANT,
             1,
             anchor,
+            self.source_scope,
         )?)
     }
 
