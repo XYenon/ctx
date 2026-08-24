@@ -988,10 +988,10 @@ fn rejects_invalid_provider_root_config_as_one_atomic_config() {
     let cases = [
         (
             format!(
-                "[sources.roots.work]\nprovider = \"cursor\"\npath = {:?}\n",
+                "[sources.roots.work]\nprovider = \"kiro_cli\"\npath = {:?}\n",
                 provider_path
             ),
-            "configured history roots are not enabled for cursor",
+            "configured history roots are not enabled for kiro_cli",
         ),
         (
             "[sources.roots.work]\nprovider = \"claude\"\npath = \"relative\"\n".to_owned(),
