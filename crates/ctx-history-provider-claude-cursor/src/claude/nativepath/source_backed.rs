@@ -27,8 +27,8 @@ use super::{
 use crate::CLAUDE_PROJECTS_SOURCE_FORMAT;
 use ctx_history_jsonl::{
     fit_jsonl_activity, selected_content_fits, JsonlActivityObservedBytes, JsonlFamilyAdapter,
-    JsonlFamilyBaseScope, JsonlOversizedRecordPolicy, JsonlRecordRejections,
-    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDrafts,
+    JsonlOversizedRecordPolicy, JsonlRecordRejections, SourceBackedRecordRejectionClass,
+    SourceBackedRecordRejectionDrafts,
 };
 use ctx_history_provider_runtime::{
     observe_opened_file,
@@ -118,14 +118,6 @@ where
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
         JsonlFamilyAppendMode::ProjectorPreflight(true)
-    }
-
-    fn base_scope(&self) -> JsonlFamilyBaseScope {
-        // Automatic and named routes can alternate ownership of the same
-        // physical home. Reuse only the exact route's prior sources so either
-        // transition cold-scans the new owner while topology retirement drops
-        // the old route atomically.
-        JsonlFamilyBaseScope::Route
     }
 
     fn oversized_record_policy(&self) -> JsonlOversizedRecordPolicy {

@@ -42,11 +42,10 @@ use crate::{
     provider::{
         custom_history_jsonl::{validate_custom_history_identifier, validate_custom_source_record},
         source_backed::family::jsonl::{
-            JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyBaseScope, JsonlFamilyInventory,
-            JsonlFamilyLeaf, JsonlFamilyOptimizedLeafOutcome, JsonlFamilyProjector,
-            JsonlFamilyPublication, JsonlFamilyRootMissingMode, JsonlFamilyTerminalProof,
-            JsonlFamilyWorkerContext, JsonlPhysicalDigest, JsonlPhysicalStream, JsonlRecordFraming,
-            JsonlResumableSha256,
+            JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
+            JsonlFamilyOptimizedLeafOutcome, JsonlFamilyProjector, JsonlFamilyPublication,
+            JsonlFamilyRootMissingMode, JsonlFamilyTerminalProof, JsonlFamilyWorkerContext,
+            JsonlPhysicalDigest, JsonlPhysicalStream, JsonlRecordFraming, JsonlResumableSha256,
         },
     },
     CaptureError, ProviderImportSummary, ProviderSourceFailureKind, MAX_PROVIDER_JSONL_LINE_BYTES,
@@ -245,10 +244,6 @@ impl<R: JsonlProviderRuntime> JsonlFamilyAdapter for CustomHistoryJsonlFamilyAda
 
     fn root_missing_mode(&self) -> JsonlFamilyRootMissingMode {
         JsonlFamilyRootMissingMode::AuthoritativeEmpty
-    }
-
-    fn base_scope(&self) -> JsonlFamilyBaseScope {
-        JsonlFamilyBaseScope::Route
     }
 
     fn discover(&self, root: &Path) -> crate::Result<JsonlFamilyInventory> {

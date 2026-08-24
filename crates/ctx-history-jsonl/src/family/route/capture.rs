@@ -182,7 +182,7 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
             "provider JSONL root is unavailable",
         ));
     }
-    let bases = base_sources_for_root(adapter, &opening, root, sink)?;
+    let bases = base_sources_for_route(adapter, sink)?;
     bind_prior_disposition_sources(adapter, &mut opening, &bases)?;
     let bases_by_descriptor = bases_by_descriptor(&bases)?;
     let authenticated_change_time_hints = normalize_authenticated_change_time_hints(
@@ -221,6 +221,13 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
     }
     for rejected in opening.quarantined_leaves() {
         if let Some((source, detail)) = &rejected.logical_source_failure {
+            if rejected
+                .source()
+                .is_some_and(|claimed| sink.source_owned_by_other_route(claimed))
+                || sink.source_owned_by_other_route(source)
+            {
+                continue;
+            }
             let failure =
                 SourceBackedRouteError::new(SourceBackedRouteErrorKind::InvalidSource, detail);
             let carried_forward = bases
@@ -237,6 +244,9 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
     let mut rejected_quarantine_sources = HashMap::new();
     for rejected in opening.quarantined_leaves() {
         if let Some(source) = rejected.source() {
+            if sink.source_owned_by_other_route(source) {
+                continue;
+            }
             if rejected_quarantine_sources
                 .insert(source.exact_descriptor_digest(), source.clone())
                 .is_some_and(|previous: SourceKey| !previous.exact_descriptor_eq(source))
@@ -258,10 +268,7 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
     }
     let mut selected_leaves = opening
         .accepted_leaves()
-        .filter(|leaf| {
-            adapter.base_scope() == JsonlFamilyBaseScope::ProviderFamily
-                || !sink.source_owned_by_other_route(leaf.source())
-        })
+        .filter(|leaf| !sink.source_owned_by_other_route(leaf.source()))
         .cloned()
         .collect::<Vec<_>>();
     adapter

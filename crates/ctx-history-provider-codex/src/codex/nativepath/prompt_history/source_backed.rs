@@ -19,9 +19,9 @@ use crate::{
     common::io::OpenedProviderSourceFile,
     provider::source_backed::family::jsonl::{
         jsonl_single_file_inventory, JsonlFamilyAdapter, JsonlFamilyAppendMode,
-        JsonlFamilyBaseScope, JsonlFamilyInventory, JsonlFamilyInventoryMode, JsonlFamilyLeaf,
-        JsonlFamilyProjector, JsonlFamilyRootMissingMode, JsonlFamilyWorkerContext,
-        JsonlOversizedRecordPolicy, JsonlRecordRef,
+        JsonlFamilyInventory, JsonlFamilyInventoryMode, JsonlFamilyLeaf, JsonlFamilyProjector,
+        JsonlFamilyRootMissingMode, JsonlFamilyWorkerContext, JsonlOversizedRecordPolicy,
+        JsonlRecordRef,
     },
     CaptureError,
 };
@@ -139,10 +139,6 @@ impl<B: ProviderRuntimeBinding> JsonlFamilyAdapter for CodexPromptHistoryJsonlFa
 
     fn inventory_mode(&self) -> JsonlFamilyInventoryMode {
         JsonlFamilyInventoryMode::FrozenOpeningAllowAdditions
-    }
-
-    fn base_scope(&self) -> JsonlFamilyBaseScope {
-        JsonlFamilyBaseScope::Route
     }
 
     fn discover(&self, root: &Path) -> crate::Result<JsonlFamilyInventory> {

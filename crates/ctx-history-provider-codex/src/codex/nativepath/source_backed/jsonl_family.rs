@@ -6,12 +6,12 @@ use crate::{
     provider::source_backed::{
         family::jsonl::{
             observe_opened_file, observe_opened_file_allow_append, JsonlFamilyAdapter,
-            JsonlFamilyAppendMode, JsonlFamilyBaseScope, JsonlFamilyExecutionIo,
-            JsonlFamilyInventory, JsonlFamilyInventoryMode, JsonlFamilyLeaf,
-            JsonlFamilyMembershipObservation, JsonlFamilyOpenedMember, JsonlFamilyProjectionMode,
-            JsonlFamilyRejectedLeaf, JsonlFamilyRootMissingMode, JsonlFamilySemanticExecutor,
-            JsonlFamilySemanticPage, JsonlFamilySemanticPreflight, JsonlFamilySemanticSummary,
-            JsonlFamilyWorkerContext, JsonlFileObservation, JsonlRecordFraming,
+            JsonlFamilyAppendMode, JsonlFamilyExecutionIo, JsonlFamilyInventory,
+            JsonlFamilyInventoryMode, JsonlFamilyLeaf, JsonlFamilyMembershipObservation,
+            JsonlFamilyOpenedMember, JsonlFamilyProjectionMode, JsonlFamilyRejectedLeaf,
+            JsonlFamilyRootMissingMode, JsonlFamilySemanticExecutor, JsonlFamilySemanticPage,
+            JsonlFamilySemanticPreflight, JsonlFamilySemanticSummary, JsonlFamilyWorkerContext,
+            JsonlFileObservation, JsonlRecordFraming,
         },
         SourceBackedRouteErrorKind,
     },
@@ -591,10 +591,6 @@ impl<B: ProviderRuntimeBinding> JsonlFamilyAdapter for CodexSessionJsonlFamilyAd
 
     fn inventory_mode(&self) -> JsonlFamilyInventoryMode {
         JsonlFamilyInventoryMode::FrozenOpeningAllowAdditions
-    }
-
-    fn base_scope(&self) -> JsonlFamilyBaseScope {
-        JsonlFamilyBaseScope::Route
     }
 
     fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory> {
