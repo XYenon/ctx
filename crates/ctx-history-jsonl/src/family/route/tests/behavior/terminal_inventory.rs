@@ -26,6 +26,29 @@ fn capture_current_test_route(
     root: &Path,
     index_root: &Path,
 ) -> TestRouteCapture {
+    capture_current_test_route_with_owners(adapter, root, index_root, HashMap::new())
+}
+
+fn capture_current_test_route_with_sibling_owner(
+    adapter: &JsonlFamilyAdapterObject,
+    root: &Path,
+    index_root: &Path,
+    sibling_source: SourceKey,
+) -> TestRouteCapture {
+    let mut owners = HashMap::new();
+    owners.insert(
+        sibling_source.identity().digest(),
+        SourceOwner::new(1, sibling_source, true, None),
+    );
+    capture_current_test_route_with_owners(adapter, root, index_root, owners)
+}
+
+fn capture_current_test_route_with_owners(
+    adapter: &JsonlFamilyAdapterObject,
+    root: &Path,
+    index_root: &Path,
+    mut owners: HashMap<[u8; 32], SourceOwner>,
+) -> TestRouteCapture {
     let resident = Mutex::new(FamilyResident::default());
     let mut writer = match IndexCaptureLifecycle::open(index_root, ()).unwrap() {
         CaptureLifecycleOpenOutcome::Ready(lifecycle) => lifecycle,
@@ -33,7 +56,6 @@ fn capture_current_test_route(
             panic!("test lifecycle unexpectedly requires recovery")
         }
     };
-    let mut owners = HashMap::new();
     let mut complete_inventories = Vec::new();
     let mut applied_removals = Vec::new();
     let mut logical_source_failures = SourceBackedLogicalSourceFailures::default();
@@ -74,6 +96,7 @@ fn sibling_route_source_is_not_reused_or_claimed() {
     fs::write(root.join("sibling.jsonl"), TEST_RECORD).unwrap();
     let (sibling_resident, _) = expected_state(&ParallelTestAdapter, &root);
     seed_sibling_route(&index_root, expected_source(&sibling_resident));
+    fs::write(root.join("sibling.jsonl"), br#"{"message":"incomplete""#).unwrap();
 
     let captured = capture_current_test_route(&ParallelTestAdapter, &root, &index_root);
 
@@ -84,6 +107,92 @@ fn sibling_route_source_is_not_reused_or_claimed() {
     assert!(captured.applied_removals.is_empty());
     assert!(captured.logical_source_failures.is_empty());
     assert!(captured.resident.lock().unwrap().owned_sources.is_empty());
+}
+
+#[test]
+fn sibling_owned_pending_member_does_not_block_current_route_deletion() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let index_root = temp.path().join("index");
+    fs::create_dir_all(&root).unwrap();
+    let current_path = root.join("current.jsonl");
+    fs::write(&current_path, TEST_RECORD).unwrap();
+    let current = capture_parallel_test_generation(&ParallelTestAdapter, &root, &index_root, 1)
+        .0
+        .manifest
+        .sources[0]
+        .clone();
+    fs::remove_file(current_path).unwrap();
+    let sibling_path = root.join("sibling.jsonl");
+    fs::write(&sibling_path, br#"{"message":"incomplete""#).unwrap();
+    let sibling_source = TestAdapter
+        .discover(&root)
+        .unwrap()
+        .accepted_leaves()
+        .next()
+        .unwrap()
+        .source()
+        .clone();
+
+    let captured = capture_current_test_route_with_sibling_owner(
+        &ParallelTestAdapter,
+        &root,
+        &index_root,
+        sibling_source,
+    );
+
+    assert_eq!(captured.writer.activity().deleted_sources, 1);
+    assert_eq!(captured.applied_removals.len(), 1);
+    assert!(captured.applied_removals[0]
+        .deletion
+        .source()
+        .exact_descriptor_eq(current.observation().source()));
+    assert!(captured.logical_source_failures.is_empty());
+}
+
+#[test]
+fn sibling_owned_quarantine_does_not_block_current_route_replacement_retirement() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let index_root = temp.path().join("index");
+    fs::create_dir_all(&root).unwrap();
+    let current_path = root.join("current.jsonl");
+    fs::write(&current_path, TEST_RECORD).unwrap();
+    let current = capture_parallel_test_generation(&ParallelTestAdapter, &root, &index_root, 1)
+        .0
+        .manifest
+        .sources[0]
+        .clone();
+    fs::write(root.join("sibling.jsonl"), TEST_RECORD).unwrap();
+    let sibling_source = TestAdapter
+        .discover(&root)
+        .unwrap()
+        .accepted_leaves()
+        .find(|leaf| leaf.source_path().ends_with("sibling.jsonl"))
+        .unwrap()
+        .source()
+        .clone();
+
+    let captured = capture_current_test_route_with_sibling_owner(
+        &ReplacementWithQuarantineTestAdapter,
+        &root,
+        &index_root,
+        sibling_source,
+    );
+
+    assert_eq!(captured.writer.activity().begin_source_replacements, 1);
+    assert_eq!(captured.writer.activity().deleted_sources, 1);
+    assert_eq!(captured.applied_removals.len(), 1);
+    assert!(captured.applied_removals[0]
+        .deletion
+        .source()
+        .exact_descriptor_eq(current.observation().source()));
+    assert!(captured.logical_source_failures.is_empty());
+    assert_eq!(captured.writer.certified_sources.len(), 1);
+    assert!(!captured.writer.certified_sources[0]
+        .observation()
+        .source()
+        .exact_descriptor_eq(current.observation().source()));
 }
 
 #[test]

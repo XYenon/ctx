@@ -195,6 +195,8 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
     let opening_membership = adapter
         .observe_terminal_membership(root, &opening)
         .map_err(|error| route_discovery(adapter, error))?;
+    let (route_local_quarantined_count, route_local_pending_count) =
+        route_local_disposition_counts::<R>(&opening, sink);
     // A rejected member with exact quarantine ownership belongs to a
     // source-local failure even when a peer member owns the one diagnostic.
     let route_fatal_rejected = opening
@@ -221,11 +223,7 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
     }
     for rejected in opening.quarantined_leaves() {
         if let Some((source, detail)) = &rejected.logical_source_failure {
-            if rejected
-                .source()
-                .is_some_and(|claimed| sink.source_owned_by_other_route(claimed))
-                || sink.source_owned_by_other_route(source)
-            {
+            if !quarantined_member_is_route_local::<R>(rejected, sink) {
                 continue;
             }
             let failure =
@@ -257,12 +255,12 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
             }
         }
     }
-    if opening.accepted_len() == 0 && opening.pending_len() != 0 && bases.is_empty() {
+    if opening.accepted_len() == 0 && route_local_pending_count != 0 && bases.is_empty() {
         return Err(SourceBackedRouteError::new(
             SourceBackedRouteErrorKind::SourceChanged,
             format!(
                 "provider JSONL inventory contains {} incomplete sources and no complete source; retry after a pending file changes",
-                opening.pending_len(),
+                route_local_pending_count,
             ),
         ));
     }
@@ -479,8 +477,8 @@ pub(super) fn capture<R: JsonlFamilyRuntime>(
         }
     }
 
-    let partial_inventory = opening.quarantined_len() != 0
-        || opening.pending_len() != 0
+    let partial_inventory = route_local_quarantined_count != 0
+        || route_local_pending_count != 0
         || !scan_result.quarantined.is_empty();
     if partial_inventory && !bases.is_empty() {
         for dependency in &disposition_dependencies {

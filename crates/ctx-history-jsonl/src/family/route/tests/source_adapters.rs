@@ -6,6 +6,8 @@ struct PendingOnlyAdapter;
 
 pub(super) struct QuarantinedTestAdapter;
 
+pub(super) struct ReplacementWithQuarantineTestAdapter;
+
 pub(super) const TEST_RECORD: &[u8] = b"{\"message\":\"before\"}\n";
 pub(super) const PROGRESS_TEST_RECORDS: &[u8] =
     b"{\"message\":\"one\"}\n{\"message\":\"two\"}\n{\"tool_call\":\"three\"}\n";
@@ -182,6 +184,103 @@ impl JsonlFamilyAdapter for QuarantinedTestAdapter {
         Err(CaptureError::SystemInvariant(
             "quarantine tests never project",
         ))
+    }
+}
+
+impl JsonlFamilyAdapter for ReplacementWithQuarantineTestAdapter {
+    type Runtime = TestJsonlRuntime;
+
+    fn provider(&self) -> CaptureProvider {
+        CaptureProvider::Pi
+    }
+
+    fn source_format(&self) -> &'static str {
+        TEST_SOURCE_FORMAT
+    }
+
+    fn schema_variant(&self) -> &'static str {
+        TEST_SCHEMA
+    }
+
+    fn parser_revision(&self) -> &'static str {
+        "replacement-with-quarantine-test-parser-v1"
+    }
+
+    fn append_mode(&self) -> JsonlFamilyAppendMode {
+        JsonlFamilyAppendMode::CertifiedSuffix
+    }
+
+    fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory> {
+        let discovered = TestAdapter.discover(root)?;
+        let authority =
+            discovered
+                .authorities
+                .first()
+                .cloned()
+                .ok_or(CaptureError::SystemInvariant(
+                    "replacement quarantine test inventory has no authority",
+                ))?;
+        let mut accepted = Vec::new();
+        let mut rejected = Vec::new();
+        for leaf in discovered.accepted_leaves() {
+            if leaf.source_path().ends_with("current.jsonl") {
+                let mut replacement = leaf.clone();
+                replacement.source = SourceKey::derive_provider_native(
+                    self.provider().as_str(),
+                    TEST_SOURCE_FORMAT,
+                    TEST_SCHEMA,
+                    1,
+                    "replacement-current-test",
+                    TypedKey::utf8("current").map_err(test_contract_error)?,
+                )
+                .map_err(test_contract_error)?;
+                accepted.push(replacement);
+            } else if leaf.source_path().ends_with("sibling.jsonl") {
+                let failure_source = SourceKey::derive_provider_native(
+                    self.provider().as_str(),
+                    TEST_SOURCE_FORMAT,
+                    TEST_SCHEMA,
+                    1,
+                    "quarantined-test-file",
+                    TypedKey::utf8("replacement-sibling").map_err(test_contract_error)?,
+                )
+                .map_err(test_contract_error)?;
+                rejected.push(
+                    JsonlFamilyRejectedLeaf::bind_observed(
+                        leaf.source_path().to_path_buf(),
+                        leaf.authority_path.clone(),
+                        leaf.observation().clone(),
+                        TypedKey::utf8("replacement-sibling").map_err(test_contract_error)?,
+                        1,
+                    )
+                    .with_logical_source_failure(
+                        failure_source,
+                        "quarantined sibling replacement source",
+                    )
+                    .with_quarantined_source(leaf.source().clone()),
+                );
+            } else {
+                return Err(CaptureError::SystemInvariant(
+                    "replacement quarantine test inventory has an unexpected leaf",
+                ));
+            }
+        }
+        JsonlFamilyInventory::present_with_rejected(
+            self.provider(),
+            root,
+            authority,
+            accepted,
+            rejected,
+        )
+    }
+
+    fn projector(
+        &self,
+        _leaf: &JsonlFamilyLeaf,
+        _source_file: Arc<OpenedProviderSourceFile>,
+        _imported_at: DateTime<Utc>,
+    ) -> Result<Box<JsonlFamilyProjectorObject>> {
+        Ok(Box::new(ParallelTestProjector))
     }
 }
 

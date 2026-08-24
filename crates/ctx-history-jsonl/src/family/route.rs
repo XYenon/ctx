@@ -65,7 +65,9 @@ use errors::{
     route_scan,
 };
 mod ownership;
-use ownership::base_sources_for_route;
+use ownership::{
+    base_sources_for_route, quarantined_member_is_route_local, route_local_disposition_counts,
+};
 mod membership;
 pub use membership::{JsonlFamilyAppendTrustContract, JsonlFamilyMembershipObservation};
 mod projector;
