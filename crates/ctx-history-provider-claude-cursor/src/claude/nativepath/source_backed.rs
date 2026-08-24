@@ -37,10 +37,7 @@ use ctx_history_provider_runtime::{
     ProviderJsonlInventory, ProviderJsonlLeaf, ProviderJsonlReader, ProviderJsonlRuntime,
     ProviderJsonlWorkerContext, ProviderRuntimeBinding, Result,
 };
-use ctx_history_source_io::{
-    visit_bounded_tree_files_isolating_selected, NON_REGULAR_PROVIDER_SOURCE_REASON,
-    REPARSE_PROVIDER_SOURCE_REASON, SYMLINK_PROVIDER_SOURCE_REASON,
-};
+use ctx_history_source_io::visit_bounded_tree_files_isolating_selected;
 
 type JsonlFamilyLeaf = ProviderJsonlLeaf;
 type JsonlReader = ProviderJsonlReader;
@@ -994,44 +991,6 @@ fn fallback_event_key_parts(identity: FallbackEventIdentity) -> Result<Vec<Typed
         TypedKey::bytes(identity.digest.to_vec()).map_err(contract)?,
         TypedKey::U64(identity.duplicate_occurrence),
     ])
-}
-
-fn contract(error: impl std::fmt::Display) -> CaptureError {
-    CaptureError::InvalidPayload(error.to_string())
-}
-
-fn is_quarantinable_claude_leaf_error(error: &CaptureError) -> bool {
-    matches!(error, CaptureError::Io(source) if source.kind() == io::ErrorKind::PermissionDenied)
-        || matches!(
-            error,
-            CaptureError::InvalidProviderTranscriptPath { reason, .. }
-                if *reason == SYMLINK_PROVIDER_SOURCE_REASON
-                    || *reason == REPARSE_PROVIDER_SOURCE_REASON
-                    || *reason == NON_REGULAR_PROVIDER_SOURCE_REASON
-        )
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClaudeSourceClaim {
-    New,
-    Duplicate,
-}
-
-fn claim_claude_source(
-    claimed: &mut HashMap<[u8; 32], SourceKey>,
-    source: &SourceKey,
-) -> Result<ClaudeSourceClaim> {
-    let digest = source.exact_descriptor_digest();
-    if let Some(previous) = claimed.get(&digest) {
-        if previous.exact_descriptor_eq(source) {
-            return Ok(ClaudeSourceClaim::Duplicate);
-        }
-        return Err(CaptureError::InvalidPayload(
-            "Claude source descriptor digest collision".to_owned(),
-        ));
-    }
-    claimed.insert(digest, source.clone());
-    Ok(ClaudeSourceClaim::New)
 }
 
 #[cfg(test)]
