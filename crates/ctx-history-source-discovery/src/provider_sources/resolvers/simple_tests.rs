@@ -314,7 +314,7 @@ fn naming_the_automatic_home_through_a_symlink_deduplicates_the_physical_source(
 
 #[cfg(unix)]
 #[test]
-fn configured_roots_retain_unknown_physical_routes() {
+fn configured_roots_reject_present_roots_of_the_wrong_kind() {
     let temp = tempdir();
     let base = context(&temp, DiscoveryPlatform::Linux);
     let unavailable_claude = temp.path().join("claude-unavailable");
@@ -340,28 +340,12 @@ fn configured_roots_retain_unknown_physical_routes() {
         .with_configured_provider_roots(configured);
 
     let claude = resolve_provider(&context, CaptureProvider::Claude);
-    assert_eq!(paths(&claude), vec![unavailable_claude.join("projects")]);
-    assert_eq!(claude.sources[0].status, ProviderSourceStatus::Unknown);
+    assert!(claude.sources.is_empty());
     assert_eq!(claude.issues.len(), 1);
 
     let codex = resolve_provider(&context, CaptureProvider::Codex);
-    assert_eq!(
-        paths(&codex),
-        vec![
-            unavailable_codex.join("sessions"),
-            unavailable_codex.join("archived_sessions"),
-            unavailable_codex.join("history.jsonl"),
-        ]
-    );
-    assert!(codex
-        .sources
-        .iter()
-        .all(|source| source.status == ProviderSourceStatus::Unknown));
-    assert_eq!(
-        codex.issues.len(),
-        1,
-        "equivalent configured-home selector failures are deduplicated"
-    );
+    assert!(codex.sources.is_empty());
+    assert_eq!(codex.issues.len(), 1);
 }
 
 #[test]

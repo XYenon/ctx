@@ -1,0 +1,855 @@
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::{Path, PathBuf},
+};
+
+use ctx_history_capture_model::ProviderRootDefinition;
+
+use super::*;
+use crate::provider_sources::{
+    discover_provider_sources_for_provider_with_context, discover_provider_sources_with_context,
+    provider_source_specs, DiscoveryPlatform, DiscoveryPlatformDirs,
+};
+
+const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str)] = &[
+    (
+        CaptureProvider::GrokBuild,
+        ConfiguredRootPathKind::Directory,
+        "grok_build_session_updates_jsonl_tree",
+        "grok-build-sessions",
+    ),
+    (
+        CaptureProvider::DeepSeekHarness,
+        ConfiguredRootPathKind::Directory,
+        "deepseek_harness_session_jsonl_tree",
+        "deepseek-harness-sessions",
+    ),
+    (
+        CaptureProvider::Pi,
+        ConfiguredRootPathKind::Directory,
+        "pi_session_jsonl",
+        "pi-sessions",
+    ),
+    (
+        CaptureProvider::OpenCode,
+        ConfiguredRootPathKind::File,
+        "opencode_sqlite",
+        "opencode-database",
+    ),
+    (
+        CaptureProvider::Kilo,
+        ConfiguredRootPathKind::File,
+        "kilo_sqlite",
+        "kilo-database",
+    ),
+    (
+        CaptureProvider::MiMoCode,
+        ConfiguredRootPathKind::File,
+        "mimocode_sqlite",
+        "mimocode-database",
+    ),
+    (
+        CaptureProvider::Crush,
+        ConfiguredRootPathKind::File,
+        "crush_sqlite",
+        "crush-project-database",
+    ),
+    (
+        CaptureProvider::Goose,
+        ConfiguredRootPathKind::File,
+        "goose_sessions_sqlite",
+        "goose-sessions-database",
+    ),
+    (
+        CaptureProvider::Gemini,
+        ConfiguredRootPathKind::Directory,
+        "gemini_cli_chat_recording_jsonl",
+        "gemini-chats",
+    ),
+    (
+        CaptureProvider::Tabnine,
+        ConfiguredRootPathKind::Directory,
+        "tabnine_cli_chat_recording_jsonl",
+        "tabnine-agent-history",
+    ),
+    (
+        CaptureProvider::Cursor,
+        ConfiguredRootPathKind::Directory,
+        "cursor_agent_transcript_jsonl_tree",
+        "cursor-projects",
+    ),
+    (
+        CaptureProvider::Zed,
+        ConfiguredRootPathKind::File,
+        "zed_threads_sqlite",
+        "zed-threads-database",
+    ),
+    (
+        CaptureProvider::CopilotCli,
+        ConfiguredRootPathKind::Directory,
+        "copilot_cli_session_events_jsonl",
+        "copilot-session-state",
+    ),
+    (
+        CaptureProvider::QwenCode,
+        ConfiguredRootPathKind::Directory,
+        "qwen_code_chat_jsonl_tree",
+        "qwen-projects",
+    ),
+    (
+        CaptureProvider::KimiCodeCli,
+        ConfiguredRootPathKind::Directory,
+        "kimi_code_cli_wire_jsonl_tree",
+        "kimi-history",
+    ),
+    (
+        CaptureProvider::Junie,
+        ConfiguredRootPathKind::Directory,
+        "junie_session_events_jsonl_tree",
+        "junie-sessions",
+    ),
+    (
+        CaptureProvider::ForgeCode,
+        ConfiguredRootPathKind::File,
+        "forgecode_sqlite",
+        "forgecode-database",
+    ),
+    (
+        CaptureProvider::MistralVibe,
+        ConfiguredRootPathKind::Directory,
+        "mistral_vibe_session_jsonl_tree",
+        "mistral-vibe-sessions",
+    ),
+    (
+        CaptureProvider::Mux,
+        ConfiguredRootPathKind::Directory,
+        "mux_session_jsonl_tree",
+        "mux-sessions",
+    ),
+    (
+        CaptureProvider::RovoDev,
+        ConfiguredRootPathKind::Directory,
+        "rovodev_session_json_tree",
+        "rovodev-sessions",
+    ),
+    (
+        CaptureProvider::Hermes,
+        ConfiguredRootPathKind::File,
+        "hermes_state_sqlite",
+        "hermes-profile-database",
+    ),
+    (
+        CaptureProvider::AstrBot,
+        ConfiguredRootPathKind::File,
+        "astrbot_data_v4_sqlite",
+        "astrbot-instance-database",
+    ),
+    (
+        CaptureProvider::Continue,
+        ConfiguredRootPathKind::Directory,
+        "continue_cli_sessions_json",
+        "continue-sessions",
+    ),
+    (
+        CaptureProvider::RooCode,
+        ConfiguredRootPathKind::Directory,
+        "roo_task_directory_json",
+        "roo-task-store",
+    ),
+    (
+        CaptureProvider::Lingma,
+        ConfiguredRootPathKind::File,
+        "lingma_sqlite",
+        "lingma-client-profile-database",
+    ),
+    (
+        CaptureProvider::Warp,
+        ConfiguredRootPathKind::File,
+        "warp_sqlite",
+        "warp-surface-database",
+    ),
+    (
+        CaptureProvider::CodeBuddy,
+        ConfiguredRootPathKind::Directory,
+        "codebuddy_history_json",
+        "codebuddy-history",
+    ),
+];
+
+const INTENTIONAL_AUTOMATIC_EXACT: &[CaptureProvider] = &[
+    CaptureProvider::KiroCli,
+    CaptureProvider::Antigravity,
+    CaptureProvider::FactoryAiDroid,
+    CaptureProvider::Auggie,
+    CaptureProvider::Firebender,
+    CaptureProvider::DeepAgents,
+    CaptureProvider::NanoClaw,
+    CaptureProvider::Shelley,
+    CaptureProvider::Qoder,
+];
+
+const COMPOUND_CAPABILITIES: &[(CaptureProvider, ConfiguredRootExpander)] = &[
+    (CaptureProvider::Codex, ConfiguredRootExpander::CodexHomeV1),
+    (
+        CaptureProvider::Claude,
+        ConfiguredRootExpander::ClaudeHomeV1,
+    ),
+    (
+        CaptureProvider::OpenClaw,
+        ConfiguredRootExpander::OpenClawStateRootV1,
+    ),
+    (
+        CaptureProvider::Cline,
+        ConfiguredRootExpander::ClineCommonDataRootV1,
+    ),
+];
+
+fn context(temp: &tempfile::TempDir) -> DiscoveryContext {
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    DiscoveryContext::new(
+        home,
+        cwd,
+        DiscoveryPlatform::Linux,
+        DiscoveryPlatformDirs::default(),
+    )
+}
+
+fn root(id: &str, provider: CaptureProvider, path: PathBuf) -> ProviderRootDefinition {
+    ProviderRootDefinition {
+        id: id.to_owned(),
+        provider,
+        path,
+        group: None,
+    }
+}
+
+fn provider_report(context: &DiscoveryContext, provider: CaptureProvider) -> DiscoveryReport {
+    discover_provider_sources_for_provider_with_context(
+        &crate::provider_sources::TEST_PROVIDER_PROBES,
+        context,
+        provider,
+    )
+}
+
+fn configured_report(
+    base: DiscoveryContext,
+    roots: Vec<ProviderRootDefinition>,
+    provider: CaptureProvider,
+) -> DiscoveryReport {
+    provider_report(
+        &base
+            .with_automatic_provider_discovery(false)
+            .with_configured_provider_roots(roots),
+        provider,
+    )
+}
+
+fn write(path: &Path, bytes: &[u8]) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, bytes).unwrap();
+}
+
+fn route_role(source: &ProviderSource) -> &[u8] {
+    source
+        .route_provenance
+        .route_role()
+        .expect("configured route role")
+        .as_bytes()
+}
+
+fn assert_configured(source: &ProviderSource, expected_id: &str, expected_root: &Path) {
+    assert_eq!(
+        source.route_provenance.configured_root(),
+        Some((expected_id, expected_root))
+    );
+    assert!(source.route_provenance.route_role().is_some());
+}
+
+#[test]
+fn capability_table_is_exhaustive_and_freezes_31_9_1_inventory() {
+    assert_eq!(configured_root_capabilities().len(), 41);
+    let actual = configured_root_capabilities()
+        .iter()
+        .map(|capability| capability.provider)
+        .collect::<Vec<_>>();
+    assert_eq!(actual.len(), 41);
+    assert_eq!(
+        actual,
+        provider_source_specs()
+            .iter()
+            .map(|spec| spec.provider)
+            .collect::<Vec<_>>()
+    );
+
+    let enabled = configured_root_capabilities()
+        .iter()
+        .filter(|capability| capability.state.is_enabled())
+        .count();
+    let intentional = configured_root_capabilities()
+        .iter()
+        .filter(|capability| {
+            capability.state == ConfiguredRootCapabilityState::IntentionalAutomaticExact
+        })
+        .map(|capability| capability.provider)
+        .collect::<HashSet<_>>();
+    let pending = configured_root_capabilities()
+        .iter()
+        .filter(|capability| capability.state == ConfiguredRootCapabilityState::PendingNamedSupport)
+        .map(|capability| capability.provider)
+        .collect::<Vec<_>>();
+
+    assert_eq!(enabled, 31);
+    assert_eq!(intentional.len(), 9);
+    assert_eq!(
+        intentional,
+        INTENTIONAL_AUTOMATIC_EXACT.iter().copied().collect()
+    );
+    assert_eq!(pending, vec![CaptureProvider::OpenHands]);
+}
+
+#[test]
+fn exact_and_compound_capability_metadata_is_exhaustive() {
+    assert_eq!(EXACT_CAPABILITIES.len(), 27);
+    for &(provider, expected_path_kind, source_format, route_role) in EXACT_CAPABILITIES {
+        assert_eq!(
+            configured_root_capability(provider).map(|capability| capability.state),
+            Some(ConfiguredRootCapabilityState::Enabled {
+                expected_path_kind,
+                expander: ConfiguredRootExpander::ExactSource {
+                    source_format,
+                    route_role,
+                },
+            })
+        );
+    }
+    for &(provider, expander) in COMPOUND_CAPABILITIES {
+        assert_eq!(
+            configured_root_capability(provider).map(|capability| capability.state),
+            Some(ConfiguredRootCapabilityState::Enabled {
+                expected_path_kind: ConfiguredRootPathKind::Directory,
+                expander,
+            })
+        );
+    }
+}
+
+#[test]
+fn all_enabled_roots_emit_missing_candidates_with_provenance_when_automatic_is_false() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let mut roots = Vec::new();
+    let mut root_paths = HashMap::new();
+    for spec in provider_source_specs() {
+        let id = format!("{}-configured", spec.provider.as_str());
+        let path = temp.path().join("configured").join(spec.provider.as_str());
+        root_paths.insert(id.clone(), path.clone());
+        roots.push(root(&id, spec.provider, path));
+    }
+    let context = context(&temp)
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(roots);
+    let report = discover_provider_sources_with_context(
+        &crate::provider_sources::TEST_PROVIDER_PROBES,
+        &context,
+    );
+
+    assert_eq!(report.sources.len(), 34);
+    assert!(report.issues.is_empty());
+    assert!(report
+        .sources
+        .iter()
+        .all(|source| source.status == ProviderSourceStatus::Missing));
+    for source in &report.sources {
+        let (id, path) = source
+            .route_provenance
+            .configured_root()
+            .expect("configured provenance");
+        assert_eq!(Some(path), root_paths.get(id).map(PathBuf::as_path));
+    }
+
+    for capability in configured_root_capabilities() {
+        let count = report
+            .sources
+            .iter()
+            .filter(|source| source.provider == capability.provider)
+            .count();
+        let expected = match capability.state {
+            ConfiguredRootCapabilityState::IntentionalAutomaticExact
+            | ConfiguredRootCapabilityState::PendingNamedSupport => 0,
+            ConfiguredRootCapabilityState::Enabled {
+                expander: ConfiguredRootExpander::CodexHomeV1,
+                ..
+            } => 3,
+            ConfiguredRootCapabilityState::Enabled {
+                expander: ConfiguredRootExpander::ClineCommonDataRootV1,
+                ..
+            } => 2,
+            ConfiguredRootCapabilityState::Enabled { .. } => 1,
+        };
+        assert_eq!(count, expected, "unexpected route count for {capability:?}");
+    }
+}
+
+#[test]
+fn corrected_exact_session_and_gemini_roots_probe_the_configured_path_itself() {
+    let fixtures = [
+        (
+            CaptureProvider::GrokBuild,
+            "grok",
+            "workspace/session/updates.jsonl",
+            "grok_build_session_updates_jsonl_tree",
+        ),
+        (
+            CaptureProvider::DeepSeekHarness,
+            "deepseek",
+            "bucket/session/session.jsonl",
+            "deepseek_harness_session_jsonl_tree",
+        ),
+        (
+            CaptureProvider::Pi,
+            "pi",
+            "session.jsonl",
+            "pi_session_jsonl",
+        ),
+        (
+            CaptureProvider::Gemini,
+            "gemini",
+            "tmp/project/chats/session.jsonl",
+            "gemini_cli_chat_recording_jsonl",
+        ),
+    ];
+    for (provider, id, leaf, source_format) in fixtures {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let selected = temp.path().join(id);
+        write(&selected.join(leaf), b"{}\n");
+        let report = configured_report(
+            context(&temp),
+            vec![root(id, provider, selected.clone())],
+            provider,
+        );
+        assert_eq!(report.sources.len(), 1);
+        assert_eq!(report.sources[0].path, selected);
+        assert_eq!(report.sources[0].source_format, source_format);
+        assert_eq!(report.sources[0].status, ProviderSourceStatus::Available);
+        assert_configured(&report.sources[0], id, &report.sources[0].path);
+    }
+
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let database = temp.path().join("opencode.db");
+    write(&database, b"database sentinel");
+    let report = configured_report(
+        context(&temp),
+        vec![root(
+            "opencode",
+            CaptureProvider::OpenCode,
+            database.clone(),
+        )],
+        CaptureProvider::OpenCode,
+    );
+    assert_eq!(report.sources[0].path, database);
+    assert_eq!(report.sources[0].status, ProviderSourceStatus::Available);
+}
+
+#[test]
+fn claude_and_codex_retain_released_home_expansions_and_role_bytes() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let claude = temp.path().join("claude-home");
+    write(&claude.join("projects/session.jsonl"), b"{}\n");
+    let report = configured_report(
+        context(&temp),
+        vec![root("claude", CaptureProvider::Claude, claude.clone())],
+        CaptureProvider::Claude,
+    );
+    assert_eq!(report.sources[0].path, claude.join("projects"));
+    assert_eq!(route_role(&report.sources[0]), b"claude-projects");
+
+    let codex = temp.path().join("codex-home");
+    write(&codex.join("sessions/active.jsonl"), b"{}\n");
+    write(&codex.join("archived_sessions/archived.jsonl"), b"{}\n");
+    write(&codex.join("history.jsonl"), b"{}\n");
+    let report = configured_report(
+        context(&temp),
+        vec![root("codex", CaptureProvider::Codex, codex.clone())],
+        CaptureProvider::Codex,
+    );
+    assert_eq!(report.sources.len(), 3);
+    assert_eq!(route_role(&report.sources[0]), b"codex-sessions");
+    assert_eq!(route_role(&report.sources[1]), b"codex-archived-sessions");
+    assert_eq!(route_role(&report.sources[2]), b"codex-prompt-history");
+    assert!(report
+        .sources
+        .iter()
+        .all(|source| source.status == ProviderSourceStatus::Available));
+}
+
+fn write_openclaw_v17(path: &Path, owner: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let connection = rusqlite::Connection::open(path).unwrap();
+    connection
+        .execute_batch(ctx_history_openclaw_schema::test_support::OPENCLAW_AGENT_V17_MINIMAL_SCHEMA)
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO schema_meta\
+               (meta_key, role, schema_version, agent_id, app_version, created_at, updated_at)\
+             VALUES ('primary', 'agent', 17, ?1, 'test', 1, 1)",
+            [owner],
+        )
+        .unwrap();
+}
+
+fn openclaw_agent_id(path: &Path) -> &str {
+    let components = path.components().collect::<Vec<_>>();
+    let index = components
+        .iter()
+        .position(|component| component.as_os_str() == "agents")
+        .expect("agents component");
+    components[index + 1].as_os_str().to_str().unwrap()
+}
+
+#[test]
+fn openclaw_state_roots_expand_bounded_agents_with_precedence_and_stable_dynamic_roles() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let state = temp.path().join("state");
+    write(
+        &state.join("openclaw.json"),
+        b"{agents:{list:[{id:'Gamma'},{id:'Beta'},{id:'Alpha'}]}}",
+    );
+    let alpha_database = state.join("agents/alpha/agent/openclaw-agent.sqlite");
+    write_openclaw_v17(&alpha_database, "alpha");
+    write(
+        &state.join("agents/alpha/sessions/suppressed.jsonl"),
+        b"{}\n",
+    );
+    write(
+        &state.join("agents/beta/agent/openclaw-agent.sqlite"),
+        b"corrupt",
+    );
+    write(&state.join("agents/beta/sessions/fallback.jsonl"), b"{}\n");
+    write(
+        &state.join("agents/gamma/agent/openclaw-agent.sqlite"),
+        b"corrupt",
+    );
+
+    let moved = temp.path().join("moved-state");
+    write(
+        &moved.join("openclaw.json"),
+        b"{agents:{list:[{id:'Beta'},{id:'Alpha'}]}}",
+    );
+    write(&moved.join("agents/alpha/sessions/active.jsonl"), b"{}\n");
+    write(&moved.join("agents/beta/sessions/active.jsonl"), b"{}\n");
+
+    let data_root = temp.path().join("ctx-data");
+    fs::create_dir_all(&data_root).unwrap();
+    let report = configured_report(
+        context(&temp).with_data_root(data_root),
+        vec![
+            root("state", CaptureProvider::OpenClaw, state.clone()),
+            root("moved", CaptureProvider::OpenClaw, moved.clone()),
+        ],
+        CaptureProvider::OpenClaw,
+    );
+    assert_eq!(report.sources.len(), 5);
+
+    let state_sources = report
+        .sources
+        .iter()
+        .filter(|source| {
+            source
+                .route_provenance
+                .configured_root()
+                .is_some_and(|(id, _)| id == "state")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(state_sources[0].path, alpha_database);
+    assert_eq!(state_sources[0].source_format, "openclaw_agent_sqlite");
+    assert_eq!(state_sources[1].path, state.join("agents/beta/sessions"));
+    assert_eq!(
+        state_sources[1].source_format,
+        "openclaw_session_jsonl_tree"
+    );
+    assert_eq!(state_sources[2].source_format, "unsupported");
+    assert_eq!(state_sources[2].status, ProviderSourceStatus::Unsupported);
+
+    let mut roles = HashMap::<String, Vec<Vec<u8>>>::new();
+    for source in &report.sources {
+        roles
+            .entry(openclaw_agent_id(&source.path).to_owned())
+            .or_default()
+            .push(route_role(source).to_vec());
+    }
+    for (agent_id, actual) in &roles {
+        let expected =
+            ProviderRouteRole::from_dynamic([b"openclaw-agent".as_slice(), agent_id.as_bytes()])
+                .unwrap();
+        assert!(actual.iter().all(|role| role == expected.as_bytes()));
+    }
+    assert_ne!(roles["alpha"][0], roles["beta"][0]);
+    assert_ne!(roles["beta"][0], roles["gamma"][0]);
+    assert_eq!(roles["alpha"].len(), 2);
+    assert_eq!(roles["beta"].len(), 2);
+}
+
+#[test]
+fn cline_common_data_root_emits_distinct_task_and_sdk_roles() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let data = temp.path().join("cline-data");
+    write(
+        &data.join("tasks/legacy/api_conversation_history.json"),
+        b"[]",
+    );
+    write(
+        &data.join("sessions/sessions.index.json"),
+        br#"{"version":1,"sessions":{}}"#,
+    );
+    let report = configured_report(
+        context(&temp),
+        vec![root("cline", CaptureProvider::Cline, data.clone())],
+        CaptureProvider::Cline,
+    );
+    assert_eq!(report.sources.len(), 2);
+    assert_eq!(report.sources[0].path, data);
+    assert_eq!(report.sources[1].path, report.sources[0].path);
+    assert_eq!(report.sources[0].source_format, "cline_task_directory_json");
+    assert_eq!(report.sources[1].source_format, "cline_sdk_session_store");
+    assert_eq!(route_role(&report.sources[0]), b"cline-tasks");
+    assert_eq!(route_role(&report.sources[1]), b"cline-sdk");
+    assert!(report
+        .sources
+        .iter()
+        .all(|source| source.status == ProviderSourceStatus::Available));
+}
+
+#[test]
+fn every_enabled_root_rejects_the_wrong_no_follow_file_kind() {
+    for capability in configured_root_capabilities()
+        .iter()
+        .filter(|capability| capability.state.is_enabled())
+    {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let selected = temp.path().join("selected");
+        match capability.state.expected_path_kind().unwrap() {
+            ConfiguredRootPathKind::Directory => write(&selected, b"file"),
+            ConfiguredRootPathKind::File => fs::create_dir_all(&selected).unwrap(),
+        }
+        let report = configured_report(
+            context(&temp),
+            vec![root("wrong-kind", capability.provider, selected)],
+            capability.provider,
+        );
+        assert!(report.sources.is_empty(), "{capability:?}");
+        assert_eq!(report.issues.len(), 1, "{capability:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn every_expander_family_rejects_symlinked_configured_roots() {
+    use std::os::unix::fs::symlink;
+
+    for provider in [
+        CaptureProvider::Pi,
+        CaptureProvider::OpenCode,
+        CaptureProvider::Claude,
+        CaptureProvider::Codex,
+        CaptureProvider::OpenClaw,
+        CaptureProvider::Cline,
+    ] {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let target = temp.path().join("target");
+        match configured_root_capability(provider)
+            .unwrap()
+            .state
+            .expected_path_kind()
+            .unwrap()
+        {
+            ConfiguredRootPathKind::Directory => fs::create_dir_all(&target).unwrap(),
+            ConfiguredRootPathKind::File => write(&target, b"file"),
+        }
+        let selected = temp.path().join("selected");
+        symlink(&target, &selected).unwrap();
+        let report = configured_report(
+            context(&temp),
+            vec![root("linked", provider, selected)],
+            provider,
+        );
+        assert!(report.sources.is_empty(), "{provider:?}");
+        assert_eq!(report.issues.len(), 1, "{provider:?}");
+        assert_eq!(report.issues[0].reason, CONFIGURED_ROOT_SYMLINK_REASON);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn every_expander_family_preserves_unavailable_candidates_with_provenance() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (provider, expected_sources) in [
+        (CaptureProvider::Pi, 1),
+        (CaptureProvider::OpenCode, 1),
+        (CaptureProvider::Claude, 1),
+        (CaptureProvider::Codex, 3),
+        (CaptureProvider::OpenClaw, 1),
+        (CaptureProvider::Cline, 2),
+    ] {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let locked = temp.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        let original = fs::metadata(&locked).unwrap().permissions();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let selected = locked.join("selected");
+        let report = configured_report(
+            context(&temp),
+            vec![root("unavailable", provider, selected.clone())],
+            provider,
+        );
+        fs::set_permissions(&locked, original).unwrap();
+
+        assert_eq!(report.sources.len(), expected_sources, "{provider:?}");
+        assert!(report
+            .sources
+            .iter()
+            .all(|source| source.status == ProviderSourceStatus::Unknown));
+        for source in &report.sources {
+            assert_configured(source, "unavailable", &selected);
+        }
+        assert!(!report.issues.is_empty());
+    }
+}
+
+#[test]
+fn automatic_and_configured_equal_paths_adopt_configured_provenance_per_expander() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let base = context(&temp);
+    let home = base.home();
+    let fixtures = [
+        (
+            "grok",
+            CaptureProvider::GrokBuild,
+            home.join(".grok/sessions"),
+            "session/updates.jsonl",
+        ),
+        (
+            "deepseek",
+            CaptureProvider::DeepSeekHarness,
+            home.join(".dsh/sessions"),
+            "a/b/session.jsonl",
+        ),
+        (
+            "pi",
+            CaptureProvider::Pi,
+            home.join(".pi/agent/sessions"),
+            "session.jsonl",
+        ),
+    ];
+    let mut roots = Vec::new();
+    for (id, provider, selected, leaf) in fixtures {
+        write(&selected.join(leaf), b"{}\n");
+        roots.push(root(id, provider, selected));
+    }
+
+    let opencode = home.join(".local/share/opencode/opencode.db");
+    write(&opencode, b"database");
+    roots.push(root("opencode", CaptureProvider::OpenCode, opencode));
+
+    let claude = home.join(".claude");
+    write(&claude.join("projects/session.jsonl"), b"{}\n");
+    roots.push(root("claude", CaptureProvider::Claude, claude));
+
+    let codex = home.join(".codex");
+    write(&codex.join("sessions/session.jsonl"), b"{}\n");
+    write(&codex.join("archived_sessions/session.jsonl"), b"{}\n");
+    write(&codex.join("history.jsonl"), b"{}\n");
+    roots.push(root("codex", CaptureProvider::Codex, codex));
+
+    let openclaw = home.join(".openclaw");
+    write(
+        &openclaw.join("agents/main/sessions/session.jsonl"),
+        b"{}\n",
+    );
+    roots.push(root("openclaw", CaptureProvider::OpenClaw, openclaw));
+
+    let cline = home.join(".cline/data");
+    write(
+        &cline.join("tasks/task/api_conversation_history.json"),
+        b"[]",
+    );
+    write(
+        &cline.join("sessions/sessions.index.json"),
+        br#"{"version":1,"sessions":{}}"#,
+    );
+    roots.push(root("cline", CaptureProvider::Cline, cline));
+
+    let context = base.with_configured_provider_roots(roots);
+    for (provider, expected_sources) in [
+        (CaptureProvider::GrokBuild, 1),
+        (CaptureProvider::DeepSeekHarness, 1),
+        (CaptureProvider::Pi, 1),
+        (CaptureProvider::OpenCode, 1),
+        (CaptureProvider::Claude, 1),
+        (CaptureProvider::Codex, 3),
+        (CaptureProvider::OpenClaw, 1),
+        (CaptureProvider::Cline, 2),
+    ] {
+        let report = provider_report(&context, provider);
+        assert_eq!(report.sources.len(), expected_sources, "{provider:?}");
+        assert!(report
+            .sources
+            .iter()
+            .all(|source| source.route_provenance.configured_root().is_some()));
+    }
+}
+
+#[test]
+fn codex_child_kinds_are_checked_independently_without_hiding_valid_peers() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let home = temp.path().join("codex");
+    write(&home.join("sessions"), b"wrong kind");
+    fs::create_dir_all(home.join("archived_sessions")).unwrap();
+    fs::create_dir_all(home.join("history.jsonl")).unwrap();
+    let report = configured_report(
+        context(&temp),
+        vec![root("codex", CaptureProvider::Codex, home.clone())],
+        CaptureProvider::Codex,
+    );
+    assert_eq!(report.sources.len(), 1);
+    assert_eq!(report.sources[0].path, home.join("archived_sessions"));
+    assert_eq!(report.sources[0].status, ProviderSourceStatus::Empty);
+    assert_eq!(report.issues.len(), 2);
+}
+
+#[test]
+fn intentional_and_pending_rows_ignore_configured_roots_even_when_layouts_exist() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    for &provider in INTENTIONAL_AUTOMATIC_EXACT {
+        let selected = temp.path().join(provider.as_str());
+        fs::create_dir_all(&selected).unwrap();
+        let report = configured_report(
+            context(&temp),
+            vec![root("disabled", provider, selected)],
+            provider,
+        );
+        assert!(report.sources.is_empty(), "{provider:?}");
+    }
+
+    let legacy = temp.path().join("legacy");
+    write(&legacy.join("v1_conversations/id/event.json"), b"{}");
+    let current = temp.path().join("current");
+    write(&current.join("id/events/event-00001.json"), b"{}");
+    let report = configured_report(
+        context(&temp),
+        vec![
+            root("legacy", CaptureProvider::OpenHands, legacy),
+            root("current", CaptureProvider::OpenHands, current),
+        ],
+        CaptureProvider::OpenHands,
+    );
+    assert!(report.sources.is_empty());
+    assert_eq!(
+        configured_root_capability(CaptureProvider::OpenHands).map(|row| row.state),
+        Some(ConfiguredRootCapabilityState::PendingNamedSupport)
+    );
+}

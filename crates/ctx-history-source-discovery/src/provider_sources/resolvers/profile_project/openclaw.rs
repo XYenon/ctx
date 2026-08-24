@@ -79,15 +79,12 @@ pub(super) fn resolve(
         return report;
     }
 
-    let config_path = ["openclaw.json", "clawdbot.json"]
-        .into_iter()
-        .map(|name| state_root.join(name))
-        .find(|path| path_presence(path).suppresses_fallback());
-    let (agent_ids, truncated) = match config_path {
-        Some(path) => match read_openclaw_agent_ids(&path) {
+    let config_path = selected_openclaw_config_path(&state_root);
+    let (agent_ids, truncated) = match config_path.as_deref() {
+        Some(path) => match read_openclaw_agent_ids(path) {
             Ok(ids) => ids,
             Err(OpenClawConfigError::Limit) => {
-                issue_limit(&mut report, spec.provider, path);
+                issue_limit(&mut report, spec.provider, path.to_path_buf());
                 return report;
             }
             Err(OpenClawConfigError::Invalid) => {
@@ -169,9 +166,25 @@ pub(super) fn resolve(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OpenClawConfigError {
+pub(in crate::provider_sources) enum OpenClawConfigError {
     Invalid,
     Limit,
+}
+
+pub(in crate::provider_sources) fn openclaw_agent_ids_for_state_root(
+    state_root: &Path,
+) -> Result<(Vec<String>, bool), OpenClawConfigError> {
+    selected_openclaw_config_path(state_root).map_or_else(
+        || Ok((vec!["main".to_owned()], false)),
+        |path| read_openclaw_agent_ids(&path),
+    )
+}
+
+fn selected_openclaw_config_path(state_root: &Path) -> Option<PathBuf> {
+    ["openclaw.json", "clawdbot.json"]
+        .into_iter()
+        .map(|name| state_root.join(name))
+        .find(|path| path_presence(path).suppresses_fallback())
 }
 
 fn read_openclaw_agent_ids(path: &Path) -> Result<(Vec<String>, bool), OpenClawConfigError> {

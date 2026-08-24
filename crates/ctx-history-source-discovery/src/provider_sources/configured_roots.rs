@@ -7,22 +7,45 @@ use ctx_history_core::CaptureProvider;
 
 use super::{
     context::DiscoveryContext,
+    probes::{has_openclaw_agent_sqlite_v17, BoundedProbe},
     reasons::path_presence_unknown_reason,
     resolvers::{
-        issue, path_presence, provider_paths_equivalent, push_source_candidate,
-        source_from_parts_with_data_root, PathPresence,
+        issue, openclaw_agent_ids_for_state_root, path_presence, provider_paths_equivalent,
+        push_source_candidate, source_from_parts_with_data_root, unsupported_source,
+        OpenClawConfigError,
     },
-    selectors::encoded_path_within_limit,
-    types::{DiscoveryIssueKind, DiscoveryReport, ProviderSourceKind, ProviderSourceSpec},
+    selectors::{encoded_path_within_limit, source_path_kind, SourcePathError, SourcePathKind},
+    types::{
+        DiscoveryIssueKind, DiscoveryReport, ProviderSource, ProviderSourceKind,
+        ProviderSourceSpec, ProviderSourceStatus,
+    },
     StaticProviderProbeCatalog,
 };
 
 const CONFIGURED_ROOT_SYMLINK_REASON: &str =
-    "the selected history path uses a symlink component; use a trusted real provider root";
+    "the configured provider history root uses a symlink or other unsupported component";
+const CONFIGURED_SOURCE_SYMLINK_REASON: &str =
+    "a configured provider history child uses a symlink or other unsupported component";
+const CONFIGURED_ROOT_DIRECTORY_REASON: &str =
+    "the configured provider history root must be an ordinary directory";
+const CONFIGURED_ROOT_FILE_REASON: &str =
+    "the configured provider history root must be an ordinary file";
+const CONFIGURED_SOURCE_DIRECTORY_REASON: &str =
+    "the configured provider history child must be an ordinary directory";
+const CONFIGURED_SOURCE_FILE_REASON: &str =
+    "the configured provider history child must be an ordinary file";
 const CONFIGURED_ROOT_PATH_LIMIT_REASON: &str =
-    "the selected provider history path exceeds the discovery path limit";
+    "the configured provider history path exceeds the discovery path limit";
 const CONFIGURED_ROOT_CONFLICT_REASON: &str =
     "distinct configured roots resolve to the same physical provider root";
+const CONFIGURED_ROOT_ROLE_LIMIT_REASON: &str =
+    "the configured provider history child role exceeds the route-role limit";
+const OPENCLAW_CONFIG_INVALID_REASON: &str =
+    "the configured OpenClaw state root has an invalid or unsafe agent registry";
+const OPENCLAW_CONFIG_LIMIT_REASON: &str =
+    "the configured OpenClaw state root exceeds a bounded agent-registry limit";
+const OPENCLAW_UNSUPPORTED_REASON: &str =
+    "OpenClaw openclaw-agent.sqlite does not satisfy the bounded current v17 schema and ownership contract";
 
 /// Filesystem kind required by a configured-root capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,8 +57,19 @@ pub enum ConfiguredRootPathKind {
 /// Frozen expansion strategy for one enabled configured-root capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfiguredRootExpander {
+    /// The configured path is the exact landed history tree or database.
+    ExactSource {
+        source_format: &'static str,
+        route_role: &'static str,
+    },
+    /// Released 1.1 Claude home expansion and role bytes.
     ClaudeHomeV1,
+    /// Released 1.1 Codex home expansion and role bytes.
     CodexHomeV1,
+    /// OpenClaw state/profile root with bounded configured-agent expansion.
+    OpenClawStateRootV1,
+    /// Cline common data/store root with independent task and SDK routes.
+    ClineCommonDataRootV1,
 }
 
 /// Support state and complete expansion metadata for one landed provider.
@@ -45,7 +79,11 @@ pub enum ConfiguredRootCapabilityState {
         expected_path_kind: ConfiguredRootPathKind,
         expander: ConfiguredRootExpander,
     },
-    NotYetEnabled,
+    /// The provider intentionally retains automatic discovery and exact import
+    /// without a persistent configured-root contract.
+    IntentionalAutomaticExact,
+    /// A named-root contract is pending an unresolved public shape decision.
+    PendingNamedSupport,
 }
 
 impl ConfiguredRootCapabilityState {
@@ -58,14 +96,14 @@ impl ConfiguredRootCapabilityState {
             Self::Enabled {
                 expected_path_kind, ..
             } => Some(expected_path_kind),
-            Self::NotYetEnabled => None,
+            Self::IntentionalAutomaticExact | Self::PendingNamedSupport => None,
         }
     }
 
     pub const fn expander(self) -> Option<ConfiguredRootExpander> {
         match self {
             Self::Enabled { expander, .. } => Some(expander),
-            Self::NotYetEnabled => None,
+            Self::IntentionalAutomaticExact | Self::PendingNamedSupport => None,
         }
     }
 }
@@ -77,184 +115,300 @@ pub struct ConfiguredRootCapability {
     pub state: ConfiguredRootCapabilityState,
 }
 
-const ENABLED_DIRECTORY_CLAUDE: ConfiguredRootCapabilityState =
+const fn exact_source(
+    expected_path_kind: ConfiguredRootPathKind,
+    source_format: &'static str,
+    route_role: &'static str,
+) -> ConfiguredRootCapabilityState {
     ConfiguredRootCapabilityState::Enabled {
-        expected_path_kind: ConfiguredRootPathKind::Directory,
-        expander: ConfiguredRootExpander::ClaudeHomeV1,
-    };
-const ENABLED_DIRECTORY_CODEX: ConfiguredRootCapabilityState =
-    ConfiguredRootCapabilityState::Enabled {
-        expected_path_kind: ConfiguredRootPathKind::Directory,
-        expander: ConfiguredRootExpander::CodexHomeV1,
-    };
-const NOT_YET_ENABLED: ConfiguredRootCapabilityState = ConfiguredRootCapabilityState::NotYetEnabled;
+        expected_path_kind,
+        expander: ConfiguredRootExpander::ExactSource {
+            source_format,
+            route_role,
+        },
+    }
+}
 
-// Keep this table in the exact landed provider-spec order. Later provider
-// cohorts enable rows here without introducing a second support allowlist.
+const fn compound_source(expander: ConfiguredRootExpander) -> ConfiguredRootCapabilityState {
+    ConfiguredRootCapabilityState::Enabled {
+        expected_path_kind: ConfiguredRootPathKind::Directory,
+        expander,
+    }
+}
+
+const INTENTIONAL_AUTOMATIC_EXACT: ConfiguredRootCapabilityState =
+    ConfiguredRootCapabilityState::IntentionalAutomaticExact;
+
+// Keep this table in the exact landed provider-spec order. It is the one
+// exhaustive configured-root capability declaration for all 41 providers.
 const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     ConfiguredRootCapability {
         provider: CaptureProvider::Codex,
-        state: ENABLED_DIRECTORY_CODEX,
+        state: compound_source(ConfiguredRootExpander::CodexHomeV1),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::GrokBuild,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "grok_build_session_updates_jsonl_tree",
+            "grok-build-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::DeepSeekHarness,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "deepseek_harness_session_jsonl_tree",
+            "deepseek-harness-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Pi,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "pi_session_jsonl",
+            "pi-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Claude,
-        state: ENABLED_DIRECTORY_CLAUDE,
+        state: compound_source(ConfiguredRootExpander::ClaudeHomeV1),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::OpenCode,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "opencode_sqlite",
+            "opencode-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Kilo,
-        state: NOT_YET_ENABLED,
+        state: exact_source(ConfiguredRootPathKind::File, "kilo_sqlite", "kilo-database"),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::MiMoCode,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "mimocode_sqlite",
+            "mimocode-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::KiroCli,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Crush,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "crush_sqlite",
+            "crush-project-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Goose,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "goose_sessions_sqlite",
+            "goose-sessions-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Antigravity,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Gemini,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "gemini_cli_chat_recording_jsonl",
+            "gemini-chats",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Tabnine,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "tabnine_cli_chat_recording_jsonl",
+            "tabnine-agent-history",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Cursor,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "cursor_agent_transcript_jsonl_tree",
+            "cursor-projects",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Zed,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "zed_threads_sqlite",
+            "zed-threads-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::CopilotCli,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "copilot_cli_session_events_jsonl",
+            "copilot-session-state",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::FactoryAiDroid,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::QwenCode,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "qwen_code_chat_jsonl_tree",
+            "qwen-projects",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::KimiCodeCli,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "kimi_code_cli_wire_jsonl_tree",
+            "kimi-history",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Auggie,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Junie,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "junie_session_events_jsonl_tree",
+            "junie-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Firebender,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::ForgeCode,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "forgecode_sqlite",
+            "forgecode-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::DeepAgents,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::MistralVibe,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "mistral_vibe_session_jsonl_tree",
+            "mistral-vibe-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Mux,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "mux_session_jsonl_tree",
+            "mux-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::RovoDev,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "rovodev_session_json_tree",
+            "rovodev-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::OpenClaw,
-        state: NOT_YET_ENABLED,
+        state: compound_source(ConfiguredRootExpander::OpenClawStateRootV1),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Hermes,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "hermes_state_sqlite",
+            "hermes-profile-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::NanoClaw,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::AstrBot,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "astrbot_data_v4_sqlite",
+            "astrbot-instance-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Shelley,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Continue,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "continue_cli_sessions_json",
+            "continue-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::OpenHands,
-        state: NOT_YET_ENABLED,
+        state: ConfiguredRootCapabilityState::PendingNamedSupport,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Cline,
-        state: NOT_YET_ENABLED,
+        state: compound_source(ConfiguredRootExpander::ClineCommonDataRootV1),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::RooCode,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "roo_task_directory_json",
+            "roo-task-store",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Lingma,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "lingma_sqlite",
+            "lingma-client-profile-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Qoder,
-        state: NOT_YET_ENABLED,
+        state: INTENTIONAL_AUTOMATIC_EXACT,
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Warp,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "warp_sqlite",
+            "warp-surface-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::CodeBuddy,
-        state: NOT_YET_ENABLED,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "codebuddy_history_json",
+            "codebuddy-history",
+        ),
     },
 ];
 
@@ -270,34 +424,61 @@ pub fn configured_root_capability(
         .find(|capability| capability.provider == provider)
 }
 
-#[derive(Debug, Clone)]
-struct ConfiguredRouteExpansion {
-    relative_path: &'static [&'static str],
-    source_format: &'static str,
-    route_role: ProviderRouteRole,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfiguredRootAvailability {
+    Present,
+    Missing,
+    Unavailable,
 }
 
-const CLAUDE_ROUTES: &[ConfiguredRouteExpansion] = &[ConfiguredRouteExpansion {
+#[derive(Debug, Clone, Copy)]
+struct StaticRouteExpansion {
+    relative_path: &'static [&'static str],
+    expected_path_kind: ConfiguredRootPathKind,
+    source_format: &'static str,
+    route_role: &'static str,
+}
+
+const CLAUDE_ROUTES: &[StaticRouteExpansion] = &[StaticRouteExpansion {
     relative_path: &["projects"],
+    expected_path_kind: ConfiguredRootPathKind::Directory,
     source_format: "claude_projects_jsonl_tree",
-    route_role: ProviderRouteRole::from_static("claude-projects"),
+    route_role: "claude-projects",
 }];
 
-const CODEX_ROUTES: &[ConfiguredRouteExpansion] = &[
-    ConfiguredRouteExpansion {
+const CODEX_ROUTES: &[StaticRouteExpansion] = &[
+    StaticRouteExpansion {
         relative_path: &["sessions"],
+        expected_path_kind: ConfiguredRootPathKind::Directory,
         source_format: "codex_session_jsonl_tree",
-        route_role: ProviderRouteRole::from_static("codex-sessions"),
+        route_role: "codex-sessions",
     },
-    ConfiguredRouteExpansion {
+    StaticRouteExpansion {
         relative_path: &["archived_sessions"],
+        expected_path_kind: ConfiguredRootPathKind::Directory,
         source_format: "codex_session_jsonl_tree",
-        route_role: ProviderRouteRole::from_static("codex-archived-sessions"),
+        route_role: "codex-archived-sessions",
     },
-    ConfiguredRouteExpansion {
+    StaticRouteExpansion {
         relative_path: &["history.jsonl"],
+        expected_path_kind: ConfiguredRootPathKind::File,
         source_format: "codex_history_jsonl",
-        route_role: ProviderRouteRole::from_static("codex-prompt-history"),
+        route_role: "codex-prompt-history",
+    },
+];
+
+const CLINE_ROUTES: &[StaticRouteExpansion] = &[
+    StaticRouteExpansion {
+        relative_path: &[],
+        expected_path_kind: ConfiguredRootPathKind::Directory,
+        source_format: "cline_task_directory_json",
+        route_role: "cline-tasks",
+    },
+    StaticRouteExpansion {
+        relative_path: &[],
+        expected_path_kind: ConfiguredRootPathKind::Directory,
+        source_format: "cline_sdk_session_store",
+        route_role: "cline-sdk",
     },
 ];
 
@@ -306,15 +487,17 @@ pub(super) fn expand_configured_roots_for_provider(
     context: &DiscoveryContext,
     spec: &ProviderSourceSpec,
 ) -> DiscoveryReport {
-    let Some(expander) = configured_root_capability(spec.provider)
-        .and_then(|capability| capability.state.expander())
+    let Some(capability) = configured_root_capability(spec.provider) else {
+        return DiscoveryReport::default();
+    };
+    let ConfiguredRootCapabilityState::Enabled {
+        expected_path_kind,
+        expander,
+    } = capability.state
     else {
         return DiscoveryReport::default();
     };
-    let expansions = match expander {
-        ConfiguredRootExpander::ClaudeHomeV1 => CLAUDE_ROUTES,
-        ConfiguredRootExpander::CodexHomeV1 => CODEX_ROUTES,
-    };
+
     let mut report = DiscoveryReport::default();
     let roots = context
         .configured_provider_roots()
@@ -336,33 +519,267 @@ pub(super) fn expand_configured_roots_for_provider(
         return report;
     }
     for root in roots {
-        for expansion in expansions {
-            add_configured_source(
+        let Some(availability) =
+            inspect_configured_path(&mut report, spec, &root.path, expected_path_kind, true)
+        else {
+            continue;
+        };
+        match expander {
+            ConfiguredRootExpander::ExactSource {
+                source_format,
+                route_role,
+            } => add_static_routes(
                 probes,
                 context.data_root(),
                 &mut report,
                 spec,
                 root,
-                expansion,
-            );
+                &[StaticRouteExpansion {
+                    relative_path: &[],
+                    expected_path_kind,
+                    source_format,
+                    route_role,
+                }],
+            ),
+            ConfiguredRootExpander::ClaudeHomeV1 => add_static_routes(
+                probes,
+                context.data_root(),
+                &mut report,
+                spec,
+                root,
+                CLAUDE_ROUTES,
+            ),
+            ConfiguredRootExpander::CodexHomeV1 => add_static_routes(
+                probes,
+                context.data_root(),
+                &mut report,
+                spec,
+                root,
+                CODEX_ROUTES,
+            ),
+            ConfiguredRootExpander::OpenClawStateRootV1 => expand_openclaw_state_root(
+                probes,
+                context.data_root(),
+                &mut report,
+                spec,
+                root,
+                availability,
+            ),
+            ConfiguredRootExpander::ClineCommonDataRootV1 => add_static_routes(
+                probes,
+                context.data_root(),
+                &mut report,
+                spec,
+                root,
+                CLINE_ROUTES,
+            ),
         }
     }
     report
 }
 
-fn add_configured_source(
+fn add_static_routes(
     probes: &StaticProviderProbeCatalog,
     data_root: Option<&Path>,
     report: &mut DiscoveryReport,
     spec: &ProviderSourceSpec,
     root: &ProviderRootDefinition,
-    expansion: &ConfiguredRouteExpansion,
+    expansions: &[StaticRouteExpansion],
 ) {
-    let path = expansion
-        .relative_path
-        .iter()
-        .fold(root.path.clone(), |path, component| path.join(component));
-    if !encoded_path_within_limit(&path) {
+    for expansion in expansions {
+        let path = expansion
+            .relative_path
+            .iter()
+            .fold(root.path.clone(), |path, component| path.join(component));
+        let role = ProviderRouteRole::from_static(expansion.route_role);
+        if let Some(source) = build_configured_source(
+            probes,
+            data_root,
+            report,
+            spec,
+            root,
+            path,
+            expansion.expected_path_kind,
+            expansion.source_format,
+            role,
+        ) {
+            push_configured_source(report, spec, source);
+        }
+    }
+}
+
+fn expand_openclaw_state_root(
+    probes: &StaticProviderProbeCatalog,
+    data_root: Option<&Path>,
+    report: &mut DiscoveryReport,
+    spec: &ProviderSourceSpec,
+    root: &ProviderRootDefinition,
+    availability: ConfiguredRootAvailability,
+) {
+    let (agent_ids, truncated) = if availability == ConfiguredRootAvailability::Present {
+        match openclaw_agent_ids_for_state_root(&root.path) {
+            Ok(inventory) => inventory,
+            Err(OpenClawConfigError::Invalid) => {
+                push_issue_once(
+                    report,
+                    spec,
+                    Some(root.path.clone()),
+                    DiscoveryIssueKind::SelectorUnreconstructible,
+                    OPENCLAW_CONFIG_INVALID_REASON,
+                );
+                return;
+            }
+            Err(OpenClawConfigError::Limit) => {
+                push_issue_once(
+                    report,
+                    spec,
+                    Some(root.path.clone()),
+                    DiscoveryIssueKind::SelectorUnreconstructible,
+                    OPENCLAW_CONFIG_LIMIT_REASON,
+                );
+                return;
+            }
+        }
+    } else {
+        (vec!["main".to_owned()], false)
+    };
+    if truncated {
+        push_issue_once(
+            report,
+            spec,
+            Some(root.path.clone()),
+            DiscoveryIssueKind::SelectorUnreconstructible,
+            OPENCLAW_CONFIG_LIMIT_REASON,
+        );
+    }
+
+    for agent_id in agent_ids {
+        let Ok(route_role) =
+            ProviderRouteRole::from_dynamic([b"openclaw-agent".as_slice(), agent_id.as_bytes()])
+        else {
+            push_issue_once(
+                report,
+                spec,
+                None,
+                DiscoveryIssueKind::SelectorUnreconstructible,
+                CONFIGURED_ROOT_ROLE_LIMIT_REASON,
+            );
+            continue;
+        };
+        expand_openclaw_agent(
+            probes,
+            data_root,
+            report,
+            spec,
+            root,
+            &agent_id,
+            route_role,
+            availability,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_openclaw_agent(
+    probes: &StaticProviderProbeCatalog,
+    data_root: Option<&Path>,
+    report: &mut DiscoveryReport,
+    spec: &ProviderSourceSpec,
+    root: &ProviderRootDefinition,
+    agent_id: &str,
+    route_role: ProviderRouteRole,
+    root_availability: ConfiguredRootAvailability,
+) {
+    let agent_root = root.path.join("agents").join(agent_id);
+    let sqlite = agent_root.join("agent/openclaw-agent.sqlite");
+    let sessions = agent_root.join("sessions");
+
+    if root_availability == ConfiguredRootAvailability::Present
+        && has_openclaw_agent_sqlite_v17(data_root, &sqlite) == BoundedProbe::Found
+    {
+        if let Some(source) = build_configured_source(
+            probes,
+            data_root,
+            report,
+            spec,
+            root,
+            sqlite,
+            ConfiguredRootPathKind::File,
+            ctx_history_openclaw_schema::OPENCLAW_AGENT_SQLITE_SOURCE_FORMAT,
+            route_role,
+        ) {
+            push_configured_source(report, spec, source);
+        }
+        return;
+    }
+
+    let jsonl = build_configured_source(
+        probes,
+        data_root,
+        report,
+        spec,
+        root,
+        sessions,
+        ConfiguredRootPathKind::Directory,
+        "openclaw_session_jsonl_tree",
+        route_role.clone(),
+    );
+    let sqlite_suppresses_fallback = path_presence(&sqlite).suppresses_fallback();
+    if root_availability != ConfiguredRootAvailability::Present
+        || !sqlite_suppresses_fallback
+        || jsonl
+            .as_ref()
+            .is_some_and(|source| source.status == ProviderSourceStatus::Available)
+    {
+        if let Some(source) = jsonl {
+            push_configured_source(report, spec, source);
+        }
+        return;
+    }
+
+    if inspect_configured_path(report, spec, &sqlite, ConfiguredRootPathKind::File, false).is_none()
+    {
+        return;
+    }
+
+    let mut source = unsupported_source(spec, sqlite, OPENCLAW_UNSUPPORTED_REASON);
+    apply_configured_provenance(&mut source, root, route_role);
+    push_configured_source(report, spec, source);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_configured_source(
+    probes: &StaticProviderProbeCatalog,
+    data_root: Option<&Path>,
+    report: &mut DiscoveryReport,
+    spec: &ProviderSourceSpec,
+    root: &ProviderRootDefinition,
+    path: PathBuf,
+    expected_path_kind: ConfiguredRootPathKind,
+    source_format: &'static str,
+    route_role: ProviderRouteRole,
+) -> Option<ProviderSource> {
+    inspect_configured_path(report, spec, &path, expected_path_kind, path == root.path)?;
+    let mut source = source_from_parts_with_data_root(
+        probes,
+        data_root,
+        spec,
+        path,
+        source_format,
+        ProviderSourceKind::NativeHistory,
+    );
+    apply_configured_provenance(&mut source, root, route_role);
+    Some(source)
+}
+
+fn inspect_configured_path(
+    report: &mut DiscoveryReport,
+    spec: &ProviderSourceSpec,
+    path: &Path,
+    expected_path_kind: ConfiguredRootPathKind,
+    is_root: bool,
+) -> Option<ConfiguredRootAvailability> {
+    if !encoded_path_within_limit(path) {
         push_issue_once(
             report,
             spec,
@@ -370,41 +787,84 @@ fn add_configured_source(
             DiscoveryIssueKind::SelectorUnreconstructible,
             CONFIGURED_ROOT_PATH_LIMIT_REASON,
         );
-        return;
+        return None;
     }
-    match path_presence(&path) {
-        PathPresence::Unknown(kind) => push_issue_once(
-            report,
-            spec,
-            Some(path.clone()),
-            DiscoveryIssueKind::SelectorUnreconstructible,
-            path_presence_unknown_reason(kind),
-        ),
-        PathPresence::Unsupported => {
+    match source_path_kind(path) {
+        Ok(actual) if source_path_kind_matches(expected_path_kind, actual) => {
+            Some(ConfiguredRootAvailability::Present)
+        }
+        Ok(_) => {
             push_issue_once(
                 report,
                 spec,
-                Some(path),
+                Some(path.to_path_buf()),
                 DiscoveryIssueKind::SelectorUnreconstructible,
-                CONFIGURED_ROOT_SYMLINK_REASON,
+                configured_path_kind_reason(expected_path_kind, is_root),
             );
-            return;
+            None
         }
-        PathPresence::Missing | PathPresence::Present => {}
+        Err(SourcePathError::Missing) => Some(ConfiguredRootAvailability::Missing),
+        Err(SourcePathError::Unsupported) => {
+            push_issue_once(
+                report,
+                spec,
+                Some(path.to_path_buf()),
+                DiscoveryIssueKind::SelectorUnreconstructible,
+                if is_root {
+                    CONFIGURED_ROOT_SYMLINK_REASON
+                } else {
+                    CONFIGURED_SOURCE_SYMLINK_REASON
+                },
+            );
+            None
+        }
+        Err(SourcePathError::Unavailable(kind)) => {
+            push_issue_once(
+                report,
+                spec,
+                Some(path.to_path_buf()),
+                DiscoveryIssueKind::SelectorUnreconstructible,
+                path_presence_unknown_reason(kind),
+            );
+            Some(ConfiguredRootAvailability::Unavailable)
+        }
     }
-    let mut source = source_from_parts_with_data_root(
-        probes,
-        data_root,
-        spec,
-        path,
-        expansion.source_format,
-        ProviderSourceKind::NativeHistory,
-    );
+}
+
+fn source_path_kind_matches(expected: ConfiguredRootPathKind, actual: SourcePathKind) -> bool {
+    matches!(
+        (expected, actual),
+        (ConfiguredRootPathKind::Directory, SourcePathKind::Directory)
+            | (ConfiguredRootPathKind::File, SourcePathKind::File)
+    )
+}
+
+fn configured_path_kind_reason(expected: ConfiguredRootPathKind, is_root: bool) -> &'static str {
+    match (expected, is_root) {
+        (ConfiguredRootPathKind::Directory, true) => CONFIGURED_ROOT_DIRECTORY_REASON,
+        (ConfiguredRootPathKind::File, true) => CONFIGURED_ROOT_FILE_REASON,
+        (ConfiguredRootPathKind::Directory, false) => CONFIGURED_SOURCE_DIRECTORY_REASON,
+        (ConfiguredRootPathKind::File, false) => CONFIGURED_SOURCE_FILE_REASON,
+    }
+}
+
+fn apply_configured_provenance(
+    source: &mut ProviderSource,
+    root: &ProviderRootDefinition,
+    route_role: ProviderRouteRole,
+) {
     source.route_provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
         root_id: root.id.clone(),
         root_path: root.path.clone(),
-        route_role: expansion.route_role.clone(),
+        route_role,
     };
+}
+
+fn push_configured_source(
+    report: &mut DiscoveryReport,
+    spec: &ProviderSourceSpec,
+    source: ProviderSource,
+) {
     if !push_source_candidate(&mut report.sources, source) {
         push_issue_once(
             report,
@@ -433,63 +893,5 @@ fn push_issue_once(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::*;
-    use crate::provider_sources::provider_source_specs;
-
-    #[test]
-    fn capability_table_is_exhaustive_for_all_41_landed_providers() {
-        assert_eq!(configured_root_capabilities().len(), 41);
-        let providers = configured_root_capabilities()
-            .iter()
-            .map(|capability| capability.provider)
-            .collect::<HashSet<_>>();
-        assert_eq!(providers.len(), configured_root_capabilities().len());
-        assert_eq!(
-            providers,
-            provider_source_specs()
-                .iter()
-                .map(|spec| spec.provider)
-                .collect::<HashSet<_>>()
-        );
-    }
-
-    #[test]
-    fn foundation_enables_only_directory_claude_and_codex_homes() {
-        let enabled = configured_root_capabilities()
-            .iter()
-            .filter(|capability| capability.state.is_enabled())
-            .collect::<Vec<_>>();
-        assert_eq!(enabled.len(), 2);
-        assert_eq!(
-            configured_root_capability(CaptureProvider::Claude).map(|row| row.state),
-            Some(ENABLED_DIRECTORY_CLAUDE)
-        );
-        assert_eq!(
-            configured_root_capability(CaptureProvider::Codex).map(|row| row.state),
-            Some(ENABLED_DIRECTORY_CODEX)
-        );
-        assert!(configured_root_capabilities().iter().all(|capability| {
-            matches!(
-                capability.provider,
-                CaptureProvider::Claude | CaptureProvider::Codex
-            ) || capability.state == ConfiguredRootCapabilityState::NotYetEnabled
-        }));
-    }
-
-    #[test]
-    fn released_route_roles_remain_exact_bytes() {
-        assert_eq!(CLAUDE_ROUTES[0].route_role.as_bytes(), b"claude-projects");
-        assert_eq!(CODEX_ROUTES[0].route_role.as_bytes(), b"codex-sessions");
-        assert_eq!(
-            CODEX_ROUTES[1].route_role.as_bytes(),
-            b"codex-archived-sessions"
-        );
-        assert_eq!(
-            CODEX_ROUTES[2].route_role.as_bytes(),
-            b"codex-prompt-history"
-        );
-    }
-}
+#[path = "configured_roots_tests.rs"]
+mod tests;

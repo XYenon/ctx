@@ -28,7 +28,11 @@ use super::{
 
 mod openclaw;
 mod validation;
+
 use openclaw::resolve as resolve_openclaw;
+pub(in crate::provider_sources) use openclaw::{
+    openclaw_agent_ids_for_state_root, OpenClawConfigError,
+};
 use validation::{valid_hermes_profile_name, valid_uuid};
 
 const OPENCLAW_UNSUPPORTED_REASON: &str =

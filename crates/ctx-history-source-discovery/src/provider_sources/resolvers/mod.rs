@@ -42,6 +42,9 @@ pub use config_project::{
 };
 pub(super) use platform::{resolve_lingma_with_authority, resolve_warp_with_authority};
 pub use profile_project::resolve_openhands_conversations_root;
+pub(in crate::provider_sources) use profile_project::{
+    openclaw_agent_ids_for_state_root, OpenClawConfigError,
+};
 pub use simple::released_provider_home;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
