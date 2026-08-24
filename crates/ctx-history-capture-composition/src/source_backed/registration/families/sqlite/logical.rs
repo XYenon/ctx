@@ -168,6 +168,7 @@ mod tests {
             catalog_support: crate::ProviderCatalogSupport::None,
             status: ProviderSourceStatus::Available,
             unsupported_reason: None,
+            route_provenance: Default::default(),
         }
     }
 }

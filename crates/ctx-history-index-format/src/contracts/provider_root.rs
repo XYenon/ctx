@@ -2,7 +2,6 @@ use ctx_history_capture_model::{
     ProviderRootDefinition, ProviderRootSourceIdentity, SourceRouteIdentity,
     MAX_PROVIDER_ROOT_SELECTOR_BYTES,
 };
-use ctx_history_core::CaptureProvider;
 use serde::{Deserialize, Serialize};
 
 use super::{IndexError, Result};
@@ -93,16 +92,6 @@ fn validate_provider_root_definition(root: &ProviderRootDefinition) -> Result<()
         return Err(IndexError::InvalidProviderRoots(format!(
             "root {} has invalid group",
             root.id
-        )));
-    }
-    if !matches!(
-        root.provider,
-        CaptureProvider::Claude | CaptureProvider::Codex
-    ) {
-        return Err(IndexError::InvalidProviderRoots(format!(
-            "root {} has unsupported provider {}",
-            root.id,
-            root.provider.as_str()
         )));
     }
     if !root.path.is_absolute()

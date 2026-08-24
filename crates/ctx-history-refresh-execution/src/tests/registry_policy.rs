@@ -25,6 +25,7 @@ fn registry_policy_source(
             ProviderSourceStatus::Missing
         },
         unsupported_reason: None,
+        route_provenance: Default::default(),
     }
 }
 

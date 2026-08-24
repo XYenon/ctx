@@ -23,6 +23,7 @@ pub fn provider_regular_file_len(path: &std::path::Path) -> Result<u64> {
     ctx_history_source_io::provider_regular_file_len(path).map_err(Into::into)
 }
 pub use provider_sources::{
+    configured_root_capabilities, configured_root_capability,
     discover_lingma_inventory_with_authority, discover_provider_sources,
     discover_provider_sources_for_provider, discover_provider_sources_for_provider_report,
     discover_provider_sources_for_provider_with_context,
@@ -33,22 +34,25 @@ pub use provider_sources::{
     provider_source_for_path, provider_source_for_path_with_data_root, provider_source_spec,
     provider_source_specs, provider_source_status_reason, released_provider_home,
     resolve_lingma_discovery_authority, resolve_warp_discovery_authority,
-    validate_provider_source_roots_outside_data_root, DiscoveredLingmaDatabase,
-    DiscoveredWarpSource, DiscoveryContext, DiscoveryIssue, DiscoveryIssueKind, DiscoveryPlatform,
-    DiscoveryPlatformDirs, DiscoveryReport, LingmaDatabaseCatalogLineage,
-    LingmaDiscoveredInventory, LingmaDiscoveryUnavailable, LingmaInventorySelector,
-    LingmaVscodeClient, LingmaVscodeProfile, OrdinaryFileObservation, ProviderCatalogSupport,
-    ProviderDefaultLocation, ProviderImportSupport, ProviderSource, ProviderSourceKind,
-    ProviderSourceRootBoundaryError, ProviderSourceSpec, ProviderSourceStatus,
-    ProviderSourceStatusReason, WarpDiscoveryUnavailable, WarpInstalledPlatform,
-    WarpInstalledSurfaceKey, WarpReleaseChannel, WarpTerminalSurface, DISCOVERY_ENV_ALLOWLIST,
+    validate_provider_source_roots_outside_data_root, ConfiguredRootCapability,
+    ConfiguredRootCapabilityState, ConfiguredRootExpander, ConfiguredRootPathKind,
+    DiscoveredLingmaDatabase, DiscoveredWarpSource, DiscoveryContext, DiscoveryIssue,
+    DiscoveryIssueKind, DiscoveryPlatform, DiscoveryPlatformDirs, DiscoveryReport,
+    LingmaDatabaseCatalogLineage, LingmaDiscoveredInventory, LingmaDiscoveryUnavailable,
+    LingmaInventorySelector, LingmaVscodeClient, LingmaVscodeProfile, OrdinaryFileObservation,
+    ProviderCatalogSupport, ProviderDefaultLocation, ProviderImportSupport, ProviderSource,
+    ProviderSourceKind, ProviderSourceRootBoundaryError, ProviderSourceRouteProvenance,
+    ProviderSourceSpec, ProviderSourceStatus, ProviderSourceStatusReason, WarpDiscoveryUnavailable,
+    WarpInstalledPlatform, WarpInstalledSurfaceKey, WarpReleaseChannel, WarpTerminalSurface,
+    DISCOVERY_ENV_ALLOWLIST,
 };
 
 pub use ctx_history_capture_model::{
     provider_source_config_digest, stable_capture_uuid, CatalogSummary, OutputObservationKind,
     OutputOutcome, OutputOutcomeMetadata, ProviderImportFailure, ProviderImportSummary,
     ProviderImportWorkResult, ProviderRootDefinition, ProviderRootSourceIdentity,
-    ProviderSourceFailureKind, MAX_CONFIGURED_PROVIDER_ROOTS, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
+    ProviderRouteRole, ProviderRouteRoleError, ProviderSourceFailureKind,
+    MAX_CONFIGURED_PROVIDER_ROOTS, MAX_PROVIDER_ROOT_SELECTOR_BYTES, MAX_PROVIDER_ROUTE_ROLE_BYTES,
 };
 mod error;
 pub use error::{CaptureError, ProviderJsonlInventoryLimit, Result};

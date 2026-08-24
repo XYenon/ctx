@@ -904,6 +904,7 @@ fn source_from_catalog_entry(
         catalog_support: ProviderCatalogSupport::None,
         status: ProviderSourceStatus::Missing,
         unsupported_reason: None,
+        route_provenance: Default::default(),
     })
 }
 

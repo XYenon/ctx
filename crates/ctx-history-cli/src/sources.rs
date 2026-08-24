@@ -483,7 +483,8 @@ mod ui_tests {
     use std::{io::Write as _, path::PathBuf};
 
     use ctx_history_capture::{
-        ProviderCatalogSupport, ProviderImportSupport, ProviderSource, ProviderSourceKind,
+        ProviderCatalogSupport, ProviderImportSupport, ProviderRouteRole, ProviderSource,
+        ProviderSourceKind, ProviderSourceRouteProvenance,
     };
     use unicode_width::UnicodeWidthStr as _;
 
@@ -525,6 +526,7 @@ mod ui_tests {
             catalog_support: ProviderCatalogSupport::Native,
             status,
             unsupported_reason: None,
+            route_provenance: Default::default(),
         }
     }
 
@@ -571,6 +573,11 @@ mod ui_tests {
         let mut configured_source = source(ProviderSourceStatus::Available, "/tmp/claude/projects");
         configured_source.provider = CaptureProvider::Claude;
         configured_source.source_format = "claude_projects_jsonl_tree";
+        configured_source.route_provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
+            root_id: "personal-claude".to_owned(),
+            root_path: PathBuf::from("/tmp/claude"),
+            route_role: ProviderRouteRole::from_static("claude-projects"),
+        };
         let root = ctx_history_capture::ProviderRootDefinition {
             id: "personal-claude".to_owned(),
             provider: CaptureProvider::Claude,
@@ -603,7 +610,7 @@ mod ui_tests {
 
     #[cfg(unix)]
     #[test]
-    fn configured_source_selection_recognizes_physical_path_aliases() {
+    fn configured_source_selection_uses_provenance_across_physical_path_aliases() {
         use std::os::unix::fs::symlink;
 
         let temp = tempfile::tempdir().unwrap();
@@ -617,6 +624,11 @@ mod ui_tests {
         );
         source.provider = CaptureProvider::Claude;
         source.source_format = "claude_projects_jsonl_tree";
+        source.route_provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
+            root_id: "personal-claude".to_owned(),
+            root_path: alias.clone(),
+            route_role: ProviderRouteRole::from_static("claude-projects"),
+        };
         let root = ctx_history_capture::ProviderRootDefinition {
             id: "personal-claude".to_owned(),
             provider: CaptureProvider::Claude,

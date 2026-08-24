@@ -94,14 +94,7 @@ pub fn add_provider_root(
         validate_root_selector("source group", group)?;
     }
     validate_provider_root_path(root)?;
-    let metadata = fs::symlink_metadata(root)
-        .with_context(|| format!("inspect provider home {}", root.display()))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        bail!(
-            "provider home must be an existing non-symlink directory: {}",
-            root.display()
-        );
-    }
+    validate_provider_root_existing_kind(provider, root)?;
     let root = fs::canonicalize(root)
         .with_context(|| format!("canonicalize provider home {}", root.display()))?;
     validate_provider_root_path(&root)?;

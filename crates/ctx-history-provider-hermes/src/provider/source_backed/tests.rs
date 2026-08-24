@@ -284,6 +284,7 @@ fn automatic_candidate(data_root: &Path, database: &Path) -> HermesSourceCandida
             catalog_support: ProviderCatalogSupport::None,
             status: crate::ProviderSourceStatus::Available,
             unsupported_reason: None,
+            route_provenance: Default::default(),
         },
     )
     .unwrap()

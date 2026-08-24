@@ -608,15 +608,20 @@ fn configured_claude_home_is_additive_and_naming_the_automatic_home_deduplicates
             let definition = ctx_history_capture::ProviderRootDefinition {
                 id: "work".to_owned(),
                 provider: CaptureProvider::Claude,
-                path: configured_home,
+                path: configured_home.clone(),
                 group: Some("work".to_owned()),
             };
             let configured_discovery = automatic_discovery
                 .clone()
                 .with_automatic_provider_discovery(automatic_enabled)
                 .with_configured_provider_roots(vec![definition]);
-            let configured_source =
-                provider_source_for_path(CaptureProvider::Claude, configured_projects);
+            let configured_source = configured_provider_source_for_path(
+                CaptureProvider::Claude,
+                configured_projects,
+                "work",
+                configured_home,
+                "claude-projects",
+            );
             let sources = if automatic_enabled && !same_home {
                 vec![automatic_source, configured_source]
             } else {
@@ -717,9 +722,12 @@ fn watch_catalog_retains_released_identity_after_named_default_home_moves() {
     refresh_all_provider_sources(
         &initial_discovery,
         DiscoveryReport {
-            sources: vec![provider_source_for_path(
+            sources: vec![configured_provider_source_for_path(
                 CaptureProvider::Claude,
                 released_projects,
+                "work",
+                released_home.clone(),
+                "claude-projects",
             )],
             issues: Vec::new(),
         },
@@ -803,9 +811,12 @@ fn moved_released_root_wins_if_the_old_automatic_location_reappears() {
         refresh_all_provider_sources(
             &initial_discovery,
             DiscoveryReport {
-                sources: vec![provider_source_for_path(
+                sources: vec![configured_provider_source_for_path(
                     CaptureProvider::Claude,
                     released_projects.clone(),
+                    "work",
+                    released_home.clone(),
+                    "claude-projects",
                 )],
                 issues: Vec::new(),
             },
@@ -829,7 +840,13 @@ fn moved_released_root_wins_if_the_old_automatic_location_reappears() {
         );
         let automatic_source =
             provider_source_for_path(CaptureProvider::Claude, recreated_projects);
-        let configured_source = provider_source_for_path(CaptureProvider::Claude, moved_projects);
+        let configured_source = configured_provider_source_for_path(
+            CaptureProvider::Claude,
+            moved_projects,
+            "work",
+            moved_home.clone(),
+            "claude-projects",
+        );
         let sources = if automatic_first {
             vec![automatic_source, configured_source]
         } else {
@@ -960,7 +977,13 @@ fn naming_a_failing_automatic_home_carries_it_while_named_peer_advances() {
         DiscoveryReport {
             sources: vec![
                 automatic_source,
-                provider_source_for_path(CaptureProvider::Claude, peer_projects.clone()),
+                configured_provider_source_for_path(
+                    CaptureProvider::Claude,
+                    peer_projects.clone(),
+                    "peer",
+                    peer_home.clone(),
+                    "claude-projects",
+                ),
             ],
             issues: Vec::new(),
         },
@@ -1001,8 +1024,20 @@ fn naming_a_failing_automatic_home_carries_it_while_named_peer_advances() {
         &configured_discovery,
         DiscoveryReport {
             sources: vec![
-                provider_source_for_path(CaptureProvider::Claude, automatic_projects),
-                provider_source_for_path(CaptureProvider::Claude, peer_projects),
+                configured_provider_source_for_path(
+                    CaptureProvider::Claude,
+                    automatic_projects,
+                    "automatic",
+                    automatic_home,
+                    "claude-projects",
+                ),
+                configured_provider_source_for_path(
+                    CaptureProvider::Claude,
+                    peer_projects,
+                    "peer",
+                    peer_home,
+                    "claude-projects",
+                ),
             ],
             issues: Vec::new(),
         },
@@ -1077,14 +1112,21 @@ fn removing_last_configured_claude_home_returns_to_one_automatic_route() {
         .with_configured_provider_roots(vec![ctx_history_capture::ProviderRootDefinition {
             id: "personal".to_owned(),
             provider: CaptureProvider::Claude,
-            path: home,
+            path: home.clone(),
             group: Some("personal".to_owned()),
         }]);
+    let configured_source = configured_provider_source_for_path(
+        CaptureProvider::Claude,
+        source.path.clone(),
+        "personal",
+        home,
+        "claude-projects",
+    );
     let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
     refresh_all_provider_sources(
         &configured_discovery,
         DiscoveryReport {
-            sources: vec![source.clone()],
+            sources: vec![configured_source],
             issues: Vec::new(),
         },
         StdDuration::ZERO,
@@ -1168,9 +1210,12 @@ fn moving_a_named_claude_home_preserves_route_and_source_identity() {
     refresh_all_provider_sources(
         &first_discovery,
         DiscoveryReport {
-            sources: vec![provider_source_for_path(
+            sources: vec![configured_provider_source_for_path(
                 CaptureProvider::Claude,
                 first_projects,
+                "work",
+                first_home.clone(),
+                "claude-projects",
             )],
             issues: Vec::new(),
         },
@@ -1197,9 +1242,12 @@ fn moving_a_named_claude_home_preserves_route_and_source_identity() {
     refresh_all_provider_sources(
         &second_discovery,
         DiscoveryReport {
-            sources: vec![provider_source_for_path(
+            sources: vec![configured_provider_source_for_path(
                 CaptureProvider::Claude,
                 second_projects,
+                "work",
+                second_home.clone(),
+                "claude-projects",
             )],
             issues: Vec::new(),
         },
@@ -1287,9 +1335,12 @@ fn moving_a_named_codex_home_preserves_route_and_source_identity() {
     refresh_all_provider_sources(
         &first_discovery,
         DiscoveryReport {
-            sources: vec![provider_source_for_path(
+            sources: vec![configured_provider_source_for_path(
                 CaptureProvider::Codex,
                 first_sessions,
+                "work",
+                first_home.clone(),
+                "codex-sessions",
             )],
             issues: Vec::new(),
         },
@@ -1316,9 +1367,12 @@ fn moving_a_named_codex_home_preserves_route_and_source_identity() {
     refresh_all_provider_sources(
         &second_discovery,
         DiscoveryReport {
-            sources: vec![provider_source_for_path(
+            sources: vec![configured_provider_source_for_path(
                 CaptureProvider::Codex,
                 second_sessions,
+                "work",
+                second_home.clone(),
+                "codex-sessions",
             )],
             issues: Vec::new(),
         },

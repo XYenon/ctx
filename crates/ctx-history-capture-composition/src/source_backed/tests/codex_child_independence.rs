@@ -359,10 +359,10 @@ fn configured_codex_homes_with_the_same_native_session_publish_independent_sourc
         [message("personal archived duplicate should coalesce")],
     );
     let mut registry = SourceBackedProviderRegistry::new();
-    for (root, lineage) in [
-        (&personal, [8; 32]),
-        (&personal_archive, [8; 32]),
-        (&work, [9; 32]),
+    for (root, lineage, route_role) in [
+        (&personal, [8; 32], "codex-sessions"),
+        (&personal_archive, [8; 32], "codex-archived-sessions"),
+        (&work, [9; 32], "codex-sessions"),
     ] {
         super::super::register_configured_codex_session_tree_route(
             &mut registry,
@@ -374,6 +374,7 @@ fn configured_codex_homes_with_the_same_native_session_publish_independent_sourc
             ),
             SourceBackedRouteSelection::ExplicitManual,
             Some(lineage),
+            &ProviderRouteRole::from_static(route_role),
         )
         .unwrap();
     }

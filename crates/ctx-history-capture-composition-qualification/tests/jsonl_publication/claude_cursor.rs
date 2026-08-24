@@ -68,6 +68,7 @@ fn register_source(
             catalog_support: ProviderCatalogSupport::None,
             status: ProviderSourceStatus::Available,
             unsupported_reason: None,
+            route_provenance: Default::default(),
         },
         SourceBackedRouteSelection::Automatic,
     )
@@ -462,9 +463,9 @@ fn claude_roots_with_the_same_relative_session_path_publish_independent_sources(
     )
     .with_configured_provider_roots(definitions);
     let report = DiscoveryReport {
-        sources: [&personal, &work]
+        sources: [("personal", &personal), ("work", &work)]
             .into_iter()
-            .map(|root| ProviderSource {
+            .map(|(root_id, root)| ProviderSource {
                 provider: CaptureProvider::Claude,
                 path: root.to_path_buf(),
                 exists: true,
@@ -474,6 +475,14 @@ fn claude_roots_with_the_same_relative_session_path_publish_independent_sources(
                 catalog_support: ProviderCatalogSupport::None,
                 status: ProviderSourceStatus::Available,
                 unsupported_reason: None,
+                route_provenance:
+                    ctx_history_capture_model::ProviderSourceRouteProvenance::ConfiguredRoot {
+                        root_id: root_id.to_owned(),
+                        root_path: root.parent().unwrap().to_path_buf(),
+                        route_role: ctx_history_capture_model::ProviderRouteRole::from_static(
+                            "claude-projects",
+                        ),
+                    },
             })
             .collect(),
         issues: Vec::new(),

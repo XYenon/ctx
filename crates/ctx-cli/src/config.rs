@@ -25,7 +25,8 @@ pub(crate) use mutation::{
 use crate::deprecated_controls::DeprecatedControls;
 use durable_write::{write_config_durably, ConfigMutationLock};
 use provider_roots::{
-    validate_provider_root_path, validate_provider_root_support, validate_root_selector,
+    validate_provider_root_existing_kind, validate_provider_root_path,
+    validate_provider_root_support, validate_root_selector,
 };
 use toml_subset::*;
 

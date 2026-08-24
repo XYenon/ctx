@@ -1,6 +1,22 @@
 use super::*;
-use ctx_history_capture_model::ProviderRootDefinition;
+use ctx_history_capture_model::{
+    ProviderRootDefinition, ProviderRouteRole, ProviderSourceRouteProvenance,
+};
 use std::str::FromStr;
+
+fn configured_source(
+    mut source: ProviderSource,
+    root_id: &str,
+    root_path: impl Into<PathBuf>,
+    route_role: &'static str,
+) -> ProviderSource {
+    source.route_provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
+        root_id: root_id.to_owned(),
+        root_path: root_path.into(),
+        route_role: ProviderRouteRole::from_static(route_role),
+    };
+    source
+}
 
 #[test]
 fn only_one_configured_root_per_provider_can_own_the_released_namespace() {
@@ -32,7 +48,15 @@ fn only_one_configured_root_per_provider_can_own_the_released_namespace() {
         sources: roots
             .iter()
             .map(|root| {
-                crate::provider_source_for_path(CaptureProvider::Claude, root.path.join("projects"))
+                configured_source(
+                    crate::provider_source_for_path(
+                        CaptureProvider::Claude,
+                        root.path.join("projects"),
+                    ),
+                    &root.id,
+                    root.path.clone(),
+                    "claude-projects",
+                )
             })
             .collect(),
         issues: Vec::new(),
@@ -100,8 +124,18 @@ fn configured_claude_roots_register_as_independent_routes_and_aliases() {
     )
     .with_configured_provider_roots(roots.clone());
     let sources = vec![
-        crate::provider_source_for_path(CaptureProvider::Claude, personal.join("projects")),
-        crate::provider_source_for_path(CaptureProvider::Claude, work.join("projects")),
+        configured_source(
+            crate::provider_source_for_path(CaptureProvider::Claude, personal.join("projects")),
+            "personal",
+            personal.clone(),
+            "claude-projects",
+        ),
+        configured_source(
+            crate::provider_source_for_path(CaptureProvider::Claude, work.join("projects")),
+            "work",
+            work.clone(),
+            "claude-projects",
+        ),
     ];
 
     let build = build_automatic_source_backed_registry_from_parts(
@@ -151,13 +185,13 @@ fn nested_claude_homes_keep_exact_root_alias_membership() {
         ProviderRootDefinition {
             id: "outer".to_owned(),
             provider: CaptureProvider::Claude,
-            path: outer,
+            path: outer.clone(),
             group: None,
         },
         ProviderRootDefinition {
             id: "inner".to_owned(),
             provider: CaptureProvider::Claude,
-            path: inner,
+            path: inner.clone(),
             group: None,
         },
     ];
@@ -169,8 +203,18 @@ fn nested_claude_homes_keep_exact_root_alias_membership() {
     )
     .with_configured_provider_roots(definitions);
     let sources = vec![
-        crate::provider_source_for_path(CaptureProvider::Claude, outer_projects.clone()),
-        crate::provider_source_for_path(CaptureProvider::Claude, inner_projects.clone()),
+        configured_source(
+            crate::provider_source_for_path(CaptureProvider::Claude, outer_projects.clone()),
+            "outer",
+            outer,
+            "claude-projects",
+        ),
+        configured_source(
+            crate::provider_source_for_path(CaptureProvider::Claude, inner_projects.clone()),
+            "inner",
+            inner,
+            "claude-projects",
+        ),
     ];
     let build = build_automatic_source_backed_registry_from_parts(
         &context,
@@ -212,13 +256,13 @@ fn nested_codex_homes_keep_exact_root_alias_membership() {
         ProviderRootDefinition {
             id: "outer".to_owned(),
             provider: CaptureProvider::Codex,
-            path: outer,
+            path: outer.clone(),
             group: None,
         },
         ProviderRootDefinition {
             id: "inner".to_owned(),
             provider: CaptureProvider::Codex,
-            path: inner,
+            path: inner.clone(),
             group: None,
         },
     ];
@@ -230,17 +274,27 @@ fn nested_codex_homes_keep_exact_root_alias_membership() {
     )
     .with_configured_provider_roots(definitions);
     let sources = vec![
-        fixture_provider_source_at(
-            CaptureProvider::Codex,
-            "codex_session_jsonl_tree",
-            ProviderImportSupport::Native,
-            outer_sessions.clone(),
+        configured_source(
+            fixture_provider_source_at(
+                CaptureProvider::Codex,
+                "codex_session_jsonl_tree",
+                ProviderImportSupport::Native,
+                outer_sessions.clone(),
+            ),
+            "outer",
+            outer,
+            "codex-sessions",
         ),
-        fixture_provider_source_at(
-            CaptureProvider::Codex,
-            "codex_session_jsonl_tree",
-            ProviderImportSupport::Native,
-            inner_sessions.clone(),
+        configured_source(
+            fixture_provider_source_at(
+                CaptureProvider::Codex,
+                "codex_session_jsonl_tree",
+                ProviderImportSupport::Native,
+                inner_sessions.clone(),
+            ),
+            "inner",
+            inner,
+            "codex-sessions",
         ),
     ];
     let build = build_automatic_source_backed_registry_from_parts(
@@ -284,7 +338,7 @@ fn configured_codex_root_keeps_its_route_alias_for_a_present_session_tree() {
     let definition = ProviderRootDefinition {
         id: "personal".to_owned(),
         provider: CaptureProvider::Codex,
-        path: root,
+        path: root.clone(),
         group: Some("personal".to_owned()),
     };
     let context = DiscoveryContext::new(
@@ -294,11 +348,16 @@ fn configured_codex_root_keeps_its_route_alias_for_a_present_session_tree() {
         crate::DiscoveryPlatformDirs::default(),
     )
     .with_configured_provider_roots(vec![definition.clone()]);
-    let source = fixture_provider_source_at(
-        CaptureProvider::Codex,
-        "codex_session_jsonl_tree",
-        ProviderImportSupport::Native,
-        sessions,
+    let source = configured_source(
+        fixture_provider_source_at(
+            CaptureProvider::Codex,
+            "codex_session_jsonl_tree",
+            ProviderImportSupport::Native,
+            sessions,
+        ),
+        "personal",
+        root,
+        "codex-sessions",
     );
 
     let build = build_automatic_source_backed_registry_from_parts(
@@ -342,23 +401,38 @@ fn naming_the_released_codex_home_preserves_the_compound_session_route() {
     )
     .with_env("CODEX_HOME", &root)
     .with_configured_provider_roots(vec![definition.clone()]);
-    let session_source = fixture_provider_source_at(
-        CaptureProvider::Codex,
-        "codex_session_jsonl_tree",
-        ProviderImportSupport::Native,
-        sessions,
+    let session_source = configured_source(
+        fixture_provider_source_at(
+            CaptureProvider::Codex,
+            "codex_session_jsonl_tree",
+            ProviderImportSupport::Native,
+            sessions,
+        ),
+        "released",
+        root.clone(),
+        "codex-sessions",
     );
-    let archived_source = fixture_provider_source_at(
-        CaptureProvider::Codex,
-        "codex_session_jsonl_tree",
-        ProviderImportSupport::Native,
-        archived,
+    let archived_source = configured_source(
+        fixture_provider_source_at(
+            CaptureProvider::Codex,
+            "codex_session_jsonl_tree",
+            ProviderImportSupport::Native,
+            archived,
+        ),
+        "released",
+        root.clone(),
+        "codex-archived-sessions",
     );
-    let history_source = fixture_provider_source_at(
-        CaptureProvider::Codex,
-        "codex_history_jsonl",
-        ProviderImportSupport::Native,
-        history,
+    let history_source = configured_source(
+        fixture_provider_source_at(
+            CaptureProvider::Codex,
+            "codex_history_jsonl",
+            ProviderImportSupport::Native,
+            history,
+        ),
+        "released",
+        root,
+        "codex-prompt-history",
     );
     let expected_session_route = automatic_source_backed_route_identity(&session_source).unwrap();
 

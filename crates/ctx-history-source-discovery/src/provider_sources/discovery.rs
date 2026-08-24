@@ -13,6 +13,7 @@ use ctx_history_platform::platform_security::validate_provider_source_outside_da
 use thiserror::Error;
 
 use super::{
+    configured_roots::expand_configured_roots_for_provider,
     context::DiscoveryContext,
     resolvers::{dedupe_report, resolve},
     specs::PROVIDER_SPECS,
@@ -54,32 +55,11 @@ pub fn validate_provider_source_roots_outside_data_root<'a>(
 }
 
 fn provider_source_boundary_root(source: &ProviderSource) -> &Path {
-    if source.status != ProviderSourceStatus::Unknown {
-        return &source.path;
-    }
-    // Configured Claude and Codex homes expand into these fixed children. If
-    // the home becomes temporarily unavailable, the child itself cannot be
-    // resolved, but the stable configured home can still be checked against
-    // the ctx data root. Available children continue through the stricter
-    // exact-source validation above.
-    let configured_home_child = match (source.provider, source.source_format) {
-        (CaptureProvider::Claude, "claude_projects_jsonl_tree") => {
-            source.path.file_name().and_then(|name| name.to_str()) == Some("projects")
-        }
-        (CaptureProvider::Codex, "codex_session_jsonl_tree") => matches!(
-            source.path.file_name().and_then(|name| name.to_str()),
-            Some("sessions" | "archived_sessions")
-        ),
-        (CaptureProvider::Codex, "codex_history_jsonl") => {
-            source.path.file_name().and_then(|name| name.to_str()) == Some("history.jsonl")
-        }
-        _ => false,
-    };
-    if configured_home_child {
-        source.path.parent().unwrap_or(&source.path)
-    } else {
-        &source.path
-    }
+    source
+        .route_provenance
+        .configured_root()
+        .filter(|_| source.status == ProviderSourceStatus::Unknown)
+        .map_or(&source.path, |(_, root_path)| root_path)
 }
 
 mod explicit;
@@ -105,7 +85,7 @@ pub fn discover_provider_sources_with_context(
 ) -> DiscoveryReport {
     let mut report = DiscoveryReport::default();
     for spec in PROVIDER_SPECS {
-        let mut provider_report = resolve(probes, context, spec);
+        let mut provider_report = resolve_provider(probes, context, spec);
         report.sources.append(&mut provider_report.sources);
         report.issues.append(&mut provider_report.issues);
     }
@@ -121,7 +101,7 @@ pub fn discover_provider_sources_with_context_and_work_budget(
     worker_limit: usize,
 ) -> DiscoveryReport {
     let reports = bounded_ordered_map(PROVIDER_SPECS.len(), worker_limit, |index| {
-        resolve(probes, context, &PROVIDER_SPECS[index])
+        resolve_provider(probes, context, &PROVIDER_SPECS[index])
     });
     let mut report = DiscoveryReport::default();
     for mut provider_report in reports {
@@ -252,9 +232,21 @@ pub fn discover_provider_sources_for_provider_with_context(
         .iter()
         .find(|spec| spec.provider == provider)
         .map_or_else(DiscoveryReport::default, |spec| {
-            resolve(probes, context, spec)
+            resolve_provider(probes, context, spec)
         });
     dedupe_report(report)
+}
+
+fn resolve_provider(
+    probes: &StaticProviderProbeCatalog,
+    context: &DiscoveryContext,
+    spec: &super::types::ProviderSourceSpec,
+) -> DiscoveryReport {
+    let mut report = resolve(probes, context, spec);
+    let mut configured = expand_configured_roots_for_provider(probes, context, spec);
+    report.sources.append(&mut configured.sources);
+    report.issues.append(&mut configured.issues);
+    report
 }
 
 /// Provider-scoped counterpart to discover_provider_sources_with_projects.
@@ -317,6 +309,14 @@ mod boundary_error_tests {
             catalog_support: super::super::types::ProviderCatalogSupport::None,
             status: ProviderSourceStatus::Unknown,
             unsupported_reason: Some("configured home unavailable"),
+            route_provenance:
+                ctx_history_capture_model::ProviderSourceRouteProvenance::ConfiguredRoot {
+                    root_id: "fixture".to_owned(),
+                    root_path: home.to_path_buf(),
+                    route_role: ctx_history_capture_model::ProviderRouteRole::from_static(
+                        "claude-projects",
+                    ),
+                },
         }
     }
 

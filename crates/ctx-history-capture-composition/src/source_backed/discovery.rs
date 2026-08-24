@@ -207,6 +207,9 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
         .partition(|source| configured_provider_root_for_source(discovery, source).is_some());
     for source in configured_sources.into_iter().chain(automatic_sources) {
         let configured_root = configured_provider_root_for_source(discovery, &source);
+        let configured_route_role = configured_root
+            .and_then(|_| source.route_provenance.route_role())
+            .cloned();
         let configured_source_identity = configured_root.map(|root| {
             provider_root_identities
                 .get(&root.id)
@@ -261,10 +264,14 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                     automatic_unavailable_detail(&reason),
                 )
             };
-            if let Some(configured_root) = configured_root {
+            if let (Some(configured_root), Some(route_role)) =
+                (configured_root, configured_route_role.as_ref())
+            {
                 let source_root_lineage = configured_source_identity
                     .and_then(|identity| identity.lineage(configured_root));
-                if let Err(error) = route.apply_provider_root_route_identity(source_root_lineage) {
+                if let Err(error) =
+                    route.apply_provider_root_route_identity(source_root_lineage, route_role)
+                {
                     let reason = automatic_registration_rejected(error);
                     registry.register(SourceBackedRoute::unsupported(
                         source.clone(),
@@ -315,10 +322,12 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 )
             };
             let route = route.and_then(|mut route| {
-                if let Some(configured_root) = configured_root {
+                if let (Some(configured_root), Some(route_role)) =
+                    (configured_root, configured_route_role.as_ref())
+                {
                     let source_root_lineage = configured_source_identity
                         .and_then(|identity| identity.lineage(configured_root));
-                    route.apply_provider_root_route_identity(source_root_lineage)?;
+                    route.apply_provider_root_route_identity(source_root_lineage, route_role)?;
                 }
                 Ok(route)
             });
@@ -356,6 +365,15 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
             source.unsupported_reason = None;
         }
         if let Some(configured_root) = configured_root {
+            let Some(route_role) = configured_route_role.as_ref() else {
+                retain_unsupported_automatic_format(
+                    &mut registry,
+                    &mut issues,
+                    source,
+                    "the configured provider source has no explicit route role",
+                );
+                continue;
+            };
             if source.provider == CaptureProvider::Codex
                 && source.source_format == "codex_session_jsonl_tree"
                 && configured_source_identity == Some(ProviderRootSourceIdentity::Released)
@@ -375,6 +393,7 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                         source.clone(),
                         SourceBackedRouteSelection::ExplicitManual,
                         source_root_lineage,
+                        route_role,
                     )
                 }
                 (CaptureProvider::Codex, "codex_session_jsonl_tree") => {
@@ -383,6 +402,7 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                         source.clone(),
                         SourceBackedRouteSelection::ExplicitManual,
                         source_root_lineage,
+                        route_role,
                     )
                 }
                 (CaptureProvider::Codex, "codex_history_jsonl") => {
@@ -391,6 +411,7 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                         source.clone(),
                         SourceBackedRouteSelection::ExplicitManual,
                         source_root_lineage,
+                        route_role,
                     )
                 }
                 _ => register_landed_source_backed_route_with_data_root(
@@ -457,11 +478,26 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
 
     for sources in released_configured_codex_session_tree_sources.into_values() {
         let source = sources.first().cloned();
-        let registration = register_configured_codex_session_tree_routes(
-            &mut registry,
-            sources,
-            SourceBackedRouteSelection::ExplicitManual,
-            None,
+        let route_role = source
+            .as_ref()
+            .and_then(|source| source.route_provenance.route_role())
+            .cloned();
+        let registration = route_role.as_ref().map_or_else(
+            || {
+                Err(invalid_route(
+                    CaptureProvider::Codex,
+                    "configured Codex session routes have no explicit route role",
+                ))
+            },
+            |route_role| {
+                register_configured_codex_session_tree_routes(
+                    &mut registry,
+                    sources,
+                    SourceBackedRouteSelection::ExplicitManual,
+                    None,
+                    route_role,
+                )
+            },
         );
         if let (Some(source), Err(error)) = (source, registration) {
             let reason = automatic_registration_rejected(error);

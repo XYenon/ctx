@@ -90,6 +90,7 @@ impl SourceBackedRoute {
     pub(in crate::source_backed) fn apply_provider_root_route_identity(
         &mut self,
         source_root_lineage: Option<[u8; 32]>,
+        route_role: &ProviderRouteRole,
     ) -> SourceBackedCoordinatorResult<()> {
         if self.metadata.selection != Some(SourceBackedRouteSelection::ExplicitManual) {
             return Err(invalid_route(
@@ -103,6 +104,7 @@ impl SourceBackedRoute {
                 &self.metadata.source,
                 self.metadata.certified_source_format,
                 lineage,
+                route_role,
             )?,
         });
         Ok(())
@@ -325,29 +327,8 @@ fn provider_root_source_backed_route_identity(
     source: &ProviderSource,
     certified_source_format: &str,
     source_root_lineage: [u8; 32],
+    route_role: &ProviderRouteRole,
 ) -> SourceBackedCoordinatorResult<SourceRouteIdentity> {
-    let route_role = match (
-        source.provider,
-        source.source_format,
-        source.path.file_name().and_then(std::ffi::OsStr::to_str),
-    ) {
-        (CaptureProvider::Claude, "claude_projects_jsonl_tree", Some("projects")) => {
-            "claude-projects"
-        }
-        (CaptureProvider::Codex, "codex_session_jsonl_tree", Some("sessions")) => "codex-sessions",
-        (CaptureProvider::Codex, "codex_session_jsonl_tree", Some("archived_sessions")) => {
-            "codex-archived-sessions"
-        }
-        (CaptureProvider::Codex, "codex_history_jsonl", Some("history.jsonl")) => {
-            "codex-prompt-history"
-        }
-        _ => {
-            return Err(invalid_route(
-                source.provider,
-                "configured provider route has no stable home-relative role",
-            ));
-        }
-    };
     let mut digest = Sha256::new();
     digest.update(b"ctx.provider-root-route-identity.v1\0");
     digest.update(source.provider.as_str().as_bytes());
@@ -758,6 +739,13 @@ fn source_backed_route_identity(
             digest.update(profile.as_bytes());
         }
     }
+    if selection == SourceBackedRouteSelection::Automatic {
+        if let Some(route_role) = source.route_provenance.automatic_route_role() {
+            digest.update(b"\0provider-route-role\0");
+            digest.update((route_role.as_bytes().len() as u64).to_be_bytes());
+            digest.update(route_role.as_bytes());
+        }
+    }
     index_source_route_identity(SourceRouteIdentity::from_sha256(format!(
         "{:x}",
         digest.finalize()
@@ -768,6 +756,100 @@ fn source_backed_route_identity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route_identity_source(
+        provider: CaptureProvider,
+        source_format: &'static str,
+    ) -> ProviderSource {
+        ProviderSource {
+            provider,
+            path: PathBuf::from(format!("/fixture/{}", provider.as_str())),
+            exists: true,
+            source_format,
+            source_kind: ProviderSourceKind::NativeHistory,
+            import_support: ProviderImportSupport::Native,
+            catalog_support: crate::ProviderCatalogSupport::None,
+            status: ProviderSourceStatus::Available,
+            unsupported_reason: None,
+            route_provenance: Default::default(),
+        }
+    }
+
+    #[test]
+    fn configured_claude_and_codex_route_identities_preserve_released_goldens() {
+        let golden = |provider: CaptureProvider,
+                      selected_format: &'static str,
+                      certified_format: &str,
+                      role: &'static str,
+                      expected: &str| {
+            let root = ProviderRootDefinition {
+                id: "personal".to_owned(),
+                provider,
+                path: PathBuf::from("/machine-specific-provider-home"),
+                group: None,
+            };
+            let lineage = ProviderRootSourceIdentity::NamedV1.lineage(&root).unwrap();
+            let identity = provider_root_source_backed_route_identity(
+                &route_identity_source(provider, selected_format),
+                certified_format,
+                lineage,
+                &ProviderRouteRole::from_static(role),
+            )
+            .unwrap();
+
+            assert_eq!(identity.as_str(), expected);
+        };
+
+        golden(
+            CaptureProvider::Claude,
+            "claude_projects_jsonl_tree",
+            "claude_projects_jsonl_tree",
+            "claude-projects",
+            "3ceb120cc19d687091cb951a28b9d173be1b1a7594e2f7822c0729573ed3a7c6",
+        );
+        golden(
+            CaptureProvider::Codex,
+            "codex_session_jsonl_tree",
+            "codex_session_jsonl",
+            "codex-sessions",
+            "28482f00a92e00b796afb7c00fbce791e1f1765f4fcfc1f8e26cf831c1feda73",
+        );
+        golden(
+            CaptureProvider::Codex,
+            "codex_session_jsonl_tree",
+            "codex_session_jsonl",
+            "codex-archived-sessions",
+            "39ef7a5d71542cac12636347be66fc65e9cccd2df424043a33f8af5c9940a3f8",
+        );
+        golden(
+            CaptureProvider::Codex,
+            "codex_history_jsonl",
+            "codex_history_jsonl",
+            "codex-prompt-history",
+            "0ce68ccb4a181a282d068a706b2f6e2d36d551b54206a5c72497e2f5be89e15c",
+        );
+    }
+
+    #[test]
+    fn automatic_route_role_is_opt_in_and_legacy_identity_is_unchanged() {
+        let mut source = route_identity_source(CaptureProvider::Codex, "codex_session_jsonl_tree");
+        let unroled = automatic_source_backed_route_identity(&source).unwrap();
+        assert_eq!(
+            unroled.as_str(),
+            "d81b73c4985c02368ce9652682df1200a293f4c124ff94d1e57a079c9963364b"
+        );
+
+        source.route_provenance =
+            ctx_history_capture_model::ProviderSourceRouteProvenance::Automatic {
+                route_role: ProviderRouteRole::from_static("same-format-slot-a"),
+            };
+        let role_specific = automatic_source_backed_route_identity(&source).unwrap();
+        assert_eq!(
+            role_specific.as_str(),
+            "3323b51108b227a05b476ce100f19ec57d3a34886e19ddfc16944b3624f6fda5"
+        );
+        assert_ne!(unroled, role_specific);
+    }
 
     #[test]
     fn route_identity_validation_uses_the_canonical_index_conversion() {

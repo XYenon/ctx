@@ -1,3 +1,4 @@
+mod configured_roots;
 mod context;
 mod discovery;
 mod lingma;
@@ -51,6 +52,10 @@ impl StaticProviderProbeCatalog {
     }
 }
 
+pub use configured_roots::{
+    configured_root_capabilities, configured_root_capability, ConfiguredRootCapability,
+    ConfiguredRootCapabilityState, ConfiguredRootExpander, ConfiguredRootPathKind,
+};
 pub use context::{
     DiscoveryContext, DiscoveryPlatform, DiscoveryPlatformDirs, DISCOVERY_ENV_ALLOWLIST,
 };
@@ -91,7 +96,8 @@ pub use specs::{provider_source_spec, provider_source_specs};
 pub use types::{
     provider_source_status_reason, DiscoveryIssue, DiscoveryIssueKind, DiscoveryReport,
     ProviderCatalogSupport, ProviderDefaultLocation, ProviderImportSupport, ProviderSource,
-    ProviderSourceKind, ProviderSourceSpec, ProviderSourceStatus, ProviderSourceStatusReason,
+    ProviderSourceKind, ProviderSourceRouteProvenance, ProviderSourceSpec, ProviderSourceStatus,
+    ProviderSourceStatusReason,
 };
 pub use warp::{
     discover_warp_sources_with_authority, resolve_warp_discovery_authority, DiscoveredWarpSource,

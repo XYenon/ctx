@@ -2,8 +2,8 @@ use super::*;
 use std::fs;
 
 use ctx_history_capture::{
-    provider_source_for_path, DiscoveryPlatform, DiscoveryPlatformDirs,
-    SourceBackedSelectorAuthority,
+    provider_source_for_path, DiscoveryPlatform, DiscoveryPlatformDirs, ProviderRouteRole,
+    ProviderSourceRouteProvenance, SourceBackedSelectorAuthority,
 };
 use ctx_history_capture_model::{
     ProviderCatalogSupport, ProviderImportSupport, ProviderSource, ProviderSourceKind,
@@ -101,6 +101,22 @@ fn discovery_fixture(root: &Path) -> (PathBuf, PathBuf, DiscoveryContext) {
         DiscoveryPlatformDirs::default(),
     );
     (home, cwd, discovery)
+}
+
+fn configured_provider_source_for_path(
+    provider: CaptureProvider,
+    path: PathBuf,
+    root_id: &str,
+    root_path: PathBuf,
+    route_role: &'static str,
+) -> ProviderSource {
+    let mut source = provider_source_for_path(provider, path);
+    source.route_provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
+        root_id: root_id.to_owned(),
+        root_path,
+        route_role: ProviderRouteRole::from_static(route_role),
+    };
+    source
 }
 
 fn run_report(

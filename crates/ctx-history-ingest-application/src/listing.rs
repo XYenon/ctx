@@ -199,6 +199,7 @@ mod tests {
             catalog_support: ProviderCatalogSupport::Native,
             status,
             unsupported_reason: None,
+            route_provenance: Default::default(),
         }
     }
     #[test]

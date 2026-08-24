@@ -553,6 +553,7 @@ fn exact_tree_source(
         catalog_support: spec.catalog_support,
         status,
         unsupported_reason: reason,
+        route_provenance: Default::default(),
     }
 }
 
@@ -600,6 +601,7 @@ fn safe_native_source(
                 catalog_support: spec.catalog_support,
                 status: ProviderSourceStatus::Unsupported,
                 unsupported_reason: Some(UNSAFE_SOURCE_REASON),
+                route_provenance: Default::default(),
             };
         }
         PathPresence::Unknown(_) => {}
@@ -614,6 +616,7 @@ fn safe_native_source(
         catalog_support: spec.catalog_support,
         status: ProviderSourceStatus::Unknown,
         unsupported_reason: Some(UNSAFE_SOURCE_REASON),
+        route_provenance: Default::default(),
     }
 }
 

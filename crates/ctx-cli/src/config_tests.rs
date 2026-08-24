@@ -1192,6 +1192,29 @@ fn provider_root_cli_mutations_are_durable_and_preserve_other_config() {
 }
 
 #[test]
+fn provider_root_cli_mutation_validates_the_capability_path_kind() {
+    let data_root = tempfile::tempdir().unwrap();
+    let provider_parent = tempfile::tempdir().unwrap();
+    let provider_file = provider_parent.path().join("claude-home-file");
+    fs::write(&provider_file, b"not a provider directory").unwrap();
+
+    let error = format!(
+        "{:#}",
+        add_provider_root(
+            data_root.path(),
+            "personal",
+            CaptureProvider::Claude,
+            &provider_file,
+            None,
+        )
+        .unwrap_err()
+    );
+
+    assert!(error.contains("existing non-symlink directory"), "{error}");
+    assert!(!data_root.path().join(CONFIG_FILE).exists());
+}
+
+#[test]
 fn provider_root_cli_mutation_rejects_data_root_overlap_before_writing() {
     for relationship in ["equal", "ancestor", "descendant"] {
         let fixture = tempfile::tempdir().unwrap();

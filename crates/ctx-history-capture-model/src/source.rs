@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use ctx_history_core::CaptureProvider;
 
+use crate::ProviderRouteRole;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryIssueKind {
     NoDiskHistory,
@@ -21,6 +23,53 @@ pub struct DiscoveryIssue {
 pub struct DiscoveryReport {
     pub sources: Vec<ProviderSource>,
     pub issues: Vec<DiscoveryIssue>,
+}
+
+/// Route identity provenance emitted by provider discovery.
+///
+/// Legacy automatic and exact sources remain unroled. Providers with multiple
+/// independently owned routes of one format may emit an automatic role, while
+/// configured expansion additionally carries exact root ownership. This is a
+/// capture-only value and is not a source identity scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ProviderSourceRouteProvenance {
+    #[default]
+    Unroled,
+    Automatic {
+        route_role: ProviderRouteRole,
+    },
+    ConfiguredRoot {
+        root_id: String,
+        root_path: PathBuf,
+        route_role: ProviderRouteRole,
+    },
+}
+
+impl ProviderSourceRouteProvenance {
+    pub fn route_role(&self) -> Option<&ProviderRouteRole> {
+        match self {
+            Self::Unroled => None,
+            Self::Automatic { route_role } | Self::ConfiguredRoot { route_role, .. } => {
+                Some(route_role)
+            }
+        }
+    }
+
+    pub fn automatic_route_role(&self) -> Option<&ProviderRouteRole> {
+        match self {
+            Self::Automatic { route_role } => Some(route_role),
+            Self::Unroled | Self::ConfiguredRoot { .. } => None,
+        }
+    }
+
+    pub fn configured_root(&self) -> Option<(&str, &std::path::Path)> {
+        match self {
+            Self::ConfiguredRoot {
+                root_id, root_path, ..
+            } => Some((root_id, root_path)),
+            Self::Unroled | Self::Automatic { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +163,7 @@ pub struct ProviderSource {
     pub catalog_support: ProviderCatalogSupport,
     pub status: ProviderSourceStatus,
     pub unsupported_reason: Option<&'static str>,
+    pub route_provenance: ProviderSourceRouteProvenance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

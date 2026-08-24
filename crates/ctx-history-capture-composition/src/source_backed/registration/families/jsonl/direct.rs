@@ -60,6 +60,7 @@ pub(in crate::source_backed) fn register_configured_claude_source_backed_route(
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
     source_root_lineage: Option<[u8; 32]>,
+    route_role: &ProviderRouteRole,
 ) -> SourceBackedCoordinatorResult<()> {
     let driver = crate::provider::source_backed::family::jsonl::jsonl_family_driver(
         ctx_history_provider_claude_cursor::claude_jsonl_adapter_for_named_home::<
@@ -73,7 +74,7 @@ pub(in crate::source_backed) fn register_configured_claude_source_backed_route(
         SourceBackedSelectorAuthority::DiscoveredWinner,
         driver,
     )?;
-    route.apply_provider_root_route_identity(source_root_lineage)?;
+    route.apply_provider_root_route_identity(source_root_lineage, route_role)?;
     registry.register(route);
     Ok(())
 }

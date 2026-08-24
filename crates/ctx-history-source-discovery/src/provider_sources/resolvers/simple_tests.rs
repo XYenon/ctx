@@ -5,7 +5,7 @@ use super::super::super::{
 use std::fs;
 
 use super::*;
-use crate::{provider_source_specs, test_support_paths};
+use crate::test_support_paths;
 
 fn tempdir() -> tempfile::TempDir {
     test_support_paths::tempdir()
@@ -20,18 +20,11 @@ fn context(temp: &tempfile::TempDir, platform: DiscoveryPlatform) -> DiscoveryCo
     DiscoveryContext::new(home, cwd, platform, DiscoveryPlatformDirs::default())
 }
 
-fn spec(provider: CaptureProvider) -> &'static ProviderSourceSpec {
-    provider_source_specs()
-        .iter()
-        .find(|spec| spec.provider == provider)
-        .unwrap()
-}
-
 fn resolve_provider(context: &DiscoveryContext, provider: CaptureProvider) -> DiscoveryReport {
-    resolve(
+    crate::provider_sources::discover_provider_sources_for_provider_with_context(
         &crate::provider_sources::TEST_PROVIDER_PROBES,
         context,
-        spec(provider),
+        provider,
     )
 }
 

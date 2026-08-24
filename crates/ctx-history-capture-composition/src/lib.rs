@@ -9,8 +9,8 @@ pub use ctx_history_source_discovery::{
     CrushProjectInventorySelector, CrushProjectInventorySelectorError, DiscoveryContext,
     DiscoveryIssue, DiscoveryPlatform, DiscoveryPlatformDirs, DiscoveryReport,
     LingmaInventorySelector, PathPresence, ProviderCatalogSupport, ProviderImportSupport,
-    ProviderSource, ProviderSourceKind, ProviderSourceSpec, ProviderSourceStatus,
-    StaticProviderProbeCatalog, OPENHANDS_CURRENT_CLI_SOURCE_FORMAT,
+    ProviderSource, ProviderSourceKind, ProviderSourceRouteProvenance, ProviderSourceSpec,
+    ProviderSourceStatus, StaticProviderProbeCatalog, OPENHANDS_CURRENT_CLI_SOURCE_FORMAT,
 };
 
 #[cfg(test)]

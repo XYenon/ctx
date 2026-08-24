@@ -78,6 +78,7 @@ fn native_source(
                 .or_else(|| probe_io_error_reason(spec.provider)),
             ProbeState::Missing | ProbeState::Available => None,
         },
+        route_provenance: Default::default(),
     }
 }
 

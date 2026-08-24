@@ -11,8 +11,10 @@ use ctx_history_source_discovery::{
 };
 
 pub use ctx_history_source_discovery::{
-    path_presence, provider_paths_equivalent, provider_source_belongs_to_configured_root,
-    released_provider_home, CrushDiscoveredProjectInventory, CrushProjectInventorySelectorError,
+    configured_root_capabilities, configured_root_capability, path_presence,
+    provider_paths_equivalent, provider_source_belongs_to_configured_root, released_provider_home,
+    ConfiguredRootCapability, ConfiguredRootCapabilityState, ConfiguredRootExpander,
+    ConfiguredRootPathKind, CrushDiscoveredProjectInventory, CrushProjectInventorySelectorError,
 };
 pub use ctx_history_source_discovery::{
     validate_provider_source_roots_outside_data_root, DiscoveredLingmaDatabase,
@@ -20,10 +22,10 @@ pub use ctx_history_source_discovery::{
     DiscoveryPlatformDirs, DiscoveryReport, LingmaDatabaseCatalogLineage,
     LingmaDiscoveredInventory, LingmaDiscoveryUnavailable, LingmaVscodeClient, LingmaVscodeProfile,
     PathPresence, ProviderCatalogSupport, ProviderDefaultLocation, ProviderImportSupport,
-    ProviderSource, ProviderSourceKind, ProviderSourceRootBoundaryError, ProviderSourceSpec,
-    ProviderSourceStatus, ProviderSourceStatusReason, WarpDiscoveryUnavailable,
-    WarpInstalledPlatform, WarpInstalledSurfaceKey, WarpReleaseChannel, WarpTerminalSurface,
-    DISCOVERY_ENV_ALLOWLIST,
+    ProviderSource, ProviderSourceKind, ProviderSourceRootBoundaryError,
+    ProviderSourceRouteProvenance, ProviderSourceSpec, ProviderSourceStatus,
+    ProviderSourceStatusReason, WarpDiscoveryUnavailable, WarpInstalledPlatform,
+    WarpInstalledSurfaceKey, WarpReleaseChannel, WarpTerminalSurface, DISCOVERY_ENV_ALLOWLIST,
 };
 pub use ctx_history_source_io::OrdinaryFileObservation;
 ctx_history_source_io::define_mapped_ordinary_io_compat!(crate::CaptureError);

@@ -1,5 +1,5 @@
 use super::*;
-use ctx_history_capture_model::ProviderRootDefinition;
+use ctx_history_capture_model::{ProviderRootDefinition, ProviderRootSourceIdentity};
 use ctx_history_core::CaptureProvider;
 
 #[test]
@@ -61,6 +61,24 @@ fn provider_root_aliases_are_bounded_and_generation_local() {
         manifest.provider_root_source_tokens(&[], &["work".to_owned()]),
         Err(IndexError::UnknownProviderRootGroup(group)) if group == "work"
     ));
+}
+
+#[test]
+fn provider_root_manifest_validation_is_provider_generic() {
+    let temp = tempfile::tempdir().unwrap();
+    let definition = ProviderRootDefinition {
+        id: "future-provider".to_owned(),
+        provider: CaptureProvider::Cursor,
+        path: temp.path().join("cursor-root"),
+        group: None,
+    };
+
+    let applied = AppliedProviderRoot::new(definition.clone(), Vec::new()).unwrap();
+    assert_eq!(applied.definition(), &definition);
+    assert_eq!(
+        applied.source_identity(),
+        ProviderRootSourceIdentity::NamedV1
+    );
 }
 
 #[test]
