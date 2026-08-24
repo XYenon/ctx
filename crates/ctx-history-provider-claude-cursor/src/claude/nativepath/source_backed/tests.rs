@@ -7,11 +7,14 @@ use sha2::{Digest, Sha256};
 
 use super::preflight::{
     checked_preflight_identity_count, classify_typed_record_key_error,
-    scope_claude_row_validation_error, ClaudePreflightError, ClaudePreflightIdentity,
-    ClaudeRecordKeyField, ClaudeRecordValidationError, ClaudeRowValidationError,
-    MAX_PREFLIGHT_EVENT_IDENTITIES,
+    scope_claude_row_validation_error, stable_native_event_identity, ClaudePreflightError,
+    ClaudePreflightIdentity, ClaudeRecordKeyField, ClaudeRecordValidationError,
+    ClaudeRowValidationError, MAX_PREFLIGHT_EVENT_IDENTITIES,
 };
-use super::{claude_annotation, parse_native_record, ClaudePhysicalLocator};
+use super::{
+    claude_annotation, parse_native_record, session_identity, session_typed_key, source_key,
+    ClaudePhysicalLocator, ClaudeSessionKey,
+};
 
 #[test]
 fn identical_native_sessions_under_distinct_logical_roots_have_distinct_sources() {
@@ -61,6 +64,34 @@ fn locator(bytes: &[u8]) -> ClaudePhysicalLocator {
 fn malformed_record_is_rejected_before_any_core_activity_exists() {
     let bytes = b"not-json";
     assert!(parse_native_record(bytes, 0, &locator(bytes)).is_err());
+}
+
+#[test]
+fn repeated_native_uuid_and_subrecord_index_repeat_the_stable_event_identity() {
+    let key = ClaudeSessionKey {
+        root_session_id: "session".to_owned(),
+        workflow_run_id: None,
+        agent_id: None,
+    };
+    let source = source_key(&key).unwrap();
+    let session_id = session_identity(&source, session_typed_key(&key).unwrap()).unwrap();
+    let parse = |body: &str| {
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "user",
+            "uuid": "repeated",
+            "message": {"role": "user", "content": body}
+        }))
+        .unwrap();
+        parse_native_record(&bytes, 0, &locator(&bytes))
+            .unwrap()
+            .rows
+            .remove(0)
+    };
+
+    assert_eq!(
+        stable_native_event_identity(&parse("first"), &source, session_id).unwrap(),
+        stable_native_event_identity(&parse("second"), &source, session_id).unwrap()
+    );
 }
 
 #[test]

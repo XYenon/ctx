@@ -45,19 +45,8 @@ fn registry(
     root: &Path,
 ) -> SourceBackedProviderRegistry {
     let mut registry = SourceBackedProviderRegistry::new();
-    register_source(&mut registry, provider, source_format, root);
-    assert_eq!(registry.routes().len(), 1);
-    registry
-}
-
-fn register_source(
-    registry: &mut SourceBackedProviderRegistry,
-    provider: CaptureProvider,
-    source_format: &'static str,
-    root: &Path,
-) {
     register_landed_source_backed_route(
-        registry,
+        &mut registry,
         ProviderSource {
             provider,
             path: root.to_path_buf(),
@@ -72,6 +61,8 @@ fn register_source(
         SourceBackedRouteSelection::Automatic,
     )
     .unwrap();
+    assert_eq!(registry.routes().len(), 1);
+    registry
 }
 
 fn write_transcript(path: &Path, rows: &[Value]) {

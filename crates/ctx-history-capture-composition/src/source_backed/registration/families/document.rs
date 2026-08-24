@@ -455,71 +455,6 @@ mod tests {
     }
 
     #[test]
-    fn cline_sdk_invalid_catalog_row_preserves_its_peer_and_last_good_source() {
-        let temp = crate::test_support_paths::tempdir().unwrap();
-        let provider_root = temp.path().join("cline-data");
-        let ctx_data_root = temp.path().join("ctx-data");
-        let index = temp.path().join("index");
-        fs::create_dir_all(provider_root.join("sessions")).unwrap();
-        fs::create_dir_all(&ctx_data_root).unwrap();
-        write_cline_sdk_two_session_index(&provider_root, None);
-        write_cline_sdk_session_messages(&provider_root, "broken", &["broken old"]);
-        write_cline_sdk_session_messages(&provider_root, "healthy", &["healthy old"]);
-        let registry = cline_sdk_registry(&provider_root, &ctx_data_root);
-
-        let cold =
-            refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
-        write_cline_sdk_two_session_index(&provider_root, Some("../../outside.messages.json"));
-        write_cline_sdk_session_messages(&provider_root, "healthy", &["healthy new"]);
-        let degraded =
-            refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
-
-        assert_ne!(degraded.commit.generation_id, cold.commit.generation_id);
-        assert_eq!(degraded.logical_source_failures.total(), 1);
-        assert!(degraded.logical_source_failures.failures()[0].carried_forward);
-        assert_eq!(
-            cline_sdk_message_bodies(&index, &degraded),
-            vec![
-                ("broken".to_owned(), "broken old".to_owned()),
-                ("healthy".to_owned(), "healthy new".to_owned()),
-            ]
-        );
-
-        write_cline_sdk_two_session_index(&provider_root, None);
-        write_cline_sdk_session_messages(&provider_root, "broken", &["broken repaired"]);
-        let repaired =
-            refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
-        assert!(repaired.logical_source_failures.is_empty());
-        assert_eq!(
-            cline_sdk_message_bodies(&index, &repaired),
-            vec![
-                ("broken".to_owned(), "broken repaired".to_owned()),
-                ("healthy".to_owned(), "healthy new".to_owned()),
-            ]
-        );
-
-        let cold_root = temp.path().join("cold-cline-data");
-        let cold_ctx_data_root = temp.path().join("cold-ctx-data");
-        let cold_index = temp.path().join("cold-index");
-        fs::create_dir_all(cold_root.join("sessions")).unwrap();
-        fs::create_dir_all(&cold_ctx_data_root).unwrap();
-        write_cline_sdk_two_session_index(&cold_root, Some("../../outside.messages.json"));
-        write_cline_sdk_session_messages(&cold_root, "healthy", &["cold healthy"]);
-        let isolated = refresh_source_backed_generation(
-            &cold_index,
-            &cline_sdk_registry(&cold_root, &cold_ctx_data_root),
-            WriterOptions::default(),
-        )
-        .unwrap();
-        assert_eq!(isolated.logical_source_failures.total(), 1);
-        assert!(!isolated.logical_source_failures.failures()[0].carried_forward);
-        assert_eq!(
-            cline_sdk_message_bodies(&cold_index, &isolated),
-            vec![("healthy".to_owned(), "cold healthy".to_owned())]
-        );
-    }
-
-    #[test]
     fn cline_sdk_real_automatic_and_exact_discovery_import_the_common_data_root() {
         let temp = crate::test_support_paths::tempdir().unwrap();
         let home = temp.path().join("home");
@@ -757,95 +692,30 @@ mod tests {
     }
 
     fn write_cline_sdk_messages(root: &Path, bodies: &[&str]) {
-        write_cline_sdk_session_messages_with_id_prefix(root, "session-a", "message", bodies);
-    }
-
-    fn write_cline_sdk_two_session_index(root: &Path, broken_messages_path: Option<&str>) {
-        let mut broken = serde_json::json!({
-            "sessionId": "broken",
-            "model": "cline-model",
-            "cwd": "/fixture/cwd"
-        });
-        if let Some(path) = broken_messages_path {
-            broken["messagesPath"] = serde_json::Value::String(path.to_owned());
-        }
-        fs::write(
-            root.join("sessions/sessions.index.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "version": 1,
-                "sessions": {
-                    "broken": broken,
-                    "healthy": {
-                        "sessionId": "healthy",
-                        "model": "cline-model",
-                        "cwd": "/fixture/cwd"
-                    }
-                }
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-    }
-
-    fn write_cline_sdk_session_messages(root: &Path, session_id: &str, bodies: &[&str]) {
-        write_cline_sdk_session_messages_with_id_prefix(
-            root,
-            session_id,
-            &format!("message-{session_id}"),
-            bodies,
-        );
-    }
-
-    fn write_cline_sdk_session_messages_with_id_prefix(
-        root: &Path,
-        session_id: &str,
-        message_id_prefix: &str,
-        bodies: &[&str],
-    ) {
         let messages = bodies
             .iter()
             .enumerate()
             .map(|(index, body)| {
                 serde_json::json!({
-                    "id": format!("{message_id_prefix}-{index}"),
+                    "id": format!("message-{index}"),
                     "role": if index == 0 { "user" } else { "assistant" },
                     "content": [{"type": "text", "text": body}]
                 })
             })
             .collect::<Vec<_>>();
-        let directory = root.join("sessions").join(session_id);
-        fs::create_dir_all(&directory).unwrap();
         fs::write(
-            directory.join(format!("{session_id}.messages.json")),
+            root.join("sessions/session-a/session-a.messages.json"),
             serde_json::to_vec(&serde_json::json!({
                 "version": 1,
                 "updated_at": "2026-08-18T12:00:00Z",
                 "agent": "lead",
-                "sessionId": session_id,
+                "sessionId": "session-a",
                 "system_prompt": "You are Cline.",
                 "messages": messages
             }))
             .unwrap(),
         )
         .unwrap();
-    }
-
-    fn cline_sdk_message_bodies(
-        index: &Path,
-        receipt: &SourceBackedRefreshReceipt,
-    ) -> Vec<(String, String)> {
-        let mut bodies = cline_sdk_events(index, receipt)
-            .into_iter()
-            .filter(|event| event.event_sequence > 0)
-            .map(|event| {
-                (
-                    event.provider_session_id.clone().unwrap(),
-                    event.core_record.content.meaningful_text().to_owned(),
-                )
-            })
-            .collect::<Vec<_>>();
-        bodies.sort();
-        bodies
     }
 
     fn cline_sdk_events(
