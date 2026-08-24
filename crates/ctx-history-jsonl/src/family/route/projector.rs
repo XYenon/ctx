@@ -17,8 +17,13 @@ use super::JsonlFamilyWorkerContext;
 /// interrupted preflight callback.
 #[derive(Debug)]
 pub enum JsonlFamilyProjectorPreflightError<E> {
-    RecordRejection { detail: String },
-    LogicalSourceFailure { source: SourceKey, detail: String },
+    RecordRejection {
+        detail: String,
+    },
+    LogicalSourceFailure {
+        source: Box<SourceKey>,
+        detail: String,
+    },
     Internal(E),
 }
 
@@ -31,7 +36,7 @@ impl<E> JsonlFamilyProjectorPreflightError<E> {
 
     pub fn logical_source_failure(source: SourceKey, detail: impl Into<String>) -> Self {
         Self::LogicalSourceFailure {
-            source,
+            source: Box::new(source),
             detail: detail.into(),
         }
     }

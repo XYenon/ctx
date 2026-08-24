@@ -296,7 +296,7 @@ pub(in super::super) fn prepare_leaf_with_resources<R: JsonlFamilyRuntime>(
                         "JSONL projector failed another logical source",
                     ));
                 }
-                logical_source_quarantine = Some((source, detail));
+                logical_source_quarantine = Some((*source, detail));
                 false
             }
             Err(JsonlFamilyProjectorPreflightError::Internal(error)) => return Err(error),
