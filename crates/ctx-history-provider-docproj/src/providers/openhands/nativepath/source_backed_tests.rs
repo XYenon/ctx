@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
-use ctx_history_core::{CaptureProvider, CoreRecord, TypedKey};
+use ctx_history_core::{CaptureProvider, CoreRecord, SourceAnchorScope, TypedKey};
 use serde_json::{json, Value};
 
 use crate::{
@@ -20,7 +20,15 @@ struct TestProjection {
 }
 
 fn project(root: &Path) -> OpenHandsSourceBackedResultV2<Vec<TestProjection>> {
-    let adapter = OpenHandsEventFileAdapterV2::<()>::new(root.to_path_buf());
+    project_scoped(root, SourceAnchorScope::Unqualified)
+}
+
+fn project_scoped(
+    root: &Path,
+    source_anchor_scope: SourceAnchorScope,
+) -> OpenHandsSourceBackedResultV2<Vec<TestProjection>> {
+    let adapter =
+        OpenHandsEventFileAdapterV2::<()>::new_scoped(root.to_path_buf(), source_anchor_scope);
     let inventory = adapter.open_inventory()?;
     let mut projected = Vec::new();
     for group in inventory.groups() {
@@ -41,6 +49,37 @@ fn project(root: &Path) -> OpenHandsSourceBackedResultV2<Vec<TestProjection>> {
 
 fn body(record: &CoreRecord) -> &str {
     record.content.normalized_body.as_deref().unwrap()
+}
+
+#[test]
+fn root_scope_distinguishes_native_sessions_and_unqualified_is_unchanged() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let root = temp.path().join("profile");
+    write_event(
+        &root,
+        "same-native-session",
+        "0001.json",
+        message("same-native-event", "body"),
+    );
+
+    let legacy = project(&root).unwrap().remove(0);
+    let unqualified = project_scoped(&root, SourceAnchorScope::Unqualified)
+        .unwrap()
+        .remove(0);
+    let first = project_scoped(&root, SourceAnchorScope::Lineage([1; 32]))
+        .unwrap()
+        .remove(0);
+    let second = project_scoped(&root, SourceAnchorScope::Lineage([2; 32]))
+        .unwrap()
+        .remove(0);
+
+    assert!(legacy
+        .plan
+        .source
+        .exact_descriptor_eq(&unqualified.plan.source));
+    assert_eq!(legacy.plan.session_id, unqualified.plan.session_id);
+    assert_ne!(first.plan.source.identity(), second.plan.source.identity());
+    assert_ne!(first.plan.session_id, second.plan.session_id);
 }
 
 #[test]

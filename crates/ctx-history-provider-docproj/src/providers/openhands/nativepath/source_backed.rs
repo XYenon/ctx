@@ -8,8 +8,8 @@ use ctx_history_core::{
     derive_event_id, derive_session_id, ActivityInvocation, ActivityJsonCapture, ActivityResult,
     ActivityTextCapture, AgentScope, CaptureProvider, CertifiedSource, CoreActivity, CoreRecord,
     EventIdentityInput, EventType, NativeItemKey, NativeSessionKey, ScannedSourceCounts,
-    SessionIdentityInput, SourceAnchor, SourceKey, SourceObservation, StableEntityId, TypedKey,
-    CORE_ACTIVITY_REVISION,
+    SessionIdentityInput, SourceAnchor, SourceAnchorScope, SourceKey, SourceObservation,
+    StableEntityId, TypedKey, CORE_ACTIVITY_REVISION,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -87,12 +87,14 @@ pub(crate) type OpenHandsSourceBackedResultV2<T> = Result<T, OpenHandsSourceBack
 #[derive(Debug, Clone)]
 pub struct OpenHandsEventFileAdapterV2<B = ()> {
     selected: PathBuf,
+    source_anchor_scope: SourceAnchorScope,
     _binding: PhantomData<fn() -> B>,
 }
 
 #[derive(Debug, Clone)]
 pub struct OpenHandsEventFileSourcePlan {
     group_ordinal: usize,
+    source_anchor_scope: SourceAnchorScope,
     pub source: SourceKey,
     pub conversation_id: String,
     pub session_id: StableEntityId,
@@ -133,8 +135,16 @@ impl OpenHandsEventFileSourcePlan {
 
 impl<B> OpenHandsEventFileAdapterV2<B> {
     pub fn new(selected: impl Into<PathBuf>) -> Self {
+        Self::new_scoped(selected, SourceAnchorScope::Unqualified)
+    }
+
+    pub fn new_scoped(
+        selected: impl Into<PathBuf>,
+        source_anchor_scope: SourceAnchorScope,
+    ) -> Self {
         Self {
             selected: selected.into(),
+            source_anchor_scope,
             _binding: PhantomData,
         }
     }
@@ -164,7 +174,7 @@ impl<B> OpenHandsEventFileAdapterV2<B> {
         group: EventFileGroup<'_>,
     ) -> OpenHandsSourceBackedResultV2<OpenHandsEventFileSourcePlan> {
         let conversation_id = group.group_key().to_owned();
-        let source = source_key(&conversation_id)?;
+        let source = source_key_scoped(&conversation_id, self.source_anchor_scope)?;
         let session_id = session_identity(&source, &conversation_id)?;
         let opening = SourceObservation::new(
             source.clone(),
@@ -173,6 +183,7 @@ impl<B> OpenHandsEventFileAdapterV2<B> {
         )?;
         Ok(OpenHandsEventFileSourcePlan {
             group_ordinal: group.ordinal(),
+            source_anchor_scope: self.source_anchor_scope,
             source,
             conversation_id,
             session_id,
@@ -310,11 +321,22 @@ pub(crate) fn openhands_owns_source(source: &SourceKey) -> bool {
     {
         return false;
     }
-    matches!(
-        source.anchor(),
-        SourceAnchor::ProviderNative { namespace, key: TypedKey::Utf8(value) }
-            if namespace == OPENHANDS_SOURCE_ANCHOR_NAMESPACE && !value.is_empty()
-    )
+    match source.anchor() {
+        SourceAnchor::ProviderNative { namespace, key }
+            if namespace == OPENHANDS_SOURCE_ANCHOR_NAMESPACE =>
+        {
+            match key {
+                TypedKey::Utf8(value) => !value.is_empty(),
+                TypedKey::Composite(parts) => matches!(
+                    parts.as_slice(),
+                    [TypedKey::Bytes(scope), TypedKey::Utf8(value)]
+                        if scope.len() == 32 && !value.is_empty()
+                ),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn openhands_route_error(error: OpenHandsSourceBackedErrorV2) -> SourceBackedRouteError {
@@ -384,7 +406,7 @@ fn validate_plan_for_group(
     group: EventFileGroup<'_>,
     plan: &OpenHandsEventFileSourcePlan,
 ) -> OpenHandsSourceBackedResultV2<()> {
-    let expected_source = source_key(group.group_key())?;
+    let expected_source = source_key_scoped(group.group_key(), plan.source_anchor_scope)?;
     if group.ordinal() != plan.group_ordinal
         || group.group_key() != plan.conversation_id
         || !plan.source.exact_descriptor_eq(&expected_source)
@@ -793,17 +815,18 @@ fn lexical_body(decoded: &OpenHandsDecodedEvent) -> Option<String> {
     (!text.trim().is_empty()).then_some(text)
 }
 
-pub(super) fn source_key(conversation_id: &str) -> OpenHandsSourceBackedResultV2<SourceKey> {
-    let anchor = SourceAnchor::provider_native(
-        OPENHANDS_SOURCE_ANCHOR_NAMESPACE,
-        TypedKey::utf8(conversation_id)?,
-    )?;
-    Ok(SourceKey::derive(
+pub(super) fn source_key_scoped(
+    conversation_id: &str,
+    source_anchor_scope: SourceAnchorScope,
+) -> OpenHandsSourceBackedResultV2<SourceKey> {
+    Ok(SourceKey::derive_provider_native_scoped(
         CaptureProvider::OpenHands.as_str(),
         OPENHANDS_FILE_EVENTS_SOURCE_FORMAT,
         OPENHANDS_SOURCE_SCHEMA_VARIANT,
         1,
-        anchor,
+        OPENHANDS_SOURCE_ANCHOR_NAMESPACE,
+        TypedKey::utf8(conversation_id)?,
+        source_anchor_scope,
     )?)
 }
 
