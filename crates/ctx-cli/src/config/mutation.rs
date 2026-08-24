@@ -79,6 +79,7 @@ pub fn set_semantic_search_enabled(data_root: &Path, enabled: bool) -> Result<()
 pub struct ProviderRootMutation {
     pub root: ProviderRootDefinition,
     pub changed: bool,
+    pub replaced: bool,
 }
 
 pub fn add_provider_root(
@@ -87,45 +88,65 @@ pub fn add_provider_root(
     provider: CaptureProvider,
     root: &Path,
     group: Option<&str>,
+    replace: bool,
 ) -> Result<ProviderRootMutation> {
     validate_root_selector("provider root name", id)?;
-    validate_provider_root_support(provider)?;
-    if let Some(group) = group {
-        validate_root_selector("source group", group)?;
-    }
-    validate_provider_root_path(root)?;
-    validate_provider_root_existing_kind(provider, root)?;
-    let root = fs::canonicalize(root)
-        .with_context(|| format!("canonicalize provider home {}", root.display()))?;
-    validate_provider_root_path(&root)?;
-    validate_provider_source_outside_data_root(data_root, &root).with_context(|| {
-        format!(
-            "provider home {} must not overlap the ctx data root",
-            root.display()
-        )
-    })?;
-    let desired = ProviderRootDefinition {
-        id: id.to_owned(),
-        provider,
-        path: root,
-        group: group.map(str::to_owned),
-    };
-
     establish_private_data_root(data_root)?;
     let path = AppConfig::config_path(data_root);
     let _mutation_lock = ConfigMutationLock::acquire(&path)?;
     let text = read_config_text(&path)?;
     let current = validated_persisted_config(&path, &text)?;
     if let Some(existing) = current.provider_roots.get(id) {
+        if existing.provider != provider {
+            bail!(
+                "provider root `{id}` is configured for {}; its provider cannot be changed to {} under the same stable name",
+                existing.provider.as_str(),
+                provider.as_str()
+            );
+        }
+    }
+    if let Some(group) = group {
+        validate_root_selector("source group", group)?;
+    }
+    let root = validated_provider_root_path(data_root, provider, root)?;
+    let desired = ProviderRootDefinition {
+        id: id.to_owned(),
+        provider,
+        path: root,
+        group: group.map(str::to_owned),
+    };
+    if let Some(existing) = current.provider_roots.get(id) {
         if existing == &desired {
             return Ok(ProviderRootMutation {
                 root: existing.clone(),
                 changed: false,
+                replaced: false,
             });
         }
-        bail!(
-            "provider root `{id}` already exists with different settings; remove it before reusing the name"
-        );
+        if !replace {
+            bail!(
+                "provider root `{id}` already exists with different settings; pass --replace to atomically replace its path and group"
+            );
+        }
+        let mut document = text
+            .parse::<toml_edit::DocumentMut>()
+            .with_context(|| format!("parse {}", path.display()))?;
+        let root = configured_root_table_mut(&mut document, id)?;
+        root.insert("path", toml_edit::value(desired.path.display().to_string()));
+        match desired.group.as_deref() {
+            Some(group) => {
+                root.insert("group", toml_edit::value(group));
+            }
+            None => {
+                root.remove("group");
+            }
+        }
+        persist_validated_document(&path, document)?;
+        return Ok(ProviderRootMutation {
+            root: desired,
+            changed: true,
+            replaced: true,
+        });
     }
 
     let mut document = text
@@ -143,6 +164,7 @@ pub fn add_provider_root(
     Ok(ProviderRootMutation {
         root: desired,
         changed: true,
+        replaced: false,
     })
 }
 
@@ -159,13 +181,7 @@ pub fn remove_provider_root(data_root: &Path, id: &str) -> Result<ProviderRootMu
     let mut document = text
         .parse::<toml_edit::DocumentMut>()
         .with_context(|| format!("parse {}", path.display()))?;
-    let roots = document
-        .as_table_mut()
-        .get_mut("sources")
-        .and_then(toml_edit::Item::as_table_mut)
-        .and_then(|sources| sources.get_mut("roots"))
-        .and_then(toml_edit::Item::as_table_mut)
-        .ok_or_else(|| anyhow::anyhow!("sources.roots configuration must be a table"))?;
+    let roots = configured_roots_table_mut(&mut document)?;
     if roots.remove(id).is_none() {
         bail!("provider root `{id}` disappeared during configuration update");
     }
@@ -173,7 +189,34 @@ pub fn remove_provider_root(data_root: &Path, id: &str) -> Result<ProviderRootMu
     Ok(ProviderRootMutation {
         root: existing,
         changed: true,
+        replaced: false,
     })
+}
+
+fn validated_provider_root_path(
+    data_root: &Path,
+    provider: CaptureProvider,
+    root: &Path,
+) -> Result<PathBuf> {
+    validate_provider_root_support(provider)?;
+    validate_provider_root_path(root)?;
+    validate_provider_root_existing_kind(provider, root)?;
+    let root = fs::canonicalize(root).with_context(|| {
+        format!(
+            "canonicalize {} history root {}",
+            provider.as_str(),
+            root.display()
+        )
+    })?;
+    validate_provider_root_path(&root)?;
+    validate_provider_source_outside_data_root(data_root, &root).with_context(|| {
+        format!(
+            "{} history root {} must not overlap the ctx data root",
+            provider.as_str(),
+            root.display()
+        )
+    })?;
+    Ok(root)
 }
 
 fn read_config_text(path: &Path) -> Result<String> {
@@ -219,6 +262,30 @@ fn ensure_nested_table<'a>(
         .get_mut(child)
         .and_then(toml_edit::Item::as_table_mut)
         .ok_or_else(|| anyhow::anyhow!("configuration child must be a table"))
+}
+
+fn configured_roots_table_mut(
+    document: &mut toml_edit::DocumentMut,
+) -> Result<&mut toml_edit::Table> {
+    document
+        .as_table_mut()
+        .get_mut("sources")
+        .and_then(toml_edit::Item::as_table_mut)
+        .and_then(|sources| sources.get_mut("roots"))
+        .and_then(toml_edit::Item::as_table_mut)
+        .ok_or_else(|| anyhow::anyhow!("sources.roots configuration must be a table"))
+}
+
+fn configured_root_table_mut<'a>(
+    document: &'a mut toml_edit::DocumentMut,
+    id: &str,
+) -> Result<&'a mut toml_edit::Table> {
+    configured_roots_table_mut(document)?
+        .get_mut(id)
+        .and_then(toml_edit::Item::as_table_mut)
+        .ok_or_else(|| {
+            anyhow::anyhow!("provider root `{id}` disappeared during configuration update")
+        })
 }
 
 fn persist_validated_document(path: &Path, document: toml_edit::DocumentMut) -> Result<()> {

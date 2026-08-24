@@ -19,7 +19,7 @@ mod toml_subset;
 
 pub(crate) use mutation::{
     add_provider_root, persisted_daemon_enabled, remove_provider_root, set_daemon_enabled,
-    set_semantic_search_enabled, write_default_config,
+    set_semantic_search_enabled, write_default_config, ProviderRootMutation,
 };
 
 use crate::deprecated_controls::DeprecatedControls;
@@ -522,13 +522,13 @@ impl AppConfig {
         let mut physical_roots = BTreeMap::new();
         for root in self.provider_roots.values() {
             // Hand-edited config may use a symlink spelling even though the
-            // safe CLI editor records canonical non-symlink homes. Compare
+            // safe CLI editor records canonical non-symlink history roots. Compare
             // existing paths by their physical target so two aliases cannot
             // stage the same provider source through distinct routes.
             let key = (root.provider.as_str(), root.path.clone());
             if let Some(previous) = physical_roots.insert(key, root.id.as_str()) {
                 bail!(
-                    "provider roots `{previous}` and `{}` select the same {} home {}",
+                    "provider roots `{previous}` and `{}` select the same {} history root {}",
                     root.id,
                     root.provider.as_str(),
                     root.path.display()
@@ -978,6 +978,9 @@ fn ensure_trailing_newline(mut text: String) -> String {
     }
     text
 }
+
+#[cfg(test)]
+mod provider_root_mutation_tests;
 
 #[cfg(test)]
 #[path = "config_tests.rs"]

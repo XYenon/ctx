@@ -991,7 +991,7 @@ fn rejects_invalid_provider_root_config_as_one_atomic_config() {
                 "[sources.roots.work]\nprovider = \"cursor\"\npath = {:?}\n",
                 provider_path
             ),
-            "currently support only claude and codex",
+            "configured history roots are not enabled for cursor",
         ),
         (
             "[sources.roots.work]\nprovider = \"claude\"\npath = \"relative\"\n".to_owned(),
@@ -1035,7 +1035,10 @@ fn rejects_invalid_provider_root_config_as_one_atomic_config() {
     )
     .unwrap();
     let error = format!("{:#}", AppConfig::load(temp.path()).unwrap_err());
-    assert!(error.contains("select the same claude home"), "{error}");
+    assert!(
+        error.contains("select the same claude history root"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1122,7 +1125,10 @@ fn hand_edited_provider_roots_reject_distinct_symlinks_to_one_physical_home() {
     .unwrap();
 
     let error = format!("{:#}", AppConfig::load(data_root.path()).unwrap_err());
-    assert!(error.contains("select the same claude home"), "{error}");
+    assert!(
+        error.contains("select the same claude history root"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1166,6 +1172,7 @@ fn provider_root_cli_mutations_are_durable_and_preserve_other_config() {
         CaptureProvider::Claude,
         &provider_home,
         Some("personal"),
+        false,
     )
     .unwrap();
     assert!(added.changed);
@@ -1175,6 +1182,7 @@ fn provider_root_cli_mutations_are_durable_and_preserve_other_config() {
         CaptureProvider::Claude,
         &provider_home,
         Some("personal"),
+        false,
     )
     .unwrap();
     assert!(!unchanged.changed);
@@ -1195,7 +1203,7 @@ fn provider_root_cli_mutations_are_durable_and_preserve_other_config() {
 fn provider_root_cli_mutation_validates_the_capability_path_kind() {
     let data_root = tempfile::tempdir().unwrap();
     let provider_parent = tempfile::tempdir().unwrap();
-    let provider_file = provider_parent.path().join("claude-home-file");
+    let provider_file = provider_parent.path().join("claude-history-file");
     fs::write(&provider_file, b"not a provider directory").unwrap();
 
     let error = format!(
@@ -1206,6 +1214,7 @@ fn provider_root_cli_mutation_validates_the_capability_path_kind() {
             CaptureProvider::Claude,
             &provider_file,
             None,
+            false,
         )
         .unwrap_err()
     );
@@ -1239,6 +1248,7 @@ fn provider_root_cli_mutation_rejects_data_root_overlap_before_writing() {
                 CaptureProvider::Claude,
                 &provider_root,
                 Some("work"),
+                false,
             )
             .unwrap_err()
         );
@@ -1270,6 +1280,7 @@ fn provider_root_mutation_waits_for_the_shared_config_transaction_lock() {
             CaptureProvider::Claude,
             &provider_home_path,
             Some("personal"),
+            false,
         );
         finished_tx.send(result).unwrap();
     });

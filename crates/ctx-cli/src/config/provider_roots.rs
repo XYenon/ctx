@@ -18,10 +18,10 @@ pub(super) fn validate_provider_root_support(provider: CaptureProvider) -> Resul
         .map(|capability| capability.provider.as_str())
         .collect::<Vec<_>>();
     enabled.sort_unstable();
-    let enabled = enabled.join(" and ");
+    let enabled = enabled.join(", ");
     bail!(
-        "configured provider homes currently support only {enabled}, not {}",
-        provider.as_str()
+        "configured history roots are not enabled for {}; enabled providers: {enabled}",
+        provider.as_str(),
     )
 }
 
@@ -36,8 +36,13 @@ pub(super) fn validate_provider_root_existing_kind(
         .state
         .expected_path_kind()
         .ok_or_else(|| anyhow::anyhow!("configured provider root path kind is unavailable"))?;
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("inspect provider home {}", path.display()))?;
+    let metadata = fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "inspect {} history root {}",
+            provider.as_str(),
+            path.display()
+        )
+    })?;
     let valid_kind = match expected {
         ConfiguredRootPathKind::Directory => metadata.is_dir(),
         ConfiguredRootPathKind::File => metadata.is_file(),
@@ -48,7 +53,8 @@ pub(super) fn validate_provider_root_existing_kind(
             ConfiguredRootPathKind::File => "file",
         };
         bail!(
-            "provider home must be an existing non-symlink {kind}: {}",
+            "{} history root must be an existing non-symlink {kind}: {}",
+            provider.as_str(),
             path.display()
         );
     }
@@ -80,7 +86,7 @@ pub(super) fn validate_provider_root_path(path: &Path) -> Result<()> {
         })
     {
         bail!(
-            "configured provider home must be a normalized absolute UTF-8 path: {}",
+            "configured history root must be a normalized absolute UTF-8 path: {}",
             path.display()
         );
     }

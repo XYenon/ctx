@@ -241,6 +241,7 @@ ctx sources
 ctx sources --format json
 ctx sources add personal --provider claude --root ~/.claude-personal --source-group personal
 ctx sources add work --provider codex --root ~/.codex-work --source-group work
+ctx sources add work --provider codex --root ~/.codex-relocated --source-group work --replace
 ctx sources remove personal
 ```
 
@@ -249,13 +250,15 @@ Provider precedence is winner-only: an environment or persistent-config
 replacement suppresses its lower-priority default. Current coexisting installed
 surfaces or persisted profiles may produce separate rows. One-shot, old, moved,
 or unreconstructible roots require an exact `--path` and are not remembered.
-Most users need no source configuration. When one machine has multiple Claude
-or Codex homes, `sources add` registers an existing home under a stable local
-name in `config.toml`; `sources remove` removes that definition. Configured
-homes are added to the provider's ordinary environment/default winner, and
-every distinct configured home is indexed. Registering the already inferred
-home gives it a name and optional group without indexing it twice. Other
-providers keep their ordinary discovery behavior.
+Most users need no source configuration. For a provider with an enabled
+configured-root capability, `sources add` registers an existing provider
+history root under a stable local name in `config.toml`; `sources remove`
+removes that definition. The provider capability determines whether the root
+must be a file or directory. Configured roots are added to the provider's
+ordinary environment/default winner, and every distinct configured root is
+indexed. Registering the already inferred root gives it a name and optional
+group without indexing it twice. Other providers keep their ordinary discovery
+behavior.
 
 The equivalent editable configuration is:
 
@@ -272,30 +275,40 @@ group = "work"
 ```
 
 Names and groups use up to 64 ASCII letters, digits, hyphens, or underscores;
-paths are normalized absolute paths. At most 64 homes may be configured. A
-group is an optional label shared by any number of homes and is used only when
-a search explicitly supplies `--source-group`. For an additional home, the name is
-also its stable local source identity: updating only its path preserves ctx
-session IDs and citations after a move, while removing it and adding a
-different name creates a new logical home. Naming the currently inferred home
+paths are normalized absolute paths of the file or directory kind required by
+the provider capability. At most 64 roots may be configured. A group is an
+optional label shared by any number of roots and is used only when a search
+explicitly supplies `--source-group`. For an additional root, the name is also
+its stable local source identity: atomically replacing only its path preserves
+ctx session IDs and citations after a move, while removing it and adding a
+different name creates a new logical root. Naming the currently inferred root
 keeps its existing released identities. In automatic indexing mode the daemon
 reloads a valid source change as one full refresh. In manual mode, or when
 immediate publication is desired, run `ctx import --all` or search with
 `--refresh wait`.
 
+`ctx sources add <name> ... --replace` is the safe atomic edit. The name must
+refer to the supplied provider when it already exists; a mismatch fails. An
+absent name is added, and identical canonical settings are a no-op.
+`--source-group <group>` sets or replaces the group. Omitting `--source-group`
+while using `--replace` clears it. Choose a new name instead of changing
+provider under an existing name. The command holds one config transaction lock
+through read, validation, and durable replacement, so daemon refresh never
+observes an intermediate removed definition.
+
 Treat the name as a durable local mount key rather than a display label.
 Removing and later reusing the same name intentionally reuses that logical
 namespace, including reconciliation of matching provider-native session ids;
-use a new name for an unrelated home. Editing `path` under the same name is the
-move operation, editing `group` only changes filtering metadata, and changing
-the table name creates new logical identities.
+use a new name for an unrelated history root. Replacing `path` under the same
+name is the move operation, editing `group` only changes filtering metadata,
+and changing the table name creates new logical identities.
 
 Names and groups are local provenance and query selectors. They are not upload
 consent, access-control boundaries, tenant assignment, or retention policy; a
 future sync product must ask for those decisions separately.
 
 Advanced users can disable all automatic provider discovery while keeping named
-Claude/Codex homes active:
+provider history roots active:
 
 ```toml
 [sources]
@@ -656,14 +669,14 @@ Custom history imports can be filtered by canonical
 `--source-id`, and `--source-format` values. The plugin/source alias is for
 explicit plugin import selection. These search filters imply
 `--provider custom` and cannot be combined with another provider.
-`--source-root <name>` and `--source-group <group>` are repeatable. Values across both
-flags form one union of configured homes, then intersect with provider,
-workspace, time, event, session, and other filters. Resolution happens against
-the immutable generation being queried, not live config, so lexical, semantic,
-hybrid, CLI, and MCP search select the same source keys. An unknown name or
-group in that pinned generation fails instead of widening the search. All
-homes still share one local Core/Tantivy index; selecting a root does not open
-or switch a separate index.
+`--source-root <name>` and `--source-group <group>` are repeatable. Values
+across both flags form one union of configured history roots, then intersect
+with provider, workspace, time, event, session, and other filters. Resolution
+happens against the immutable generation being queried, not live config, so
+lexical, semantic, hybrid, CLI, and MCP search select the same source keys. An
+unknown name or group in that pinned generation fails instead of widening the
+search. All history roots still share one local Core/Tantivy index; selecting a
+root does not open or switch a separate index.
 Ordinary search uses the all-agent, root-diverse behavior described above. Use
 `--primary-only` only when a deliberately narrow search should exclude
 subagent work.
