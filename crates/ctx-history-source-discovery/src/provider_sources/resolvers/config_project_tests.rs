@@ -693,6 +693,7 @@ fn roo_code_official_root_policy_uses_jsonc_profiles_and_ignores_ctx_envs() {
             b"stable",
             b"profile",
             b"native-id",
+            b"utf8",
             b"p1",
             b"nightly",
         ],
@@ -719,6 +720,43 @@ fn roo_code_official_root_policy_uses_jsonc_profiles_and_ignores_ctx_envs() {
     assert_ne!(
         custom_source.route_provenance.automatic_route_role(),
         insiders_source.route_provenance.automatic_route_role()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn roo_code_invalid_utf8_profile_id_uses_tagged_raw_bytes() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    let temp = tempdir();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("repo");
+    fs::create_dir_all(cwd.join(".git")).unwrap();
+    let profile_id = OsString::from_vec(b"profile-\xff".to_vec());
+    let root = home
+        .join(".config/Code/User/profiles")
+        .join(&profile_id)
+        .join("globalStorage/rooveterinaryinc.roo-cline");
+    write(&root.join("tasks/one/history_item.json"), "{}");
+
+    let report = resolve(&context(&home, &cwd), spec(CaptureProvider::RooCode));
+    let source = report
+        .sources
+        .iter()
+        .find(|source| source.path == root)
+        .expect("invalid UTF-8 Roo profile should be discovered");
+    assert_automatic_role(
+        source,
+        &[
+            b"installation",
+            b"vscode",
+            b"stable",
+            b"profile",
+            b"native-id",
+            b"unix-bytes",
+            b"profile-\xff",
+            b"stable",
+        ],
     );
 }
 

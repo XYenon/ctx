@@ -2,6 +2,7 @@
 
 use std::{
     collections::BTreeMap,
+    ffi::OsStr,
     path::{Path, PathBuf},
 };
 
@@ -16,7 +17,7 @@ use crate::provider_sources::{
 };
 
 use super::super::automatic_roles::{
-    automatic_route_provenance, automatic_route_provenance_with_native_id,
+    automatic_route_provenance, automatic_route_provenance_with_native_os_str_id,
     AUTOMATIC_ROUTE_ROLE_UNAVAILABLE_REASON,
 };
 use super::super::{path_presence, PathPresence};
@@ -54,7 +55,7 @@ impl RooVscodeClient {
 #[derive(Debug, Clone, Copy)]
 enum RooProfileSlot<'a> {
     Base,
-    Named(&'a [u8]),
+    Named(&'a OsStr),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -187,7 +188,7 @@ pub(super) fn resolve(
                     workspace.as_ref(),
                     profile_settings.as_ref(),
                     client,
-                    RooProfileSlot::Named(profile_id.as_encoded_bytes()),
+                    RooProfileSlot::Named(profile_id),
                     extension,
                     profile.join("globalStorage").join(extension.storage_id),
                     workspace_boundary.as_deref(),
@@ -331,7 +332,7 @@ fn add_roo_source(
             b"base".as_slice(),
             extension.role_component,
         ]),
-        RooProfileSlot::Named(profile_id) => automatic_route_provenance_with_native_id(
+        RooProfileSlot::Named(profile_id) => automatic_route_provenance_with_native_os_str_id(
             &[
                 b"installation",
                 b"vscode",

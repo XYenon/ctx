@@ -693,8 +693,69 @@ fn cline_selects_one_owned_legacy_root_and_only_installed_microsoft_hosts() {
             b"stable",
             b"profile",
             b"native-id",
+            b"utf8",
             b"profile-a",
         ],
+    );
+}
+
+#[test]
+fn cline_unicode_profile_ids_have_distinct_stable_roles() {
+    let temp = tempdir();
+    let context = context(temp.path(), DiscoveryPlatform::Linux);
+    let profiles = context
+        .platform_dirs()
+        .config
+        .as_ref()
+        .unwrap()
+        .join("Code/User/profiles");
+    let snow = profiles
+        .join("profile-雪")
+        .join("globalStorage/saoudrizwan.claude-dev");
+    let fire = profiles
+        .join("profile-火")
+        .join("globalStorage/saoudrizwan.claude-dev");
+    write(&snow.join("tasks/snow/ui_messages.json"), b"[]");
+    write(&fire.join("tasks/fire/ui_messages.json"), b"[]");
+
+    let report = resolve(&context, spec(CaptureProvider::Cline));
+    let snow_source = report
+        .sources
+        .iter()
+        .find(|source| source.path == snow)
+        .expect("Unicode snow profile should be discovered");
+    let fire_source = report
+        .sources
+        .iter()
+        .find(|source| source.path == fire)
+        .expect("Unicode fire profile should be discovered");
+    assert_automatic_role(
+        snow_source,
+        &[
+            b"task-store",
+            b"vscode",
+            b"stable",
+            b"profile",
+            b"native-id",
+            b"utf8",
+            "profile-雪".as_bytes(),
+        ],
+    );
+    assert_automatic_role(
+        fire_source,
+        &[
+            b"task-store",
+            b"vscode",
+            b"stable",
+            b"profile",
+            b"native-id",
+            b"utf8",
+            "profile-火".as_bytes(),
+        ],
+    );
+    assert_ne!(
+        snow_source.route_provenance.automatic_route_role(),
+        fire_source.route_provenance.automatic_route_role()
     );
 }
 
@@ -1052,6 +1113,10 @@ fn cline_oversized_native_profile_id_keeps_its_source_with_a_bounded_stable_role
         .as_bytes()
         .windows(b"native-id-sha256".len())
         .any(|window| window == b"native-id-sha256"));
+    assert!(role
+        .as_bytes()
+        .windows(b"utf8".len())
+        .any(|window| window == b"utf8"));
     assert_eq!(
         first.sources,
         resolve(&context, spec(CaptureProvider::Cline)).sources

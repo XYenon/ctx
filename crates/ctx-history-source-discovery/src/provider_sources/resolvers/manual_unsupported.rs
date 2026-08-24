@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use ctx_history_core::CaptureProvider;
 
@@ -17,7 +20,7 @@ use super::super::{
 };
 use super::{
     automatic_roles::{
-        automatic_route_provenance, automatic_route_provenance_with_native_id,
+        automatic_route_provenance, automatic_route_provenance_with_native_os_str_id,
         AUTOMATIC_ROUTE_ROLE_UNAVAILABLE_REASON,
     },
     issue, path_presence, push_source_candidate, select_current_or_legacy,
@@ -59,7 +62,7 @@ enum ClineTaskStoreRole<'a> {
     MicrosoftBase(ClineMicrosoftClient),
     MicrosoftProfile {
         client: ClineMicrosoftClient,
-        profile_id: &'a [u8],
+        profile_id: &'a OsStr,
     },
 }
 
@@ -629,10 +632,7 @@ fn add_cline_microsoft_host_roots(
                     "cline_task_directory_json",
                     inspect_cline_legacy(&root),
                 ),
-                ClineTaskStoreRole::MicrosoftProfile {
-                    client,
-                    profile_id: profile_id.as_encoded_bytes(),
-                },
+                ClineTaskStoreRole::MicrosoftProfile { client, profile_id },
             );
         }
     }
@@ -655,7 +655,7 @@ fn push_cline_task_store_source(
             b"base".as_slice(),
         ]),
         ClineTaskStoreRole::MicrosoftProfile { client, profile_id } => {
-            automatic_route_provenance_with_native_id(
+            automatic_route_provenance_with_native_os_str_id(
                 &[
                     b"task-store",
                     b"vscode",
