@@ -421,7 +421,7 @@ fn process_conversation_row(
                     .ok_or(AstrBotSourceBackedErrorV0::MissingSelectedContent)?
             };
             let session = conversation_session_fact(&row);
-            let document = conversation_document(
+            let document = match conversation_document(
                 source,
                 candidate.physical_rowid,
                 item_index,
@@ -430,9 +430,21 @@ fn process_conversation_row(
                 &session,
                 &event,
                 &complete_text,
-            )?;
-            emit_bounded(sink, page, document)?;
-            add_retained(counts)?;
+            ) {
+                Ok(document) => Some(document),
+                Err(
+                    AstrBotSourceBackedErrorV0::Projection(_)
+                    | AstrBotSourceBackedErrorV0::CoreRecord(_),
+                ) => {
+                    add_rejected(counts)?;
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(document) = document {
+                emit_bounded(sink, page, document)?;
+                add_retained(counts)?;
+            }
         } else {
             add_ignored(counts)?;
         }
@@ -522,16 +534,28 @@ fn process_platform_row(
             let (complete_text, provider_content) = selected_content
                 .as_ref()
                 .ok_or(AstrBotSourceBackedErrorV0::MissingSelectedContent)?;
-            let document = platform_document(
+            let document = match platform_document(
                 source,
                 candidate.legacy_order.logical_id,
                 &unit.session,
                 &event,
                 complete_text,
                 provider_content,
-            )?;
-            emit_bounded(sink, page, document)?;
-            add_retained(counts)?;
+            ) {
+                Ok(document) => Some(document),
+                Err(
+                    AstrBotSourceBackedErrorV0::Projection(_)
+                    | AstrBotSourceBackedErrorV0::CoreRecord(_),
+                ) => {
+                    add_rejected(counts)?;
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(document) = document {
+                emit_bounded(sink, page, document)?;
+                add_retained(counts)?;
+            }
         } else {
             add_ignored(counts)?;
         }

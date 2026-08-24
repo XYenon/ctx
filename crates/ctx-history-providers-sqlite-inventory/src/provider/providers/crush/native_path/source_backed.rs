@@ -587,9 +587,16 @@ where
                     let session = session
                         .as_ref()
                         .ok_or(CrushSourceBackedErrorV0::UnexpectedNativeRow)?;
-                    sink.emit_core_record(core_record(source, &row, session, &projection)?)?;
-                    counts.retained_records = checked_add(counts.retained_records, 1)?;
-                    counts.indexed_documents = checked_add(counts.indexed_documents, 1)?;
+                    match project_core_record(source, &row, session, &projection)? {
+                        Some(record) => {
+                            sink.emit_core_record(record)?;
+                            counts.retained_records = checked_add(counts.retained_records, 1)?;
+                            counts.indexed_documents = checked_add(counts.indexed_documents, 1)?;
+                        }
+                        None => {
+                            counts.rejected_records = checked_add(counts.rejected_records, 1)?;
+                        }
+                    }
                 }
                 CrushRecordProjection::Message(_) => {
                     counts.ignored_records = checked_add(counts.ignored_records, 1)?;
@@ -601,6 +608,21 @@ where
         content_digest: digest.finalize().into(),
         counts,
     })
+}
+
+fn project_core_record(
+    source: &OpenedSource,
+    row: &super::super::projection::CrushMessageRow,
+    session: &CrushSessionRow,
+    projection: &CrushMessageProjection,
+) -> CrushSourceBackedResultV0<Option<CoreRecord>> {
+    match core_record(source, row, session, projection) {
+        Ok(record) => Ok(Some(record)),
+        Err(CrushSourceBackedErrorV0::Projection(_) | CrushSourceBackedErrorV0::CoreRecord(_)) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn core_record(

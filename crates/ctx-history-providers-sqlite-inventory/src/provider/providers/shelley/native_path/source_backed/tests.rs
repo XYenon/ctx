@@ -147,6 +147,25 @@ fn active_wal_scan_reads_latest_rows_without_persistent_source_writes() {
     drop(writer);
 }
 
+#[test]
+fn row_local_core_record_filter_does_not_absorb_capture_or_sqlite_failures() {
+    assert!(shelley_row_projection_error(
+        &ShelleySourceBackedError::CoreRecord(CoreRecordError::FieldTooLarge {
+            field: "provider_session_id",
+            actual: 70 * 1024,
+            maximum: 64 * 1024,
+        })
+    ));
+    assert!(!shelley_row_projection_error(
+        &ShelleySourceBackedError::Capture(CaptureError::InvalidPayload(
+            "non-row capture failure".to_owned(),
+        ))
+    ));
+    assert!(!shelley_row_projection_error(
+        &ShelleySourceBackedError::SqliteSource(SqliteSourceAccessError::SourceChanged)
+    ));
+}
+
 fn drain(adapter: &ShelleySourceBackedAdapter) -> (Vec<CoreRecord>, ShelleySourceBackedReceipt) {
     let mut scan = adapter.start_scan().unwrap();
     let mut documents = Vec::new();

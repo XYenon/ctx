@@ -539,6 +539,45 @@ fn shelley_registration_preserves_resource_unavailable_classification() {
 }
 
 #[test]
+fn sqlite_contention_is_logical_but_exhaustion_remains_route_fatal() {
+    for code in [rusqlite::ffi::SQLITE_BUSY, rusqlite::ffi::SQLITE_LOCKED] {
+        let source = SqliteSourceAccessError::SqliteControl {
+            operation: "querying a contended provider database",
+            code,
+        };
+        let raw = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None);
+
+        assert_eq!(
+            sqlite_source_route_error_kind(&source),
+            SourceBackedRouteErrorKind::Unavailable
+        );
+        assert!(sqlite_source_route_error_kind(&source).is_logical_source_failure());
+        assert_eq!(
+            sqlite_capture_route_error(&CaptureError::Sqlite(raw)),
+            Some(SourceBackedRouteErrorKind::Unavailable)
+        );
+    }
+
+    for code in [rusqlite::ffi::SQLITE_FULL, rusqlite::ffi::SQLITE_NOMEM] {
+        let source = SqliteSourceAccessError::SqliteControl {
+            operation: "querying an exhausted provider database",
+            code,
+        };
+        let raw = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None);
+
+        assert_eq!(
+            sqlite_source_route_error_kind(&source),
+            SourceBackedRouteErrorKind::ResourceUnavailable
+        );
+        assert!(!sqlite_source_route_error_kind(&source).is_logical_source_failure());
+        assert_eq!(
+            sqlite_capture_route_error(&CaptureError::Sqlite(raw)),
+            Some(SourceBackedRouteErrorKind::ResourceUnavailable)
+        );
+    }
+}
+
+#[test]
 fn sqlite_inventory_snapshot_capacity_failure_is_route_local() {
     let error = shelley_registration_error(SqliteSourceAccessError::InsufficientScratchSpace {
         path: PathBuf::from("ctx-data"),

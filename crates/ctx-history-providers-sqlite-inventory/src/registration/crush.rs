@@ -138,10 +138,14 @@ fn crush_route_error(error: CrushSourceBackedErrorV0) -> SourceBackedRouteError 
             sqlite_capture_route_error(error).unwrap_or(SourceBackedRouteErrorKind::InvalidSource)
         }
         CrushSourceBackedErrorV0::Sqlite(error)
-            if crate::provider_sources::rusqlite_resource_failure(error)
-                || crate::provider_sources::rusqlite_busy_or_locked(error) =>
+            if crate::provider_sources::rusqlite_resource_failure(error) =>
         {
             SourceBackedRouteErrorKind::ResourceUnavailable
+        }
+        CrushSourceBackedErrorV0::Sqlite(error)
+            if crate::provider_sources::rusqlite_busy_or_locked(error) =>
+        {
+            SourceBackedRouteErrorKind::Unavailable
         }
         CrushSourceBackedErrorV0::Io(error)
             if crate::provider_sources::resource_exhaustion_io_error(error) =>
@@ -219,12 +223,7 @@ mod tests {
 
     #[test]
     fn crush_production_mapper_preserves_sqlite_resource_and_corruption_taxonomy() {
-        for code in [
-            ffi::SQLITE_BUSY,
-            ffi::SQLITE_LOCKED,
-            ffi::SQLITE_FULL,
-            ffi::SQLITE_NOMEM,
-        ] {
+        for code in [ffi::SQLITE_BUSY, ffi::SQLITE_LOCKED] {
             let error = SqliteSourceAccessError::SqliteControl {
                 operation: "using the production Crush SQLite snapshot",
                 code,
@@ -238,6 +237,34 @@ mod tests {
             );
             assert_eq!(
                 crush_route_error(error.into()).kind,
+                SourceBackedRouteErrorKind::Unavailable
+            );
+            let raw = rusqlite::Error::SqliteFailure(ffi::Error::new(code), None);
+            assert_eq!(
+                crush_route_error(CrushSourceBackedErrorV0::Sqlite(raw)).kind,
+                SourceBackedRouteErrorKind::Unavailable
+            );
+        }
+
+        for code in [ffi::SQLITE_FULL, ffi::SQLITE_NOMEM] {
+            let error = SqliteSourceAccessError::SqliteControl {
+                operation: "using the production Crush SQLite snapshot",
+                code,
+            }
+            .with_diagnostic(
+                SqliteFailurePhase::Projection,
+                SqliteArtifactKind::PrivateSourceCopy,
+                4,
+                16_384,
+                SqliteCleanupStatus::NotRequired,
+            );
+            assert_eq!(
+                crush_route_error(error.into()).kind,
+                SourceBackedRouteErrorKind::ResourceUnavailable
+            );
+            let raw = rusqlite::Error::SqliteFailure(ffi::Error::new(code), None);
+            assert_eq!(
+                crush_route_error(CrushSourceBackedErrorV0::Sqlite(raw)).kind,
                 SourceBackedRouteErrorKind::ResourceUnavailable
             );
         }

@@ -366,9 +366,6 @@ fn process_candidate(
         }
         Some(row) => {
             let logical_records = 1_u64 + u64::from(assistant_text(&row).is_some());
-            *retained_records = retained_records
-                .checked_add(logical_records)
-                .ok_or(LingmaSourceBackedErrorV0::CountOverflow)?;
             let record_digest = lingma_logical_record_sha256(&native_values(&row));
             let request_identity_unique = row
                 .request_id
@@ -381,7 +378,7 @@ fn process_candidate(
                     ))
                 });
             let mut projected = Vec::with_capacity(2);
-            project_row(
+            let projection = project_row(
                 source,
                 ParsedRow {
                     ordinal: *physical_ordinal,
@@ -390,17 +387,32 @@ fn process_candidate(
                     request_identity_unique,
                 },
                 &mut projected,
-            )?;
-            *indexed_documents = indexed_documents
-                .checked_add(
-                    u64::try_from(projected.len())
-                        .map_err(|_| LingmaSourceBackedErrorV0::CountOverflow)?,
-                )
-                .ok_or(LingmaSourceBackedErrorV0::CountOverflow)?;
-            if page.len().saturating_add(projected.len()) > SOURCE_BACKED_PAGE_ROWS {
-                emit_page(sink, page)?;
+            );
+            match projection {
+                Ok(()) => {
+                    *retained_records = retained_records
+                        .checked_add(logical_records)
+                        .ok_or(LingmaSourceBackedErrorV0::CountOverflow)?;
+                    *indexed_documents = indexed_documents
+                        .checked_add(
+                            u64::try_from(projected.len())
+                                .map_err(|_| LingmaSourceBackedErrorV0::CountOverflow)?,
+                        )
+                        .ok_or(LingmaSourceBackedErrorV0::CountOverflow)?;
+                    if page.len().saturating_add(projected.len()) > SOURCE_BACKED_PAGE_ROWS {
+                        emit_page(sink, page)?;
+                    }
+                    page.extend(projected);
+                }
+                Err(
+                    LingmaSourceBackedErrorV0::Projection(_)
+                    | LingmaSourceBackedErrorV0::CoreRecord(_)
+                    | LingmaSourceBackedErrorV0::EmptySelectedBody,
+                ) => {
+                    *rejected_records = rejected_records.saturating_add(1);
+                }
+                Err(error) => return Err(error),
             }
-            page.extend(projected);
         }
         None => {
             *rejected_records = rejected_records.saturating_add(1);
