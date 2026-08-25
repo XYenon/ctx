@@ -1,5 +1,7 @@
 use super::*;
 use crate::provider::source_backed::family::document::register_replacement_document_tree_route_with_authority;
+#[cfg(test)]
+use ctx_history_providers_sqlite_logical::logical_sqlite_route_plan;
 use ctx_history_providers_sqlite_logical::{
     explicit_forgecode_route_plan, logical_sqlite_route_plan_scoped, LogicalSqliteRoutePlan,
     LogicalSqliteRuntimeBinding,

@@ -310,6 +310,17 @@ impl GenerationManifest {
             .iter()
             .map(|root| root.definition.clone())
             .collect::<Vec<_>>();
+        if let Some((left, right)) = definitions.iter().enumerate().find_map(|(index, left)| {
+            definitions[index + 1..]
+                .iter()
+                .find(|right| left.openhands_selected_histories_overlap(right))
+                .map(|right| (left, right))
+        }) {
+            return Err(IndexError::InvalidProviderRoots(format!(
+                "OpenHands roots {} and {} have overlapping legacy/current paths",
+                left.id, right.id
+            )));
+        }
         if provider_source_config_digest(self.automatic_provider_discovery, &definitions)
             != self.provider_root_config_digest
         {

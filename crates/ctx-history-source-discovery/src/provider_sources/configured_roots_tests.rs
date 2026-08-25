@@ -975,4 +975,96 @@ fn openhands_configured_legacy_and_nested_current_roots_fail_closed() {
         report.issues[0].kind,
         DiscoveryIssueKind::ConfiguredRootConflict
     );
+
+    let current_parent = temp.path().join("current-parent");
+    let legacy_child = current_parent.join("legacy-child");
+    fs::create_dir_all(&legacy_child).unwrap();
+    let report = configured_report(
+        context(&temp),
+        vec![
+            openhands_root(
+                "current-parent",
+                current_parent,
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
+            openhands_root(
+                "legacy-child",
+                legacy_child,
+                ProviderRootKind::OpenHandsLegacyPersistence,
+            ),
+        ],
+        CaptureProvider::OpenHands,
+    );
+    assert!(report.sources.is_empty());
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(
+        report.issues[0].kind,
+        DiscoveryIssueKind::ConfiguredRootConflict
+    );
+}
+
+#[test]
+fn openhands_active_automatic_and_configured_nested_roots_fail_closed() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let base = context(&temp);
+    let automatic_legacy = base.home().join(".openhands");
+    let configured_current = automatic_legacy.join("conversations");
+    write(
+        &automatic_legacy.join("v1_conversations/legacy/event.json"),
+        b"{}",
+    );
+    write(
+        &configured_current.join("current/events/event-00001.json"),
+        b"{}",
+    );
+    let parent_report = provider_report(
+        &base
+            .clone()
+            .with_configured_provider_roots(vec![openhands_root(
+                "configured-current",
+                configured_current,
+                ProviderRootKind::OpenHandsCurrentConversations,
+            )]),
+        CaptureProvider::OpenHands,
+    );
+    assert!(parent_report
+        .issues
+        .iter()
+        .any(|issue| issue.kind == DiscoveryIssueKind::ConfiguredRootConflict));
+    assert!(parent_report
+        .sources
+        .iter()
+        .all(|source| source.route_provenance.configured_root().is_none()));
+
+    let automatic_current = temp.path().join("automatic-current");
+    let configured_legacy = automatic_current.join("nested-legacy");
+    write(
+        &automatic_current.join("current/events/event-00001.json"),
+        b"{}",
+    );
+    write(
+        &configured_legacy.join("v1_conversations/legacy/event.json"),
+        b"{}",
+    );
+    let child_report = provider_report(
+        &base
+            .with_env(
+                "OPENHANDS_CONVERSATIONS_DIR",
+                automatic_current.as_os_str().to_owned(),
+            )
+            .with_configured_provider_roots(vec![openhands_root(
+                "configured-legacy",
+                configured_legacy,
+                ProviderRootKind::OpenHandsLegacyPersistence,
+            )]),
+        CaptureProvider::OpenHands,
+    );
+    assert!(child_report
+        .issues
+        .iter()
+        .any(|issue| issue.kind == DiscoveryIssueKind::ConfiguredRootConflict));
+    assert!(child_report
+        .sources
+        .iter()
+        .all(|source| source.route_provenance.configured_root().is_none()));
 }

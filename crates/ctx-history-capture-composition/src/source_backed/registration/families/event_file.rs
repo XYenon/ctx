@@ -1,5 +1,6 @@
 use super::*;
 use crate::provider::source_backed::family::document::register_replacement_document_tree_route_with_authority;
+use ctx_history_core::SourceAnchorScope;
 #[cfg(test)]
 use ctx_history_provider_docproj::OPENHANDS_FILE_EVENTS_SOURCE_FORMAT;
 
@@ -13,8 +14,15 @@ pub(super) fn register_openhands_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
-    register_openhands_route_with_current_root(registry, source, selection, None)
+    register_openhands_route_with_current_root(
+        registry,
+        source,
+        selection,
+        None,
+        source_root_lineage,
+    )
 }
 
 pub(in crate::source_backed) fn register_openhands_automatic_route(
@@ -27,6 +35,7 @@ pub(in crate::source_backed) fn register_openhands_automatic_route(
         source,
         SourceBackedRouteSelection::Automatic,
         Some(current_root),
+        None,
     )
 }
 
@@ -35,12 +44,25 @@ fn register_openhands_route_with_current_root(
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
     current_root: Option<&Path>,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
     let authority = landed_format_route(source.provider, source.source_format)
         .ok_or_else(|| invalid_route(source.provider, "unknown OpenHands source format"))?
         .selector_authority;
     let automatic_retirement = openhands_automatic_retirement(&source, selection, current_root)?;
-    let adapter = OpenHandsEventFileAdapterV2::<CaptureProviderRuntime>::new(source.path.clone());
+    let source_anchor_scope =
+        source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage);
+    let adapter = if source.source_format == OPENHANDS_CURRENT_CLI_SOURCE_FORMAT {
+        OpenHandsEventFileAdapterV2::<CaptureProviderRuntime>::new_current_conversations_scoped(
+            source.path.clone(),
+            source_anchor_scope,
+        )
+    } else {
+        OpenHandsEventFileAdapterV2::<CaptureProviderRuntime>::new_scoped(
+            source.path.clone(),
+            source_anchor_scope,
+        )
+    };
     register_replacement_document_tree_route_with_authority(
         registry, source, selection, authority, adapter,
     )?;
@@ -63,11 +85,14 @@ mod tests {
     use crate::{
         ProviderCatalogSupport, ProviderImportSupport, ProviderSourceKind, ProviderSourceStatus,
     };
+    use ctx_history_capture_model::{
+        ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
+    };
     use ctx_history_core::{CaptureProvider, CertifiedSource};
     use ctx_history_index::{
         GenerationWriter, RevalidationTarget, SourceRouteSnapshot, VerifiedIndex, WriterOptions,
     };
-    use std::{fs, path::Path};
+    use std::{collections::BTreeMap, fs, path::Path};
 
     #[test]
     fn valid_malformed_valid_openhands_conversation_projects_both_valid_events() {
@@ -623,6 +648,193 @@ mod tests {
     }
 
     #[test]
+    fn configured_openhands_roots_scope_same_native_ids_preserve_moves_and_isolate_layouts() {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let cwd = temp.path().join("cwd");
+        let current = temp.path().join("current-conversations");
+        let legacy = temp.path().join("legacy-persistence");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        write_current_message_at_root(
+            &current,
+            "same-native-session",
+            1,
+            "same-native-event",
+            "current body",
+            "2026-07-28T12:00:00Z",
+        );
+        write_message(
+            &legacy,
+            "same-native-session",
+            "same-native-event",
+            "legacy body",
+        );
+        write_message(
+            &current,
+            "nested-legacy-session",
+            "nested-legacy-event",
+            "must stay isolated",
+        );
+        let definition = |id: &str, path: &Path, kind| ProviderRootDefinition {
+            id: id.to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: path.to_path_buf(),
+            group: None,
+            kind: Some(kind),
+        };
+        let legacy_definition = definition(
+            "legacy",
+            &legacy,
+            ProviderRootKind::OpenHandsLegacyPersistence,
+        );
+        let context = DiscoveryContext::new(
+            &home,
+            &cwd,
+            DiscoveryPlatform::Linux,
+            crate::DiscoveryPlatformDirs::default(),
+        )
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(vec![
+            definition(
+                "current",
+                &current,
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
+            legacy_definition.clone(),
+        ]);
+        let data_root = temp.path().join("ctx-data");
+        let index = temp.path().join("index");
+        let cold = refresh_source_backed_generation(
+            &index,
+            &discovered_openhands_registry(&context, &data_root),
+            WriterOptions::default(),
+        )
+        .unwrap();
+        let cold = indexed_events(&index, &cold)
+            .into_iter()
+            .map(|record| (record.content.meaningful_text().to_owned(), record))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(cold.len(), 2);
+        assert!(!cold.contains_key("must stay isolated"));
+        let current_record = &cold["current body"];
+        let legacy_record = &cold["legacy body"];
+        assert_eq!(
+            current_record.provider_session_id,
+            legacy_record.provider_session_id
+        );
+        assert_eq!(
+            current_record.native_event_id,
+            legacy_record.native_event_id
+        );
+        assert_ne!(
+            current_record.source.identity(),
+            legacy_record.source.identity()
+        );
+        assert_ne!(current_record.session_id, legacy_record.session_id);
+        assert_ne!(current_record.event_id, legacy_record.event_id);
+
+        let moved_current = temp.path().join("moved-current-conversations");
+        write_current_message_at_root(
+            &moved_current,
+            "same-native-session",
+            1,
+            "same-native-event",
+            "current body",
+            "2026-07-28T12:00:00Z",
+        );
+        let moved_context = DiscoveryContext::new(
+            &home,
+            &cwd,
+            DiscoveryPlatform::Linux,
+            crate::DiscoveryPlatformDirs::default(),
+        )
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(vec![
+            definition(
+                "current",
+                &moved_current,
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
+            legacy_definition,
+        ]);
+        let moved = refresh_source_backed_generation(
+            &index,
+            &discovered_openhands_registry(&moved_context, &data_root),
+            WriterOptions::default(),
+        )
+        .unwrap();
+        let moved = indexed_events(&index, &moved)
+            .into_iter()
+            .map(|record| (record.content.meaningful_text().to_owned(), record))
+            .collect::<BTreeMap<_, _>>();
+        let moved_current_record = &moved["current body"];
+        assert!(moved_current_record
+            .source
+            .exact_descriptor_eq(&current_record.source));
+        assert_eq!(moved_current_record.session_id, current_record.session_id);
+        assert_eq!(moved_current_record.event_id, current_record.event_id);
+    }
+
+    #[test]
+    fn naming_the_automatic_openhands_current_root_adopts_released_identity() {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let cwd = temp.path().join("cwd");
+        fs::create_dir_all(&cwd).unwrap();
+        let conversations = home.join(".openhands/conversations");
+        write_current_message_at_root(
+            &conversations,
+            "released-session",
+            1,
+            "released-event",
+            "released body",
+            "2026-07-28T12:00:00Z",
+        );
+        let automatic = DiscoveryContext::new(
+            &home,
+            &cwd,
+            DiscoveryPlatform::Linux,
+            crate::DiscoveryPlatformDirs::default(),
+        );
+        let data_root = temp.path().join("ctx-data");
+        let index = temp.path().join("index");
+        let automatic_receipt = refresh_source_backed_generation(
+            &index,
+            &discovered_openhands_registry(&automatic, &data_root),
+            WriterOptions::default(),
+        )
+        .unwrap();
+        let automatic_record = indexed_events(&index, &automatic_receipt).remove(0);
+
+        let named = automatic.with_configured_provider_roots(vec![ProviderRootDefinition {
+            id: "released".to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: conversations,
+            group: Some("work".to_owned()),
+            kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+        }]);
+        let named_registry = discovered_openhands_registry(&named, &data_root);
+        let applied = &named_registry.applied_provider_roots().unwrap().2;
+        assert_eq!(applied.len(), 1);
+        assert_eq!(
+            applied[0].source_identity(),
+            ProviderRootSourceIdentity::Released
+        );
+        assert_eq!(named_registry.executable_route_count(), 1);
+        let named_receipt =
+            refresh_source_backed_generation(&index, &named_registry, WriterOptions::default())
+                .unwrap();
+        let named_record = indexed_events(&index, &named_receipt).remove(0);
+        assert!(named_record
+            .source
+            .exact_descriptor_eq(&automatic_record.source));
+        assert_eq!(named_record.session_id, automatic_record.session_id);
+        assert_eq!(named_record.event_id, automatic_record.event_id);
+        assert_eq!(VerifiedIndex::open(&index).unwrap().document_count(), 1);
+    }
+
+    #[test]
     fn current_cli_automatic_discovery_covers_append_rewrite_and_conversation_deletion() {
         let temp = crate::test_support_paths::tempdir().unwrap();
         let home = temp.path().join("home");
@@ -886,6 +1098,7 @@ mod tests {
             &mut registry,
             provider_source(path),
             SourceBackedRouteSelection::Automatic,
+            None,
         )
         .unwrap();
         registry
@@ -951,8 +1164,25 @@ mod tests {
         body: &str,
         timestamp: &str,
     ) -> std::path::PathBuf {
+        write_current_message_at_root(
+            &root.join("conversations"),
+            conversation,
+            ordinal,
+            id,
+            body,
+            timestamp,
+        )
+    }
+
+    fn write_current_message_at_root(
+        root: &Path,
+        conversation: &str,
+        ordinal: usize,
+        id: &str,
+        body: &str,
+        timestamp: &str,
+    ) -> std::path::PathBuf {
         let path = root
-            .join("conversations")
             .join(conversation)
             .join("events")
             .join(format!("event-{ordinal:05}-{id}.json"));

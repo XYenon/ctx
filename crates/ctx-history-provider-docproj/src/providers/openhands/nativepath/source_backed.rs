@@ -40,7 +40,10 @@ use crate::provider::providers::openhands::{
 
 mod detection;
 
-use detection::openhands_event_path;
+use detection::{openhands_current_event_path, openhands_event_path, OpenHandsEventPath};
+
+type OpenHandsEventClassifier =
+    fn(&Path) -> Result<Option<EventFileCoordinates>, EventFileInventoryError>;
 
 // These released V1-labelled values are identity domains, not layout gates.
 // Retaining them keeps conversation and event IDs stable across layout moves.
@@ -88,6 +91,7 @@ pub(crate) type OpenHandsSourceBackedResultV2<T> = Result<T, OpenHandsSourceBack
 pub struct OpenHandsEventFileAdapterV2<B = ()> {
     selected: PathBuf,
     source_anchor_scope: SourceAnchorScope,
+    classify_event: OpenHandsEventClassifier,
     _binding: PhantomData<fn() -> B>,
 }
 
@@ -142,9 +146,32 @@ impl<B> OpenHandsEventFileAdapterV2<B> {
         selected: impl Into<PathBuf>,
         source_anchor_scope: SourceAnchorScope,
     ) -> Self {
+        Self::new_scoped_with_classifier(selected, source_anchor_scope, classify_openhands_event)
+    }
+
+    /// Selects only the current OpenHands conversations layout. The released
+    /// compatibility constructor remains the mixed legacy/current scanner used
+    /// by automatic legacy-persistence discovery.
+    pub fn new_current_conversations_scoped(
+        selected: impl Into<PathBuf>,
+        source_anchor_scope: SourceAnchorScope,
+    ) -> Self {
+        Self::new_scoped_with_classifier(
+            selected,
+            source_anchor_scope,
+            classify_openhands_current_event,
+        )
+    }
+
+    fn new_scoped_with_classifier(
+        selected: impl Into<PathBuf>,
+        source_anchor_scope: SourceAnchorScope,
+        classify_event: OpenHandsEventClassifier,
+    ) -> Self {
         Self {
             selected: selected.into(),
             source_anchor_scope,
+            classify_event,
             _binding: PhantomData,
         }
     }
@@ -159,7 +186,7 @@ impl<B> OpenHandsEventFileAdapterV2<B> {
                 max_path_bytes: OPENHANDS_MAX_PATH_BYTES,
                 max_record_bytes: MAX_PROVIDER_JSONL_LINE_BYTES,
             },
-            classify_openhands_event,
+            self.classify_event,
         ) {
             Ok(inventory) => Ok(inventory),
             Err(EventFileInventoryError::DuplicateGroupInstance { group_key }) => Err(
@@ -358,9 +385,24 @@ pub(crate) fn openhands_route_error(error: OpenHandsSourceBackedErrorV2) -> Sour
 fn classify_openhands_event(
     path: &Path,
 ) -> Result<Option<EventFileCoordinates>, EventFileInventoryError> {
-    let Some(event_path) =
-        openhands_event_path(path).map_err(|error| event_classifier_error(path, error))?
-    else {
+    let event_path =
+        openhands_event_path(path).map_err(|error| event_classifier_error(path, error))?;
+    classify_detected_openhands_event(path, event_path)
+}
+
+fn classify_openhands_current_event(
+    path: &Path,
+) -> Result<Option<EventFileCoordinates>, EventFileInventoryError> {
+    let event_path =
+        openhands_current_event_path(path).map_err(|error| event_classifier_error(path, error))?;
+    classify_detected_openhands_event(path, event_path)
+}
+
+fn classify_detected_openhands_event(
+    path: &Path,
+    event_path: Option<OpenHandsEventPath>,
+) -> Result<Option<EventFileCoordinates>, EventFileInventoryError> {
+    let Some(event_path) = event_path else {
         return Ok(None);
     };
     let relative_file_key = relative_event_file_key(&event_path.conversation_root, path)

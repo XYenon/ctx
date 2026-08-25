@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -24,6 +25,8 @@ use super::{
 const MAX_PROJECT_DISCOVERY_LOCATORS: usize = 128;
 const MAX_PROVIDER_DISCOVERY_WORKERS: usize = 16;
 const PROVIDER_DISCOVERY_THREAD_PREFIX: &str = "ctx-src-disc";
+const OPENHANDS_AUTOMATIC_CONFIGURED_OVERLAP_REASON: &str =
+    "configured OpenHands history root is nested with an active automatic OpenHands root";
 
 #[derive(Debug, Error)]
 #[error(
@@ -274,10 +277,41 @@ fn resolve_provider(
         )
         .sources
     };
+    if spec.provider == CaptureProvider::OpenHands {
+        if let Some(conflicting_path) = configured
+            .sources
+            .iter()
+            .find(|configured| {
+                configured.exists
+                    && report.sources.iter().any(|automatic| {
+                        automatic.exists
+                            && provider_paths_strictly_nested(&automatic.path, &configured.path)
+                    })
+            })
+            .map(|source| source.path.clone())
+        {
+            configured.sources.clear();
+            configured.issues.push(super::resolvers::issue(
+                spec.provider,
+                Some(conflicting_path),
+                super::types::DiscoveryIssueKind::ConfiguredRootConflict,
+                OPENHANDS_AUTOMATIC_CONFIGURED_OVERLAP_REASON,
+            ));
+        }
+    }
     preserve_matching_automatic_route_roles(&mut configured.sources, &canonical);
     report.sources.append(&mut configured.sources);
     report.issues.append(&mut configured.issues);
     report
+}
+
+fn provider_paths_strictly_nested(left: &Path, right: &Path) -> bool {
+    if super::resolvers::provider_paths_equivalent(left, right) {
+        return false;
+    }
+    let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    left.starts_with(&right) || right.starts_with(&left)
 }
 
 fn preserve_matching_automatic_route_roles(

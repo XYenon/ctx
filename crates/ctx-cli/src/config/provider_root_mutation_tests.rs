@@ -338,8 +338,11 @@ fn openhands_root_kind_is_required_replaced_atomically_and_rejects_overlap() {
     let legacy = fixture.path().join("legacy");
     let current = legacy.join("conversations");
     let disjoint_current = fixture.path().join("current");
+    let reverse_current = fixture.path().join("reverse-current");
+    let reverse_legacy = reverse_current.join("legacy-persistence");
     fs::create_dir_all(&current).unwrap();
     fs::create_dir(&disjoint_current).unwrap();
+    fs::create_dir_all(&reverse_legacy).unwrap();
 
     let missing_kind = format!(
         "{:#}",
@@ -430,4 +433,32 @@ fn openhands_root_kind_is_required_replaced_atomically_and_rejects_overlap() {
     .unwrap();
     assert!(!noop.changed);
     assert_eq!(fs::read(&config_path).unwrap(), before_noop);
+
+    add_provider_root_with_kind(
+        data_root.path(),
+        "reverse-current",
+        CaptureProvider::OpenHands,
+        &reverse_current,
+        None,
+        Some(ProviderRootKind::OpenHandsCurrentConversations),
+        false,
+    )
+    .unwrap();
+    let reverse_overlap = format!(
+        "{:#}",
+        add_provider_root_with_kind(
+            data_root.path(),
+            "reverse-legacy",
+            CaptureProvider::OpenHands,
+            &reverse_legacy,
+            None,
+            Some(ProviderRootKind::OpenHandsLegacyPersistence),
+            false,
+        )
+        .unwrap_err()
+    );
+    assert!(
+        reverse_overlap.contains("overlaps legacy/current"),
+        "{reverse_overlap}"
+    );
 }

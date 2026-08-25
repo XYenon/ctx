@@ -104,8 +104,9 @@ impl ProviderRootDefinition {
     }
 
     /// OpenHands legacy persistence recursively owns its configured directory.
-    /// A current-conversations root nested within it would select the same
-    /// history, while disjoint roots remain independently valid.
+    /// A legacy/current ancestor relationship can therefore select the same
+    /// history from both roots, while disjoint roots remain independently
+    /// valid.
     pub fn openhands_selected_histories_overlap(&self, other: &Self) -> bool {
         let (legacy, current) = match (self.provider, self.kind, other.provider, other.kind) {
             (
@@ -122,7 +123,7 @@ impl ProviderRootDefinition {
             ) => (other, self),
             _ => return false,
         };
-        current.path.starts_with(&legacy.path)
+        current.path.starts_with(&legacy.path) || legacy.path.starts_with(&current.path)
     }
 }
 
@@ -160,14 +161,15 @@ pub fn provider_source_config_digest(
                     }
                     None => digest.update([0]),
                 }
-                match root.kind {
-                    Some(kind) => {
-                        digest.update([1]);
-                        let kind = kind.as_str().as_bytes();
-                        digest.update((kind.len() as u64).to_be_bytes());
-                        digest.update(kind);
-                    }
-                    None => digest.update([0]),
+                if let Some(kind) = root.kind {
+                    // Kindless non-Unicode definitions used this native-path
+                    // fallback before root kinds existed. Append only a
+                    // present kind so their released digest stays byte-for-byte
+                    // compatible with that parent contract.
+                    digest.update([1]);
+                    let kind = kind.as_str().as_bytes();
+                    digest.update((kind.len() as u64).to_be_bytes());
+                    digest.update(kind);
                 }
             }
         }
@@ -198,6 +200,11 @@ mod tests {
         assert_ne!(
             provider_source_config_digest(true, &[root(0xfe)]),
             provider_source_config_digest(false, &[root(0xfe)])
+        );
+        assert_eq!(
+            provider_source_config_digest(true, &[root(0xfe)]),
+            "c22563f67d60c115ac159e0a18909e5b25e56477b6dac4eb97493fae201c66c7",
+            "kindless native-path fallback must match the pre-kind parent golden"
         );
     }
 
@@ -244,6 +251,49 @@ mod tests {
             provider_source_config_digest(true, std::slice::from_ref(&root))
         );
         assert_eq!(lineage, ProviderRootSourceIdentity::NamedV1.lineage(&root));
+    }
+
+    #[test]
+    fn openhands_cross_kind_overlap_rejects_either_ancestor_orientation() {
+        let root = |id: &str, path: &str, kind| ProviderRootDefinition {
+            id: id.to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: PathBuf::from(path),
+            group: None,
+            kind: Some(kind),
+        };
+        let legacy_parent = root(
+            "legacy-parent",
+            "/history/openhands",
+            ProviderRootKind::OpenHandsLegacyPersistence,
+        );
+        let current_child = root(
+            "current-child",
+            "/history/openhands/conversations",
+            ProviderRootKind::OpenHandsCurrentConversations,
+        );
+        assert!(legacy_parent.openhands_selected_histories_overlap(&current_child));
+        assert!(current_child.openhands_selected_histories_overlap(&legacy_parent));
+
+        let current_parent = root(
+            "current-parent",
+            "/history",
+            ProviderRootKind::OpenHandsCurrentConversations,
+        );
+        let legacy_child = root(
+            "legacy-child",
+            "/history/persistence",
+            ProviderRootKind::OpenHandsLegacyPersistence,
+        );
+        assert!(current_parent.openhands_selected_histories_overlap(&legacy_child));
+        assert!(legacy_child.openhands_selected_histories_overlap(&current_parent));
+
+        let disjoint = root(
+            "disjoint",
+            "/other/history",
+            ProviderRootKind::OpenHandsCurrentConversations,
+        );
+        assert!(!legacy_parent.openhands_selected_histories_overlap(&disjoint));
     }
 
     #[test]

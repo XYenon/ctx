@@ -154,7 +154,9 @@ fn register_landed_source_backed_route_inner(
         | CaptureProvider::CodeBuddy => {
             document::register_route(registry, source, selection, data_root, source_root_lineage)
         }
-        CaptureProvider::OpenHands => register_openhands_route(registry, source, selection),
+        CaptureProvider::OpenHands => {
+            register_openhands_route(registry, source, selection, source_root_lineage)
+        }
         provider => Err(invalid_route(
             provider,
             "this provider requires its compound-selector registration constructor",

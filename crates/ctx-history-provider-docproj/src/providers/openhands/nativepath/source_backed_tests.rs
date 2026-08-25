@@ -47,6 +47,32 @@ fn project_scoped(
     Ok(projected)
 }
 
+fn project_current_scoped(
+    root: &Path,
+    source_anchor_scope: SourceAnchorScope,
+) -> OpenHandsSourceBackedResultV2<Vec<TestProjection>> {
+    let adapter = OpenHandsEventFileAdapterV2::<()>::new_current_conversations_scoped(
+        root.to_path_buf(),
+        source_anchor_scope,
+    );
+    let inventory = adapter.open_inventory()?;
+    let mut projected = Vec::new();
+    for group in inventory.groups() {
+        let plan = adapter.bind_group(group)?;
+        let mut records = Vec::new();
+        let source = project_group(group, &plan, |record| {
+            records.push(record);
+            Ok(())
+        })?;
+        projected.push(TestProjection {
+            plan,
+            source,
+            records,
+        });
+    }
+    Ok(projected)
+}
+
 fn body(record: &CoreRecord) -> &str {
     record.content.normalized_body.as_deref().unwrap()
 }
@@ -80,6 +106,36 @@ fn root_scope_distinguishes_native_sessions_and_unqualified_is_unchanged() {
     assert_eq!(legacy.plan.session_id, unqualified.plan.session_id);
     assert_ne!(first.plan.source.identity(), second.plan.source.identity());
     assert_ne!(first.plan.session_id, second.plan.session_id);
+    assert_ne!(first.records[0].event_id, second.records[0].event_id);
+}
+
+#[test]
+fn current_conversations_scan_excludes_nested_legacy_persistence() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let selected = temp.path().join("conversations");
+    write_current_event_at_root(
+        &selected,
+        "current-conversation",
+        "event-00001-current.json",
+        message("current-event", "current body"),
+    );
+    write_event(
+        &selected,
+        "legacy-conversation",
+        "legacy-event.json",
+        message("legacy-event", "legacy body"),
+    );
+
+    let current = project_current_scoped(&selected, SourceAnchorScope::Unqualified).unwrap();
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].plan.conversation_id, "current-conversation");
+    assert_eq!(body(&current[0].records[0]), "current body");
+
+    let compatible = project(&selected).unwrap();
+    assert_eq!(compatible.len(), 2);
+    assert!(compatible
+        .iter()
+        .any(|projection| projection.plan.conversation_id == "legacy-conversation"));
 }
 
 #[test]

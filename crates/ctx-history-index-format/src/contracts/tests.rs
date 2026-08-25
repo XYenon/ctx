@@ -114,6 +114,41 @@ fn provider_root_manifest_validates_openhands_kind_at_the_persisted_boundary() {
 }
 
 #[test]
+fn provider_root_manifest_rejects_openhands_ancestor_overlap_at_the_index_boundary() {
+    let temp = tempfile::tempdir().unwrap();
+    let current = ProviderRootDefinition {
+        id: "current".to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path: temp.path().join("openhands"),
+        group: None,
+        kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+    };
+    let legacy = ProviderRootDefinition {
+        id: "legacy".to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path: current.path.join("legacy-persistence"),
+        group: None,
+        kind: Some(ProviderRootKind::OpenHandsLegacyPersistence),
+    };
+    let definitions = vec![current.clone(), legacy.clone()];
+
+    assert!(matches!(
+        GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            true,
+            provider_source_config_digest(true, &definitions),
+            vec![
+                AppliedProviderRoot::new(current, Vec::new()).unwrap(),
+                AppliedProviderRoot::new(legacy, Vec::new()).unwrap(),
+            ],
+        ),
+        Err(IndexError::InvalidProviderRoots(detail)) if detail.contains("overlapping legacy/current")
+    ));
+}
+
+#[test]
 fn provider_root_manifest_prunes_unretained_routes_and_rejects_shared_routes() {
     let temp = tempfile::tempdir().unwrap();
     let route_identity = SourceRouteIdentity::from_sha256("ef".repeat(32)).unwrap();
