@@ -104,6 +104,16 @@ ctx_cli_contract_test(
 )
 
 ctx_cli_contract_test(
+    name = "index_tests",
+    src = "tests/contracts/index.rs",
+    extra_crates = ["anstream"],
+    test_support = [
+        "base",
+        "fixtures",
+    ],
+)
+
+ctx_cli_contract_test(
     name = "test_targets_minimal_fixture",
     src = "tests/build_support/minimal.rs",
     extra_crates = ["serde_yaml"],

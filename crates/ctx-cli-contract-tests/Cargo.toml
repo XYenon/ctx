@@ -17,6 +17,10 @@ name = "cli_public_help_docs"
 path = "tests/contracts/cli_public_help_docs.rs"
 
 [[test]]
+name = "index"
+path = "tests/contracts/index.rs"
+
+[[test]]
 name = "native_provider_real_shapes"
 path = "tests/contracts/native_provider_real_shapes.rs"
 
@@ -37,6 +41,7 @@ name = "setup_sources_import"
 path = "tests/contracts/setup_sources_import.rs"
 
 [dev-dependencies]
+anstream.workspace = true
 assert_cmd.workspace = true
 base64.workspace = true
 chrono.workspace = true

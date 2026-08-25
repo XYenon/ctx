@@ -834,6 +834,7 @@ dependencies = [
 name = "ctx-cli-contract-tests"
 version = "1.0.0"
 dependencies = [
+ "anstream",
  "assert_cmd",
  "base64 0.22.1",
  "chrono",

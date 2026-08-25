@@ -314,14 +314,9 @@ ctx_cli_integration_test(
     ],
 )
 
-ctx_cli_integration_test(
+test_suite(
     name = "index_tests",
-    src = "tests/index.rs",
-    extra_crates = ["anstream"],
-    test_support = [
-        "base",
-        "fixtures",
-    ],
+    tests = ["//crates/ctx-cli-contract-tests:index_tests"],
 )
 
 test_suite(
