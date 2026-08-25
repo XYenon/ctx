@@ -110,11 +110,11 @@ struct HistoryImportHost<'a, P> {
 
 impl<P: ImportApplicationPort> SourceDiscoveryPort for HistoryImportHost<'_, P> {
     fn discover_all(&self) -> Result<DiscoveryReport> {
-        Ok(self.discovery().discover_all()?)
+        self.discovery().discover_all()
     }
 
     fn discover_provider(&self, provider: CaptureProvider) -> Result<DiscoveryReport> {
-        Ok(self.discovery().discover_provider(provider)?)
+        self.discovery().discover_provider(provider)
     }
 
     fn provider_selection_guidance(
