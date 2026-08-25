@@ -487,6 +487,79 @@ mod tests {
     }
 
     #[test]
+    fn cline_sdk_durable_replay_is_bound_to_the_leaf_root_scope() {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let provider_root = temp.path().join("cline-data");
+        let ctx_data_root = temp.path().join("ctx-data");
+        let index = temp.path().join("index");
+        fs::create_dir_all(provider_root.join("sessions/session-a")).unwrap();
+        fs::create_dir_all(&ctx_data_root).unwrap();
+        write_cline_sdk_index(&provider_root, true);
+        write_cline_sdk_messages(&provider_root, &["same content"]);
+
+        let scope_a = ctx_history_core::SourceAnchorScope::Lineage([0x11; 32]);
+        let scope_b = ctx_history_core::SourceAnchorScope::Lineage([0x22; 32]);
+        let registry_a = cline_sdk_registry_scoped(&provider_root, &ctx_data_root, scope_a);
+        let cold_a =
+            refresh_source_backed_generation(&index, &registry_a, WriterOptions::default())
+                .unwrap();
+        assert_eq!(cold_a.sources.len(), 1);
+        assert!(cold_a.sources[0].frontier().is_some());
+        let source_a = cold_a.sources[0].observation().source().clone();
+        let session_a = cline_sdk_events(&index, &cold_a)[0].session_id;
+
+        let replay_a =
+            refresh_source_backed_generation(&index, &registry_a, WriterOptions::default())
+                .unwrap();
+        assert_eq!(replay_a.commit.generation_id, cold_a.commit.generation_id);
+        assert_eq!(replay_a.sources, cold_a.sources);
+
+        let registry_b = cline_sdk_registry_scoped(&provider_root, &ctx_data_root, scope_b);
+        let refreshed_b =
+            refresh_source_backed_generation(&index, &registry_b, WriterOptions::default())
+                .unwrap();
+        assert_ne!(
+            refreshed_b.commit.generation_id,
+            cold_a.commit.generation_id
+        );
+        assert_eq!(refreshed_b.sources.len(), 1);
+        let source_b = refreshed_b.sources[0].observation().source();
+        assert!(!source_a.exact_descriptor_eq(source_b));
+        assert_ne!(source_a.identity(), source_b.identity());
+        assert_eq!(
+            cold_a.sources[0].frontier(),
+            refreshed_b.sources[0].frontier()
+        );
+        assert_eq!(
+            cold_a.sources[0].content_digest(),
+            refreshed_b.sources[0].content_digest()
+        );
+
+        let events_b = cline_sdk_events(&index, &refreshed_b);
+        assert_ne!(events_b[0].session_id, session_a);
+        assert!(events_b
+            .iter()
+            .any(|event| { event.core_record.content.meaningful_text() == "same content" }));
+        assert!(matches!(
+            VerifiedIndex::open(&index)
+                .unwrap()
+                .core_source_event_page(&source_a, None, 64),
+            Err(ctx_history_index::IndexError::SourceEventSourceNotRetained(
+                _
+            ))
+        ));
+
+        let replay_b =
+            refresh_source_backed_generation(&index, &registry_b, WriterOptions::default())
+                .unwrap();
+        assert_eq!(
+            replay_b.commit.generation_id,
+            refreshed_b.commit.generation_id
+        );
+        assert_eq!(replay_b.sources, refreshed_b.sources);
+    }
+
+    #[test]
     fn cline_sdk_real_automatic_and_exact_discovery_import_the_common_data_root() {
         let temp = crate::test_support_paths::tempdir().unwrap();
         let home = temp.path().join("home");
@@ -688,24 +761,49 @@ mod tests {
         let mut registry = SourceBackedProviderRegistry::new();
         register_cline_sdk_route(
             &mut registry,
-            ProviderSource {
-                provider: CaptureProvider::Cline,
-                path: path.to_path_buf(),
-                exists: true,
-                source_format: CLINE_SDK_SOURCE_FORMAT,
-                source_kind: ProviderSourceKind::NativeHistory,
-                import_support: ProviderImportSupport::Native,
-                catalog_support: ProviderCatalogSupport::None,
-                status: ProviderSourceStatus::Available,
-                unsupported_reason: None,
-                route_provenance: Default::default(),
-            },
+            cline_sdk_provider_source(path),
             SourceBackedRouteSelection::Automatic,
             data_root,
             None,
         )
         .unwrap();
         registry
+    }
+
+    fn cline_sdk_registry_scoped(
+        path: &Path,
+        data_root: &Path,
+        source_anchor_scope: ctx_history_core::SourceAnchorScope,
+    ) -> SourceBackedProviderRegistry {
+        let mut registry = SourceBackedProviderRegistry::new();
+        let adapter = ClineSdkDocumentTreeAdapter::new_scoped(
+            path.to_path_buf(),
+            data_root.to_path_buf(),
+            source_anchor_scope,
+        );
+        register_replacement_document_tree_route(
+            &mut registry,
+            cline_sdk_provider_source(path),
+            SourceBackedRouteSelection::Automatic,
+            adapter,
+        )
+        .unwrap();
+        registry
+    }
+
+    fn cline_sdk_provider_source(path: &Path) -> ProviderSource {
+        ProviderSource {
+            provider: CaptureProvider::Cline,
+            path: path.to_path_buf(),
+            exists: true,
+            source_format: CLINE_SDK_SOURCE_FORMAT,
+            source_kind: ProviderSourceKind::NativeHistory,
+            import_support: ProviderImportSupport::Native,
+            catalog_support: ProviderCatalogSupport::None,
+            status: ProviderSourceStatus::Available,
+            unsupported_reason: None,
+            route_provenance: Default::default(),
+        }
     }
 
     fn write_cline_sdk_index(root: &Path, include_session: bool) {

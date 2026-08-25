@@ -98,6 +98,14 @@ where
         Ok(leaf.source_key.clone())
     }
 
+    fn durable_replay_source(
+        &self,
+        _authority: &Self::TreeAuthority,
+        leaf: &Self::Leaf,
+    ) -> SourceBackedRouteResult<Option<SourceKey>> {
+        Ok(Some(leaf.source_key.clone()))
+    }
+
     fn discover_complete(&self) -> SourceBackedRouteResult<ClineSdkDocumentTree> {
         bind_tree_scoped(
             &self.selected_root,
