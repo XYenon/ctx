@@ -108,7 +108,7 @@ fn configured_compound_roots_register_from_arbitrary_paths_without_automatic_aut
 }
 
 #[test]
-fn only_one_noncompound_root_per_provider_owns_the_released_namespace() {
+fn only_one_root_can_claim_the_same_released_automatic_route() {
     let temp = tempdir().unwrap();
     let home = temp.path().join("home");
     let cwd = temp.path().join("cwd");

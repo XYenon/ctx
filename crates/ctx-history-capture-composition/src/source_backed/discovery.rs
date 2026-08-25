@@ -33,33 +33,6 @@ pub fn explicit_source_catalog_lineage(
     digest.finalize().into()
 }
 
-#[cfg(test)]
-#[test]
-fn exact_source_catalog_lineage_preserves_released_v1_identity() {
-    let lineage = explicit_source_catalog_lineage(
-        CaptureProvider::NanoClaw,
-        "nanoclaw_project",
-        Path::new("/fixture/nanoclaw"),
-    );
-    let encoded = lineage
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-
-    assert_eq!(
-        encoded,
-        "5213b19342d779063b64336dd7fff3a678de719fadb60240a1e1061798687e56"
-    );
-    assert_ne!(
-        lineage,
-        explicit_source_catalog_lineage(
-            CaptureProvider::NanoClaw,
-            "nanoclaw_project",
-            Path::new("/fixture/nanoclaw-other"),
-        )
-    );
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceBackedAutomaticUnavailableReason {
     SourceStatus(ProviderSourceStatus),
@@ -212,7 +185,7 @@ fn normalized_provider_root_registrations(
     // published Released owner is kept ahead of this gate; refresh retention
     // then protects its exact prior route membership while the source is
     // unreadable.
-    let mut released_owner = BTreeMap::<String, String>::new();
+    let mut released_claims = BTreeSet::new();
     let mut identities = BTreeMap::new();
     for root in discovery.configured_provider_roots() {
         let retained_root = retained.get(&root.id);
@@ -220,8 +193,18 @@ fn normalized_provider_root_registrations(
             root.provider,
             CaptureProvider::Crush | CaptureProvider::Lingma
         );
-        let provider = root.provider.as_str();
-        let released_available = shared_released || !released_owner.contains_key(provider);
+        let route_claims = released_automatic_route_claims(
+            root,
+            configured_sources,
+            canonical_automatic_sources,
+            retained_root,
+        );
+        let retained_released = retained_root.is_some_and(|authority| {
+            authority.source_identity() == ProviderRootSourceIdentity::Released
+        });
+        let released_available = shared_released
+            || (retained_released && route_claims.is_empty())
+            || route_claims.is_disjoint(&released_claims);
         let identity = match retained_root.map(RetainedProviderRootAuthority::source_identity) {
             Some(ProviderRootSourceIdentity::Released) if released_available => {
                 ProviderRootSourceIdentity::Released
@@ -240,7 +223,7 @@ fn normalized_provider_root_registrations(
             None => ProviderRootSourceIdentity::NamedV1,
         };
         if identity == ProviderRootSourceIdentity::Released && !shared_released {
-            released_owner.insert(provider.to_owned(), root.id.clone());
+            released_claims.extend(route_claims);
         }
         let released_identity_root = match identity {
             ProviderRootSourceIdentity::Released => retained_root
@@ -270,6 +253,41 @@ fn normalized_provider_root_registrations(
         );
     }
     identities
+}
+
+fn released_automatic_route_claims(
+    root: &ProviderRootDefinition,
+    configured: &[ProviderSource],
+    automatic: &[ProviderSource],
+    retained: Option<&RetainedProviderRootAuthority>,
+) -> BTreeSet<SourceRouteIdentity> {
+    let binding = retained.and_then(RetainedProviderRootAuthority::connector_binding);
+    let identity_root = binding.and_then(|binding| binding.identity_root());
+    let path_independent = binding.is_some() && identity_root.is_none();
+    configured
+        .iter()
+        .filter(|source| provider_source_belongs_to_configured_root(root, source))
+        .flat_map(|source| {
+            let identity = identity_root
+                .and_then(|identity_root| {
+                    released_identity_source(root, source, identity_root).ok()
+                })
+                .unwrap_or_else(|| source.clone());
+            let matches = automatic.iter().filter(|candidate| {
+                candidate.provider == identity.provider
+                    && candidate.source_format == identity.source_format
+                    && (path_independent
+                        || provider_paths_equivalent(&candidate.path, &identity.path))
+            });
+            let mut claims = matches
+                .filter_map(|candidate| automatic_source_backed_route_identity(candidate).ok())
+                .collect::<Vec<_>>();
+            if claims.is_empty() {
+                claims.extend(automatic_source_backed_route_identity(&identity));
+            }
+            claims
+        })
+        .collect()
 }
 
 fn default_provider_root_source_identity(
@@ -345,6 +363,16 @@ fn register_released_provider_root_route(
                 data_root,
                 None,
             )?;
+        }
+        CaptureProvider::OpenHands => {
+            let current_root =
+                resolve_openhands_conversations_root(discovery).ok_or_else(|| {
+                    invalid_route(
+                        configured_source.provider,
+                        "released OpenHands identity has no exact automatic current root",
+                    )
+                })?;
+            register_openhands_automatic_route(&mut scoped, scan_source, &current_root, None)?;
         }
         CaptureProvider::Hermes => register_hermes_released_source_backed_route(
             &mut scoped,
@@ -604,7 +632,12 @@ fn released_identity_source(
             )
         })?;
     let mut identity_source = configured_source.clone();
-    identity_source.path = identity_root.join(relative);
+    // Joining an empty suffix appends a separator and rotates path-sensitive identity bytes.
+    identity_source.path = if relative.as_os_str().is_empty() {
+        identity_root.to_path_buf()
+    } else {
+        identity_root.join(relative)
+    };
     identity_source.route_provenance = ProviderSourceRouteProvenance::Unroled;
     if configured_source.provider == CaptureProvider::OpenClaw {
         let mut components = relative.components();
@@ -675,6 +708,7 @@ const fn released_root_uses_automatic_registration(provider: CaptureProvider) ->
     matches!(
         provider,
         CaptureProvider::OpenClaw
+            | CaptureProvider::OpenHands
             | CaptureProvider::Hermes
             | CaptureProvider::Crush
             | CaptureProvider::Goose

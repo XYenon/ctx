@@ -787,17 +787,12 @@ fn register_discovered_automatic_route_scoped(
             )
         }
         (SourceBackedRouteConstructor::ProviderSource, CaptureProvider::OpenHands) => {
-            if source_root_lineage.is_some() {
-                return Err(SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
-                    detail: "OpenHands automatic coexistence requires a scoped current-root connector",
-                });
-            }
             let current_root = resolve_openhands_conversations_root(discovery).ok_or(
                 SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
                     detail: "OpenHands automatic registration requires its exact current conversation root",
                 },
             )?;
-            register_openhands_automatic_route(registry, source, &current_root)
+            register_openhands_automatic_route(registry, source, &current_root, source_root_lineage)
         }
         (SourceBackedRouteConstructor::ProviderSource, _) => {
             register_landed_source_backed_route_with_data_root_and_lineage(

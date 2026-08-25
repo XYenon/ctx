@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
-use ctx_history_capture_model::{ProviderRootDefinition, ProviderRootSourceIdentity};
+use ctx_history_capture_model::{
+    ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
+};
 use rusqlite::Connection;
 
 use super::*;
@@ -73,6 +75,44 @@ fn create_hermes_fixture(path: &Path) {
                          'hermes released equivalence oracle', 1782259201.0);",
         )
         .unwrap();
+}
+
+fn write_openhands_legacy_message(root: &Path, conversation: &str, event: &str, body: &str) {
+    let path = root
+        .join("v1_conversations")
+        .join(conversation)
+        .join(format!("{event}.json"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        serde_json::to_vec(&serde_json::json!({
+            "id": event,
+            "source": "user",
+            "message": body,
+            "timestamp": "2026-08-25T12:00:00Z",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn write_openhands_current_message(root: &Path, conversation: &str, event: &str, body: &str) {
+    let path = root
+        .join(conversation)
+        .join("events")
+        .join(format!("event-00001-{event}.json"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        serde_json::to_vec(&serde_json::json!({
+            "id": event,
+            "source": "user",
+            "message": body,
+            "timestamp": "2026-08-25T12:00:00Z",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 }
 
 fn provider_fixture(root: &Path, provider: CaptureProvider) -> ProviderFixture {
@@ -201,6 +241,26 @@ fn build_provider_registry_with_retained(
     build
 }
 
+fn discover_provider_registry_with_retained(
+    context: &DiscoveryContext,
+    data_root: &Path,
+    provider: CaptureProvider,
+    retained: &BTreeMap<String, RetainedProviderRootAuthority>,
+) -> SourceBackedAutomaticRegistryBuild {
+    let report = ctx_history_source_discovery::discover_provider_sources_for_provider_with_context(
+        &crate::test_provider_probes(),
+        context,
+        provider,
+    );
+    build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
+        &crate::test_provider_probes(),
+        context,
+        data_root,
+        report,
+        retained,
+    )
+}
+
 fn move_provider_root(path: &Path, destination_root: &Path, step: usize) -> std::path::PathBuf {
     let destination = destination_root.join(format!("move-{step}")).join(
         path.file_name()
@@ -300,6 +360,399 @@ fn assert_publication_bytes_eq(
         "{context} route controls"
     );
     assert_eq!(actual.records, expected.records, "{context} records");
+}
+
+fn records_matching(index_root: &Path, marker: &str) -> Vec<CoreRecord> {
+    VerifiedIndex::open(index_root)
+        .unwrap()
+        .search_event_candidates(marker, 32)
+        .unwrap()
+        .into_iter()
+        .map(|candidate| {
+            VerifiedIndex::open(index_root)
+                .unwrap()
+                .core_record_by_id(candidate.event.event_id.as_uuid())
+                .unwrap()
+                .expect("search candidate has a Core record")
+        })
+        .filter(|record| serde_json::to_string(record).unwrap().contains(marker))
+        .collect()
+}
+
+fn only_record_matching(index_root: &Path, marker: &str) -> CoreRecord {
+    let records = records_matching(index_root, marker);
+    assert_eq!(records.len(), 1, "expected one record matching {marker:?}");
+    records.into_iter().next().unwrap()
+}
+
+fn openhands_root(id: &str, path: &Path, kind: ProviderRootKind) -> ProviderRootDefinition {
+    ProviderRootDefinition {
+        id: id.to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path: path.to_path_buf(),
+        group: Some("released".to_owned()),
+        kind: Some(kind),
+    }
+}
+
+#[test]
+fn exact_source_catalog_lineage_preserves_released_v1_identity() {
+    let lineage = explicit_source_catalog_lineage(
+        CaptureProvider::NanoClaw,
+        "nanoclaw_project",
+        Path::new("/fixture/nanoclaw"),
+    );
+    assert_eq!(
+        lineage
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+        "5213b19342d779063b64336dd7fff3a678de719fadb60240a1e1061798687e56"
+    );
+    assert_ne!(
+        lineage,
+        explicit_source_catalog_lineage(
+            CaptureProvider::NanoClaw,
+            "nanoclaw_project",
+            Path::new("/fixture/nanoclaw-other"),
+        )
+    );
+}
+
+#[test]
+fn disjoint_openhands_automatic_routes_each_adopt_released_identity() {
+    const MARKER: &str = "openhands disjoint released adoption";
+
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let legacy = temp.path().join("legacy-persistence");
+    let current = temp.path().join("current-conversations");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    write_openhands_legacy_message(
+        &legacy,
+        "legacy-conversation",
+        "legacy-event",
+        &format!("{MARKER} legacy"),
+    );
+    write_openhands_current_message(
+        &current,
+        "current-conversation",
+        "current-event",
+        &format!("{MARKER} current"),
+    );
+    let automatic_context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_env("OH_PERSISTENCE_DIR", legacy.as_os_str())
+    .with_env("OPENHANDS_CONVERSATIONS_DIR", current.as_os_str());
+    let automatic = build_provider_registry(
+        &automatic_context,
+        &temp.path().join("automatic-data"),
+        CaptureProvider::OpenHands,
+    );
+    assert_eq!(automatic.executable_route_count(), 2);
+    let automatic_routes = route_bytes(&automatic.registry);
+    let automatic_publication = publication_bytes(
+        &temp.path().join("automatic-index"),
+        &automatic.registry,
+        MARKER,
+    );
+    let roots = vec![
+        openhands_root(
+            "current",
+            &current,
+            ProviderRootKind::OpenHandsCurrentConversations,
+        ),
+        openhands_root(
+            "legacy",
+            &legacy,
+            ProviderRootKind::OpenHandsLegacyPersistence,
+        ),
+    ];
+
+    for automatic_enabled in [true, false] {
+        let context = automatic_context
+            .clone()
+            .with_automatic_provider_discovery(automatic_enabled)
+            .with_configured_provider_roots(roots.clone());
+        let configured = build_provider_registry(
+            &context,
+            &temp
+                .path()
+                .join(format!("configured-data-{automatic_enabled}")),
+            CaptureProvider::OpenHands,
+        );
+        let applied = &configured.registry.applied_provider_roots().unwrap().2;
+        assert_eq!(applied.len(), 2);
+        assert!(applied.iter().all(|root| {
+            root.source_identity() == ProviderRootSourceIdentity::Released
+                && root.routes().len() == 1
+        }));
+        assert_ne!(applied[0].routes(), applied[1].routes());
+        assert_eq!(route_bytes(&configured.registry), automatic_routes);
+        assert_publication_bytes_eq(
+            &publication_bytes(
+                &temp
+                    .path()
+                    .join(format!("configured-index-{automatic_enabled}")),
+                &configured.registry,
+                MARKER,
+            ),
+            &automatic_publication,
+            &format!("OpenHands automatic={automatic_enabled} disjoint released routes"),
+        );
+    }
+}
+
+#[test]
+fn moved_openhands_current_root_retains_released_authority_through_full_lifecycle() {
+    const MOVED_MARKER: &str = "openhands moved released authority marker";
+    const REAPPEARED_MARKER: &str = "openhands old path reappearance marker";
+
+    for automatic_enabled in [true, false] {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let cwd = temp.path().join("cwd");
+        let legacy = temp.path().join("never-present-legacy");
+        let original = temp.path().join("original-current-conversations");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        write_openhands_current_message(
+            &original,
+            "moved-conversation",
+            "moved-event",
+            MOVED_MARKER,
+        );
+        let automatic_context = DiscoveryContext::new(
+            &home,
+            &cwd,
+            DiscoveryPlatform::Linux,
+            crate::DiscoveryPlatformDirs::default(),
+        )
+        .with_env("OH_PERSISTENCE_DIR", legacy.as_os_str())
+        .with_env("OPENHANDS_CONVERSATIONS_DIR", original.as_os_str());
+        let automatic = build_provider_registry(
+            &automatic_context,
+            &temp.path().join("automatic-data"),
+            CaptureProvider::OpenHands,
+        );
+        assert_eq!(automatic.executable_route_count(), 1);
+        let automatic_route = automatic
+            .registry
+            .routes()
+            .find(|route| route.source.source_format == "openhands_cli_file_events")
+            .and_then(|route| route.route_identity.clone())
+            .unwrap();
+        let automatic_index = temp.path().join("automatic-index");
+        refresh_source_backed_generation(
+            &automatic_index,
+            &automatic.registry,
+            source_backed_refresh_writer_options(),
+        )
+        .unwrap();
+        let automatic_record = only_record_matching(&automatic_index, MOVED_MARKER);
+
+        let mut definition = openhands_root(
+            "current",
+            &original,
+            ProviderRootKind::OpenHandsCurrentConversations,
+        );
+        let initial_context = automatic_context
+            .clone()
+            .with_automatic_provider_discovery(automatic_enabled)
+            .with_configured_provider_roots(vec![definition.clone()]);
+        let initial = build_provider_registry(
+            &initial_context,
+            &temp.path().join("initial-data"),
+            CaptureProvider::OpenHands,
+        );
+        let initial_applied = initial.registry.applied_provider_roots().unwrap().2[0].clone();
+        assert_eq!(
+            initial_applied.source_identity(),
+            ProviderRootSourceIdentity::Released
+        );
+        assert_eq!(
+            initial_applied.routes(),
+            std::slice::from_ref(&automatic_route)
+        );
+        let index_root = temp.path().join("lifecycle-index");
+        refresh_source_backed_generation(
+            &index_root,
+            &initial.registry,
+            source_backed_refresh_writer_options(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&only_record_matching(&index_root, MOVED_MARKER)).unwrap(),
+            serde_json::to_vec(&automatic_record).unwrap()
+        );
+
+        let moved = temp.path().join("moved-current-conversations");
+        fs::rename(&original, &moved).unwrap();
+        definition.path = moved.clone();
+        let moved_context = automatic_context
+            .clone()
+            .with_automatic_provider_discovery(automatic_enabled)
+            .with_configured_provider_roots(vec![definition.clone()]);
+        let retained = BTreeMap::from([(
+            definition.id.clone(),
+            initial_applied.retained_authority().unwrap(),
+        )]);
+        let moved_build = build_provider_registry_with_retained(
+            &moved_context,
+            &temp.path().join("moved-data"),
+            CaptureProvider::OpenHands,
+            &retained,
+        );
+        let moved_applied = moved_build.registry.applied_provider_roots().unwrap().2[0].clone();
+        assert_eq!(
+            moved_applied.routes(),
+            std::slice::from_ref(&automatic_route)
+        );
+        refresh_source_backed_generation(
+            &index_root,
+            &moved_build.registry,
+            source_backed_refresh_writer_options(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&only_record_matching(&index_root, MOVED_MARKER)).unwrap(),
+            serde_json::to_vec(&automatic_record).unwrap()
+        );
+
+        let persisted = serde_json::to_vec(&moved_applied).unwrap();
+        let restarted: AppliedProviderRoot = serde_json::from_slice(&persisted).unwrap();
+        assert_eq!(
+            restarted
+                .connector_binding()
+                .and_then(|binding| binding.identity_root()),
+            Some(original.as_path())
+        );
+
+        let parked = temp
+            .path()
+            .join("temporarily-missing-current-conversations");
+        fs::rename(&moved, &parked).unwrap();
+        let retained = BTreeMap::from([(
+            definition.id.clone(),
+            restarted.retained_authority().unwrap(),
+        )]);
+        let mut missing = discover_provider_registry_with_retained(
+            &moved_context,
+            &temp.path().join("missing-data"),
+            CaptureProvider::OpenHands,
+            &retained,
+        );
+        assert_eq!(missing.executable_route_count(), 0);
+        assert!(missing.issues.iter().any(|issue| matches!(
+            issue,
+            SourceBackedAutomaticRegistryIssue::Unavailable {
+                source,
+                reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                    ProviderSourceStatus::Missing
+                ),
+            } if source.path == moved
+        )));
+        missing
+            .registry
+            .retain_unavailable_provider_root_routes(std::slice::from_ref(&restarted))
+            .unwrap();
+        refresh_source_backed_generation(
+            &index_root,
+            &missing.registry,
+            source_backed_refresh_writer_options(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&only_record_matching(&index_root, MOVED_MARKER)).unwrap(),
+            serde_json::to_vec(&automatic_record).unwrap()
+        );
+        let missing_index = VerifiedIndex::open(&index_root).unwrap();
+        let restarted: AppliedProviderRoot = serde_json::from_slice(
+            &serde_json::to_vec(&missing_index.manifest().provider_roots()[0]).unwrap(),
+        )
+        .unwrap();
+        drop(missing_index);
+
+        fs::rename(&parked, &moved).unwrap();
+        let retained = BTreeMap::from([(
+            definition.id.clone(),
+            restarted.retained_authority().unwrap(),
+        )]);
+        let restored = build_provider_registry_with_retained(
+            &moved_context,
+            &temp.path().join("restored-data"),
+            CaptureProvider::OpenHands,
+            &retained,
+        );
+        assert_eq!(
+            restored.registry.applied_provider_roots().unwrap().2[0].routes(),
+            std::slice::from_ref(&automatic_route)
+        );
+        refresh_source_backed_generation(
+            &index_root,
+            &restored.registry,
+            source_backed_refresh_writer_options(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&only_record_matching(&index_root, MOVED_MARKER)).unwrap(),
+            serde_json::to_vec(&automatic_record).unwrap()
+        );
+
+        write_openhands_current_message(
+            &original,
+            "reappeared-conversation",
+            "reappeared-event",
+            REAPPEARED_MARKER,
+        );
+        let restored_applied = restored.registry.applied_provider_roots().unwrap().2[0].clone();
+        let retained = BTreeMap::from([(
+            definition.id.clone(),
+            restored_applied.retained_authority().unwrap(),
+        )]);
+        let reappeared = build_provider_registry_with_retained(
+            &moved_context,
+            &temp.path().join("reappeared-data"),
+            CaptureProvider::OpenHands,
+            &retained,
+        );
+        let executable = reappeared.registry.executable_route_identities();
+        let expected_route_count = if automatic_enabled { 2 } else { 1 };
+        assert_eq!(executable.len(), expected_route_count);
+        assert_eq!(
+            executable
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            expected_route_count
+        );
+        assert!(executable.contains(&automatic_route));
+        refresh_source_backed_generation(
+            &index_root,
+            &reappeared.registry,
+            source_backed_refresh_writer_options(),
+        )
+        .unwrap();
+        assert_eq!(records_matching(&index_root, MOVED_MARKER).len(), 1);
+        assert_eq!(
+            serde_json::to_vec(&only_record_matching(&index_root, MOVED_MARKER)).unwrap(),
+            serde_json::to_vec(&automatic_record).unwrap()
+        );
+        assert_eq!(
+            records_matching(&index_root, REAPPEARED_MARKER).len(),
+            usize::from(automatic_enabled)
+        );
+        assert_eq!(
+            VerifiedIndex::open(&index_root).unwrap().document_count(),
+            expected_route_count as u64
+        );
+    }
 }
 
 #[test]

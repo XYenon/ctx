@@ -3,9 +3,7 @@ use super::*;
 use crate::{
     ProviderCatalogSupport, ProviderImportSupport, ProviderSourceKind, ProviderSourceStatus,
 };
-use ctx_history_capture_model::{
-    ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
-};
+use ctx_history_capture_model::{ProviderRootDefinition, ProviderRootKind};
 use ctx_history_core::{CaptureProvider, CertifiedSource};
 use ctx_history_index::{
     GenerationWriter, RevalidationTarget, SourceRouteSnapshot, VerifiedIndex, WriterOptions,

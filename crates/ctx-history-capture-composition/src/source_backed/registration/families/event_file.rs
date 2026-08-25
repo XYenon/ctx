@@ -29,13 +29,14 @@ pub(in crate::source_backed) fn register_openhands_automatic_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     current_root: &Path,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
     register_openhands_route_with_current_root(
         registry,
         source,
         SourceBackedRouteSelection::Automatic,
         Some(current_root),
-        None,
+        source_root_lineage,
     )
 }
 

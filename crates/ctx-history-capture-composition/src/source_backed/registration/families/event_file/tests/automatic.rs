@@ -1,64 +1,6 @@
 use super::*;
 
 #[test]
-fn naming_the_automatic_openhands_current_root_adopts_released_identity() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
-    let home = temp.path().join("home");
-    let cwd = temp.path().join("cwd");
-    fs::create_dir_all(&cwd).unwrap();
-    let conversations = home.join(".openhands/conversations");
-    write_current_message_at_root(
-        &conversations,
-        "released-session",
-        1,
-        "released-event",
-        "released body",
-        "2026-07-28T12:00:00Z",
-    );
-    let automatic = DiscoveryContext::new(
-        &home,
-        &cwd,
-        DiscoveryPlatform::Linux,
-        crate::DiscoveryPlatformDirs::default(),
-    );
-    let data_root = temp.path().join("ctx-data");
-    let index = temp.path().join("index");
-    let automatic_receipt = refresh_source_backed_generation(
-        &index,
-        &discovered_openhands_registry(&automatic, &data_root),
-        WriterOptions::default(),
-    )
-    .unwrap();
-    let automatic_record = indexed_events(&index, &automatic_receipt).remove(0);
-
-    let named = automatic.with_configured_provider_roots(vec![ProviderRootDefinition {
-        id: "released".to_owned(),
-        provider: CaptureProvider::OpenHands,
-        path: conversations,
-        group: Some("work".to_owned()),
-        kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
-    }]);
-    let named_registry = discovered_openhands_registry(&named, &data_root);
-    let applied = &named_registry.applied_provider_roots().unwrap().2;
-    assert_eq!(applied.len(), 1);
-    assert_eq!(
-        applied[0].source_identity(),
-        ProviderRootSourceIdentity::Released
-    );
-    assert_eq!(named_registry.executable_route_count(), 1);
-    let named_receipt =
-        refresh_source_backed_generation(&index, &named_registry, WriterOptions::default())
-            .unwrap();
-    let named_record = indexed_events(&index, &named_receipt).remove(0);
-    assert!(named_record
-        .source
-        .exact_descriptor_eq(&automatic_record.source));
-    assert_eq!(named_record.session_id, automatic_record.session_id);
-    assert_eq!(named_record.event_id, automatic_record.event_id);
-    assert_eq!(VerifiedIndex::open(&index).unwrap().document_count(), 1);
-}
-
-#[test]
 fn equal_automatic_legacy_and_configured_current_roots_publish_each_event_once() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     let home = temp.path().join("home");
