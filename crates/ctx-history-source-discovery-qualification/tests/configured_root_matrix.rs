@@ -85,3 +85,22 @@ fn public_matrix_matches_configured_root_implementation_exhaustively() {
         );
     }
 }
+
+#[test]
+fn qoder_documents_the_projects_container_as_its_selectable_root() {
+    let matrix = provider_support_matrix();
+    let qoder = matrix["providers"]
+        .as_array()
+        .expect("provider rows")
+        .iter()
+        .find(|row| row["capture_provider"] == "qoder")
+        .expect("Qoder matrix row");
+
+    assert_eq!(
+        qoder["history_locations"],
+        json!([
+            "Winner: `~/.qoder/projects` with bounded per-project transcript and direct session JSONL leaves."
+        ]),
+        "Qoder's exact source is the projects container, not one project directory",
+    );
+}
