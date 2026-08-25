@@ -223,6 +223,21 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
             source.unsupported_reason = None;
         }
         if let Some(configured_root) = configured_root {
+            if configured_source_identity == Some(ProviderRootSourceIdentity::Released) {
+                if let Err(error) = restore_released_automatic_route_role(
+                    &mut source,
+                    configured_root,
+                    &provider_root_registrations,
+                ) {
+                    let reason = automatic_registration_rejected(error);
+                    registry.register(SourceBackedRoute::unsupported(
+                        source.clone(),
+                        automatic_unavailable_detail(&reason),
+                    ));
+                    issues.push(SourceBackedAutomaticRegistryIssue::Unavailable { source, reason });
+                    continue;
+                }
+            }
             let Some(route_role) = configured_route_role.as_ref() else {
                 retain_unsupported_automatic_format(
                     &mut registry,
@@ -535,6 +550,35 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
         issues,
         discovery_duration: Duration::ZERO,
     }
+}
+
+fn restore_released_automatic_route_role(
+    source: &mut ProviderSource,
+    configured_root: &ProviderRootDefinition,
+    registrations: &BTreeMap<String, ProviderRootRegistration>,
+) -> SourceBackedCoordinatorResult<()> {
+    let Some(encoded_role) = registrations
+        .get(&configured_root.id)
+        .and_then(|registration| registration.retained_authority.as_ref())
+        .and_then(RetainedProviderRootAuthority::connector_binding)
+        .and_then(|binding| binding.automatic_route_role(source.source_format))
+    else {
+        return Ok(());
+    };
+    let role = ProviderRouteRole::try_from_encoded(encoded_role)
+        .map_err(|error| invalid_route(source.provider, error.to_string()))?;
+    let ProviderSourceRouteProvenance::ConfiguredRoot {
+        automatic_route_role,
+        ..
+    } = &mut source.route_provenance
+    else {
+        return Err(invalid_route(
+            source.provider,
+            "released configured source has no configured-root provenance",
+        ));
+    };
+    *automatic_route_role = Some(role);
+    Ok(())
 }
 #[cfg(test)]
 pub(in crate::source_backed) fn build_automatic_source_backed_registry_from_parts(

@@ -107,7 +107,18 @@ impl SourceBackedRoute {
             ));
         }
         self.metadata.route_identity = Some(match source_root_lineage {
-            None => automatic_source_backed_route_identity(&self.metadata.source)?,
+            None => {
+                let mut released_source = self.metadata.source.clone();
+                if let Some(route_role) = released_source
+                    .route_provenance
+                    .automatic_route_role()
+                    .cloned()
+                {
+                    released_source.route_provenance =
+                        ProviderSourceRouteProvenance::Automatic { route_role };
+                }
+                automatic_source_backed_route_identity(&released_source)?
+            }
             Some(lineage) => provider_root_source_backed_route_identity(
                 &self.metadata.source,
                 self.metadata.certified_source_format,

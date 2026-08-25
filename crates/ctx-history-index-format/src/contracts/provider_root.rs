@@ -1,14 +1,45 @@
 use ctx_history_capture_model::{
     ProviderRootConnectorBinding, ProviderRootDefinition, ProviderRootSourceIdentity,
-    RetainedProviderRootAuthority, SourceRouteIdentity, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
+    ProviderRouteRole, ReleasedProviderRootAutomaticRole, RetainedProviderRootAuthority,
+    SourceRouteIdentity, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{is_sha256_hex, IndexError, Result};
 
 const MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES: usize = 16 * 1024;
+const MAX_RELEASED_CONNECTOR_AUTOMATIC_ROUTE_ROLES: usize = 64;
 
 fn validate_connector_binding(binding: &ProviderRootConnectorBinding) -> Result<()> {
+    let roles = binding.automatic_route_roles();
+    if roles.len() > MAX_RELEASED_CONNECTOR_AUTOMATIC_ROUTE_ROLES
+        || roles
+            .windows(2)
+            .any(|pair| pair[0].source_format() >= pair[1].source_format())
+    {
+        return Err(IndexError::InvalidProviderRoots(
+            "released connector automatic route roles are not bounded, strictly sorted, and unique"
+                .to_owned(),
+        ));
+    }
+    for role in roles {
+        let source_format = role.source_format();
+        if source_format.is_empty()
+            || source_format.len() > MAX_PROVIDER_ROOT_SELECTOR_BYTES
+            || !source_format
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(IndexError::InvalidProviderRoots(
+                "released connector automatic route role has an invalid source format".to_owned(),
+            ));
+        }
+        ProviderRouteRole::try_from_encoded(role.role()).map_err(|_| {
+            IndexError::InvalidProviderRoots(
+                "released connector automatic route role has an invalid encoding".to_owned(),
+            )
+        })?;
+    }
     let Some(path) = binding.identity_root() else {
         return Ok(());
     };
@@ -31,6 +62,69 @@ fn validate_connector_binding(binding: &ProviderRootConnectorBinding) -> Result<
         ));
     }
     Ok(())
+}
+
+/// Released connector authority retained after its named selector is removed.
+///
+/// This is separate from [`AppliedProviderRoot`]: it can authenticate a later
+/// compatible re-add but does not restore removed selector membership.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetachedReleasedProviderRootAuthority {
+    id: String,
+    provider: ctx_history_core::CaptureProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kind: Option<ctx_history_capture_model::ProviderRootKind>,
+    connector_binding: ProviderRootConnectorBinding,
+}
+
+impl DetachedReleasedProviderRootAuthority {
+    pub fn from_applied(root: &AppliedProviderRoot) -> Result<Option<Self>> {
+        if root.source_identity() != ProviderRootSourceIdentity::Released {
+            return Ok(None);
+        }
+        let authority = Self {
+            id: root.definition.id.clone(),
+            provider: root.definition.provider,
+            kind: root.definition.kind,
+            connector_binding: root.connector_binding.clone().ok_or_else(|| {
+                IndexError::InvalidProviderRoots(format!(
+                    "released root {} has no connector binding",
+                    root.definition.id
+                ))
+            })?,
+        };
+        authority.validate_contract()?;
+        Ok(Some(authority))
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn matches_definition(&self, definition: &ProviderRootDefinition) -> bool {
+        self.id == definition.id
+            && self.provider == definition.provider
+            && self.kind == definition.kind
+    }
+
+    pub fn retained_authority(&self) -> RetainedProviderRootAuthority {
+        RetainedProviderRootAuthority::released(self.connector_binding.clone())
+    }
+
+    pub(crate) fn validate_contract(&self) -> Result<()> {
+        validate_provider_root_identity(&self.id, self.provider, self.kind)?;
+        validate_connector_binding(&self.connector_binding)?;
+        if released_connector_is_path_independent(self.provider)
+            != self.connector_binding.identity_root().is_none()
+        {
+            return Err(IndexError::InvalidProviderRoots(format!(
+                "detached released root {} carries the wrong connector binding kind",
+                self.id
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Generation-authoritative expansion of one configured provider home.
@@ -190,6 +284,30 @@ impl AppliedProviderRoot {
         }
     }
 
+    pub fn with_released_automatic_route_roles(
+        mut self,
+        mut automatic_route_roles: Vec<ReleasedProviderRootAutomaticRole>,
+    ) -> Result<Self> {
+        automatic_route_roles
+            .sort_by(|left, right| left.source_format().cmp(right.source_format()));
+        let connector_binding = self.connector_binding.take().ok_or_else(|| {
+            IndexError::InvalidProviderRoots(format!(
+                "released root {} has no connector binding",
+                self.definition.id
+            ))
+        })?;
+        if self.source_identity != ProviderRootSourceIdentity::Released {
+            return Err(IndexError::InvalidProviderRoots(format!(
+                "named root {} cannot retain automatic route roles",
+                self.definition.id
+            )));
+        }
+        self.connector_binding =
+            Some(connector_binding.with_automatic_route_roles(automatic_route_roles));
+        self.validate_contract()?;
+        Ok(self)
+    }
+
     pub fn routes(&self) -> &[SourceRouteIdentity] {
         &self.routes
     }
@@ -291,6 +409,7 @@ const fn released_connector_is_path_independent(
 }
 
 fn validate_provider_root_definition(root: &ProviderRootDefinition) -> Result<()> {
+    validate_provider_root_identity(&root.id, root.provider, root.kind)?;
     let valid_selector = |value: &str| {
         !value.is_empty()
             && value.len() <= MAX_PROVIDER_ROOT_SELECTOR_BYTES
@@ -298,18 +417,6 @@ fn validate_provider_root_definition(root: &ProviderRootDefinition) -> Result<()
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     };
-    if !valid_selector(&root.id) {
-        return Err(IndexError::InvalidProviderRoots(format!(
-            "root id {:?} is invalid",
-            root.id
-        )));
-    }
-    if !root.has_valid_kind() {
-        return Err(IndexError::InvalidProviderRoots(format!(
-            "root {} has an invalid provider/kind combination",
-            root.id
-        )));
-    }
     if root
         .group
         .as_deref()
@@ -335,4 +442,41 @@ fn validate_provider_root_definition(root: &ProviderRootDefinition) -> Result<()
         )));
     }
     Ok(())
+}
+
+fn validate_provider_root_identity(
+    id: &str,
+    provider: ctx_history_core::CaptureProvider,
+    kind: Option<ctx_history_capture_model::ProviderRootKind>,
+) -> Result<()> {
+    let valid_selector = |value: &str| {
+        !value.is_empty()
+            && value.len() <= MAX_PROVIDER_ROOT_SELECTOR_BYTES
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    };
+    if !valid_selector(id) {
+        return Err(IndexError::InvalidProviderRoots(format!(
+            "root id {:?} is invalid",
+            id
+        )));
+    }
+    if !provider_kind_is_valid(provider, kind) {
+        return Err(IndexError::InvalidProviderRoots(format!(
+            "root {} has an invalid provider/kind combination",
+            id
+        )));
+    }
+    Ok(())
+}
+
+const fn provider_kind_is_valid(
+    provider: ctx_history_core::CaptureProvider,
+    kind: Option<ctx_history_capture_model::ProviderRootKind>,
+) -> bool {
+    match provider {
+        ctx_history_core::CaptureProvider::OpenHands => kind.is_some(),
+        _ => kind.is_none(),
+    }
 }

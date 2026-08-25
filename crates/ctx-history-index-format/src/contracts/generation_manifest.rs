@@ -34,12 +34,32 @@ impl GenerationManifest {
     }
 
     pub fn from_parts_with_record_aggregates_and_provider_roots(
+        sources: Vec<CertifiedSource>,
+        core_record_aggregates: Vec<SourceCoreRecordAggregate>,
+        source_routes: Vec<SourceRouteSnapshot>,
+        automatic_provider_discovery: bool,
+        provider_root_config_digest: String,
+        provider_roots: Vec<AppliedProviderRoot>,
+    ) -> Result<Self> {
+        Self::from_parts_with_record_aggregates_and_provider_roots_and_detached_authorities(
+            sources,
+            core_record_aggregates,
+            source_routes,
+            automatic_provider_discovery,
+            provider_root_config_digest,
+            provider_roots,
+            Vec::new(),
+        )
+    }
+
+    pub fn from_parts_with_record_aggregates_and_provider_roots_and_detached_authorities(
         mut sources: Vec<CertifiedSource>,
         mut core_record_aggregates: Vec<SourceCoreRecordAggregate>,
         mut source_routes: Vec<SourceRouteSnapshot>,
         automatic_provider_discovery: bool,
         provider_root_config_digest: String,
         mut provider_roots: Vec<AppliedProviderRoot>,
+        mut detached_released_provider_roots: Vec<DetachedReleasedProviderRootAuthority>,
     ) -> Result<Self> {
         sources.sort_by(|left, right| {
             source_sort_key(left.observation().source())
@@ -101,6 +121,7 @@ impl GenerationManifest {
             })
             .collect::<Result<Vec<_>>>()?;
         provider_roots.sort_by(|left, right| left.definition.id.cmp(&right.definition.id));
+        detached_released_provider_roots.sort_by(|left, right| left.id().cmp(right.id()));
         core_record_aggregates.sort_by(|left, right| {
             left.source_identity_digest
                 .cmp(&right.source_identity_digest)
@@ -131,6 +152,7 @@ impl GenerationManifest {
             automatic_provider_discovery,
             provider_root_config_digest,
             provider_roots,
+            detached_released_provider_roots,
         };
         manifest.validate_contract()?;
         Ok(manifest)
@@ -164,6 +186,7 @@ impl GenerationManifest {
             && self.automatic_provider_discovery == other.automatic_provider_discovery
             && self.provider_root_config_digest == other.provider_root_config_digest
             && self.provider_roots == other.provider_roots
+            && self.detached_released_provider_roots == other.detached_released_provider_roots
     }
 
     pub(crate) fn apply_validated_source_replacements(
@@ -232,6 +255,7 @@ impl GenerationManifest {
             automatic_provider_discovery: self.automatic_provider_discovery,
             provider_root_config_digest: self.provider_root_config_digest.clone(),
             provider_roots: self.provider_roots.clone(),
+            detached_released_provider_roots: self.detached_released_provider_roots.clone(),
         })
     }
 
@@ -259,6 +283,12 @@ impl GenerationManifest {
 
     pub fn provider_roots(&self) -> &[AppliedProviderRoot] {
         &self.provider_roots
+    }
+
+    /// Non-selectable released authority retained for a compatible future
+    /// re-add after an active root has been removed.
+    pub fn detached_released_provider_roots(&self) -> &[DetachedReleasedProviderRootAuthority] {
+        &self.detached_released_provider_roots
     }
 
     pub fn provider_root(&self, id: &str) -> Option<&AppliedProviderRoot> {
@@ -338,6 +368,26 @@ impl GenerationManifest {
             return Err(IndexError::InvalidProviderRoots(
                 "root definitions are not bounded, strictly sorted, and unique".to_owned(),
             ));
+        }
+        if self.detached_released_provider_roots.len() > MAX_DETACHED_RELEASED_PROVIDER_ROOTS
+            || self
+                .detached_released_provider_roots
+                .windows(2)
+                .any(|pair| pair[0].id() >= pair[1].id())
+        {
+            return Err(IndexError::InvalidProviderRoots(
+                "detached released root authorities are not bounded, strictly sorted, and unique"
+                    .to_owned(),
+            ));
+        }
+        for authority in &self.detached_released_provider_roots {
+            authority.validate_contract()?;
+            if self.provider_root(authority.id()).is_some() {
+                return Err(IndexError::InvalidProviderRoots(format!(
+                    "detached released root authority {} remains active",
+                    authority.id()
+                )));
+            }
         }
         let definitions = self
             .provider_roots

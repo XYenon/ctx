@@ -40,8 +40,8 @@ pub use progress::{
 };
 pub use provider_root::{
     provider_source_config_digest, ProviderRootConnectorBinding, ProviderRootDefinition,
-    ProviderRootKind, ProviderRootSourceIdentity, RetainedProviderRootAuthority,
-    MAX_CONFIGURED_PROVIDER_ROOTS, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
+    ProviderRootKind, ProviderRootSourceIdentity, ReleasedProviderRootAutomaticRole,
+    RetainedProviderRootAuthority, MAX_CONFIGURED_PROVIDER_ROOTS, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
 };
 pub use record::RecordDigest;
 pub use route::{

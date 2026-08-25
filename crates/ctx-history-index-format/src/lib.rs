@@ -20,11 +20,12 @@ mod verification_record;
 
 pub use contracts::{
     AppliedProviderRoot, AppliedProviderRootSourceMembership,
-    CommittedPredecessorMigrationRecovery, ConsecutiveSourceMissingCount, GenerationManifest,
-    IndexError, ProviderRootConnectorBinding, Result, SourceCoreRecordAggregate,
-    SourceMissingObservationPoint, SourceRouteMissingState, SourceRouteSnapshot,
-    GENERATION_MANIFEST_VERSION, LEXICAL_ANALYZER_VERSION, LEXICAL_SCHEMA_VERSION,
-    LEXICAL_SEGMENT_MERGE_FAN_IN, MAX_PUBLICATION_METADATA_BYTES,
+    CommittedPredecessorMigrationRecovery, ConsecutiveSourceMissingCount,
+    DetachedReleasedProviderRootAuthority, GenerationManifest, IndexError,
+    ProviderRootConnectorBinding, Result, SourceCoreRecordAggregate, SourceMissingObservationPoint,
+    SourceRouteMissingState, SourceRouteSnapshot, GENERATION_MANIFEST_VERSION,
+    LEXICAL_ANALYZER_VERSION, LEXICAL_SCHEMA_VERSION, LEXICAL_SEGMENT_MERGE_FAN_IN,
+    MAX_DETACHED_RELEASED_PROVIDER_ROOTS, MAX_PUBLICATION_METADATA_BYTES,
 };
 pub use ctx_history_capture_model::{
     ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity, SourceRouteIdentity,

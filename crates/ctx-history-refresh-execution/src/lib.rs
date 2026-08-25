@@ -299,11 +299,19 @@ fn configured_retained_provider_roots(
                     .iter()
                     .find(|applied| provider_root_retention_compatible(applied.definition(), root))
             });
-            retained.map(|applied| {
-                applied
-                    .retained_authority()
-                    .map(|authority| (root.id.clone(), authority))
-            })
+            retained
+                .map(|applied| applied.retained_authority())
+                .or_else(|| {
+                    retained_generation.and_then(|generation| {
+                        generation
+                            .manifest()
+                            .detached_released_provider_roots()
+                            .iter()
+                            .find(|authority| authority.matches_definition(root))
+                            .map(|authority| Ok(authority.retained_authority()))
+                    })
+                })
+                .map(|authority| authority.map(|authority| (root.id.clone(), authority)))
         })
         .collect::<ctx_history_index::Result<BTreeMap<_, _>>>()
         .map_err(Into::into)

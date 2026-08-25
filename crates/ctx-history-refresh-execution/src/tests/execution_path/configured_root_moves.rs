@@ -614,7 +614,7 @@ fn watch_catalog_preserves_released_identity_across_path_and_group_replacement()
 }
 
 #[test]
-fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes() {
+fn released_overlap_root_move_remove_and_readd_preserves_exact_identity() {
     for automatic_first in [true, false] {
         let temp = tempfile::tempdir().unwrap();
         let fixture = fs::canonicalize(temp.path()).unwrap();
@@ -767,6 +767,16 @@ fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes()
                 .len(),
             1
         );
+        let published_identity = ["releasedfirstcanary", "releasedsecondcanary"].map(|marker| {
+            let hits = published.search_event_candidates(marker, 10).unwrap();
+            assert_eq!(hits.len(), 1, "{marker}");
+            serde_json::to_vec(&(
+                hits[0].event.source.clone(),
+                hits[0].event.session_id,
+                hits[0].event.event_id,
+            ))
+            .unwrap()
+        });
         drop(published);
 
         let removed_discovery = moved_discovery
@@ -840,7 +850,7 @@ fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes()
         assert_eq!(rejoined.manifest().provider_roots().len(), 1);
         assert_eq!(
             rejoined.manifest().provider_roots()[0].source_identity(),
-            ProviderRootSourceIdentity::NamedV1
+            ProviderRootSourceIdentity::Released
         );
         let allowed_source_keys = rejoined
             .manifest()
@@ -868,6 +878,23 @@ fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes()
                 .len(),
             1
         );
+        for (marker, expected) in ["releasedfirstcanary", "releasedsecondcanary"]
+            .into_iter()
+            .zip(published_identity)
+        {
+            let hits = rejoined.search_event_candidates(marker, 10).unwrap();
+            assert_eq!(hits.len(), 1, "{marker}");
+            assert_eq!(
+                serde_json::to_vec(&(
+                    hits[0].event.source.clone(),
+                    hits[0].event.session_id,
+                    hits[0].event.event_id,
+                ))
+                .unwrap(),
+                expected,
+                "{marker} source/session/event identity"
+            );
+        }
     }
 }
 

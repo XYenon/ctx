@@ -1,6 +1,7 @@
 use super::*;
 use ctx_history_capture_model::{
-    ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
+    ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity, ProviderRouteRole,
+    ReleasedProviderRootAutomaticRole,
 };
 use ctx_history_core::CaptureProvider;
 use ctx_history_core::{
@@ -122,6 +123,109 @@ fn released_provider_root_retains_immutable_connector_authority_across_moves() {
             .unwrap(),
         original
     );
+}
+
+#[test]
+fn detached_released_authority_is_bounded_and_platform_independent() {
+    let temp = tempfile::tempdir().unwrap();
+    let authorities = (0..MAX_DETACHED_RELEASED_PROVIDER_ROOTS)
+        .map(|index| {
+            let root = AppliedProviderRoot::with_source_identity(
+                ProviderRootDefinition {
+                    id: format!("released-{index}"),
+                    provider: CaptureProvider::Codex,
+                    path: temp.path().join(format!("root-{index}")),
+                    group: None,
+                    kind: None,
+                },
+                ProviderRootSourceIdentity::Released,
+                Vec::new(),
+            )
+            .unwrap();
+            DetachedReleasedProviderRootAuthority::from_applied(&root)
+                .unwrap()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let exact_bound = GenerationManifest::from_parts_with_record_aggregates_and_provider_roots_and_detached_authorities(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        true,
+        provider_source_config_digest(true, &[]),
+        Vec::new(),
+        authorities.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        exact_bound.detached_released_provider_roots().len(),
+        MAX_DETACHED_RELEASED_PROVIDER_ROOTS
+    );
+
+    let overflow_root = AppliedProviderRoot::with_source_identity(
+        ProviderRootDefinition {
+            id: "released-overflow".to_owned(),
+            provider: CaptureProvider::Codex,
+            path: temp.path().join("root-overflow"),
+            group: None,
+            kind: None,
+        },
+        ProviderRootSourceIdentity::Released,
+        Vec::new(),
+    )
+    .unwrap();
+    let mut overflow = authorities;
+    overflow.push(
+        DetachedReleasedProviderRootAuthority::from_applied(&overflow_root)
+            .unwrap()
+            .unwrap(),
+    );
+    assert!(matches!(
+        GenerationManifest::from_parts_with_record_aggregates_and_provider_roots_and_detached_authorities(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            true,
+            provider_source_config_digest(true, &[]),
+            Vec::new(),
+            overflow,
+        ),
+        Err(IndexError::InvalidProviderRoots(detail))
+            if detail.contains("detached released root authorities")
+    ));
+}
+
+#[test]
+fn released_connector_automatic_roles_are_bounded() {
+    let temp = tempfile::tempdir().unwrap();
+    let roles = (0..=64_u64)
+        .map(|index| {
+            let component = index.to_be_bytes();
+            let role = ProviderRouteRole::from_dynamic([component.as_slice()]).unwrap();
+            ReleasedProviderRootAutomaticRole::new(
+                format!("fixture_{index}"),
+                role.as_bytes().to_vec(),
+            )
+        })
+        .collect();
+    let binding = ProviderRootConnectorBinding::released_rooted_v1(temp.path().join("identity"))
+        .with_automatic_route_roles(roles);
+    assert!(matches!(
+        AppliedProviderRoot::with_source_identity_and_connector_binding(
+            ProviderRootDefinition {
+                id: "bounded".to_owned(),
+                provider: CaptureProvider::Hermes,
+                path: temp.path().join("current"),
+                group: None,
+                kind: None,
+            },
+            ProviderRootSourceIdentity::Released,
+            Some(binding),
+            Vec::new(),
+        ),
+        Err(IndexError::InvalidProviderRoots(detail))
+            if detail.contains("automatic route roles are not bounded")
+    ));
 }
 
 #[test]

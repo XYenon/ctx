@@ -1,4 +1,5 @@
 use super::*;
+use ctx_history_capture_model::ReleasedProviderRootAutomaticRole;
 
 #[derive(Debug, Clone)]
 pub(super) struct ReleasedProviderRootRoute {
@@ -85,13 +86,40 @@ pub(super) fn applied_provider_roots(
         .configured_provider_roots()
         .iter()
         .map(|definition| {
-            let mut routes = registry
+            let root_routes = registry
                 .routes
                 .iter()
                 .filter(|route| {
                     configured_provider_root_for_source(discovery, &route.metadata.source)
                         .is_some_and(|root| root.id == definition.id)
                 })
+                .collect::<Vec<_>>();
+            let mut automatic_route_roles = BTreeMap::new();
+            for route in &root_routes {
+                let Some(role) = route
+                    .metadata
+                    .source
+                    .route_provenance
+                    .automatic_route_role()
+                else {
+                    continue;
+                };
+                let source_format = route.metadata.source.source_format.to_owned();
+                let role = role.as_bytes().to_vec();
+                if automatic_route_roles
+                    .insert(source_format.clone(), role.clone())
+                    .is_some_and(|previous| previous != role)
+                {
+                    return Err(SourceBackedCoordinatorError::Index(
+                        IndexError::InvalidProviderRoots(format!(
+                            "released root {} has conflicting automatic route roles for {source_format}",
+                            definition.id
+                        )),
+                    ));
+                }
+            }
+            let mut routes = root_routes
+                .into_iter()
                 .filter_map(|route| route.metadata.route_identity.clone())
                 .collect::<BTreeSet<_>>();
             let mut exact = BTreeMap::<SourceRouteIdentity, Vec<String>>::new();
@@ -121,6 +149,26 @@ pub(super) fn applied_provider_roots(
                 ),
             }
             .map_err(SourceBackedCoordinatorError::Index)?;
+            let root = if source_identity == ProviderRootSourceIdentity::Released {
+                let mut retained_automatic_route_roles = root
+                    .connector_binding()
+                    .into_iter()
+                    .flat_map(|binding| binding.automatic_route_roles())
+                    .map(|role| (role.source_format().to_owned(), role.role().to_vec()))
+                    .collect::<BTreeMap<_, _>>();
+                retained_automatic_route_roles.extend(automatic_route_roles);
+                root.with_released_automatic_route_roles(
+                    retained_automatic_route_roles
+                        .into_iter()
+                        .map(|(source_format, role)| {
+                            ReleasedProviderRootAutomaticRole::new(source_format, role)
+                        })
+                        .collect(),
+                )
+                .map_err(SourceBackedCoordinatorError::Index)?
+            } else {
+                root
+            };
             root.with_exact_source_memberships(
                 exact
                     .into_iter()
