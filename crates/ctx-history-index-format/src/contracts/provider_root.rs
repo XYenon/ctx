@@ -1,6 +1,6 @@
 use ctx_history_capture_model::{
-    ProviderRootDefinition, ProviderRootSourceIdentity, SourceRouteIdentity,
-    MAX_PROVIDER_ROOT_SELECTOR_BYTES,
+    ProviderRootConnectorBinding, ProviderRootDefinition, ProviderRootSourceIdentity,
+    RetainedProviderRootAuthority, SourceRouteIdentity, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
 };
 use serde::{Deserialize, Serialize};
 
@@ -8,62 +8,29 @@ use super::{IndexError, Result};
 
 const MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES: usize = 16 * 1024;
 
-/// Immutable automatic-discovery authority retained by a released root.
-///
-/// The configured definition records the root's current scan path. This
-/// binding records whether released identity is path-independent or retains
-/// an original automatic root, so later path moves can reconstruct the same
-/// connector without reopening the old location.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ProviderRootConnectorBinding {
-    ReleasedPathIndependentV1,
-    ReleasedRootedV1 { identity_root: std::path::PathBuf },
-}
-
-impl ProviderRootConnectorBinding {
-    pub const fn released_path_independent_v1() -> Self {
-        Self::ReleasedPathIndependentV1
+fn validate_connector_binding(binding: &ProviderRootConnectorBinding) -> Result<()> {
+    let Some(path) = binding.identity_root() else {
+        return Ok(());
+    };
+    let Some(text) = path.to_str() else {
+        return Err(IndexError::InvalidProviderRoots(
+            "released connector identity root is not UTF-8".to_owned(),
+        ));
+    };
+    if !path.is_absolute()
+        || text.len() > MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+    {
+        return Err(IndexError::InvalidProviderRoots(
+            "released connector identity root is not a bounded normalized absolute path".to_owned(),
+        ));
     }
-
-    pub fn released_rooted_v1(identity_root: impl Into<std::path::PathBuf>) -> Self {
-        Self::ReleasedRootedV1 {
-            identity_root: identity_root.into(),
-        }
-    }
-
-    pub fn identity_root(&self) -> Option<&std::path::Path> {
-        match self {
-            Self::ReleasedPathIndependentV1 => None,
-            Self::ReleasedRootedV1 { identity_root } => Some(identity_root),
-        }
-    }
-
-    fn validate_contract(&self) -> Result<()> {
-        let Some(path) = self.identity_root() else {
-            return Ok(());
-        };
-        let Some(text) = path.to_str() else {
-            return Err(IndexError::InvalidProviderRoots(
-                "released connector identity root is not UTF-8".to_owned(),
-            ));
-        };
-        if !path.is_absolute()
-            || text.len() > MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES
-            || path.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::CurDir | std::path::Component::ParentDir
-                )
-            })
-        {
-            return Err(IndexError::InvalidProviderRoots(
-                "released connector identity root is not a bounded normalized absolute path"
-                    .to_owned(),
-            ));
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Generation-authoritative expansion of one configured provider home.
@@ -128,6 +95,19 @@ impl AppliedProviderRoot {
         Ok(root)
     }
 
+    pub fn with_retained_authority(
+        definition: ProviderRootDefinition,
+        authority: RetainedProviderRootAuthority,
+        routes: Vec<SourceRouteIdentity>,
+    ) -> Result<Self> {
+        Self::with_source_identity_and_connector_binding(
+            definition,
+            authority.source_identity(),
+            authority.connector_binding().cloned(),
+            routes,
+        )
+    }
+
     pub fn definition(&self) -> &ProviderRootDefinition {
         &self.definition
     }
@@ -140,6 +120,22 @@ impl AppliedProviderRoot {
         self.connector_binding.as_ref()
     }
 
+    pub fn retained_authority(&self) -> Result<RetainedProviderRootAuthority> {
+        match self.source_identity {
+            ProviderRootSourceIdentity::NamedV1 => Ok(RetainedProviderRootAuthority::named_v1()),
+            ProviderRootSourceIdentity::Released => self
+                .connector_binding
+                .clone()
+                .map(RetainedProviderRootAuthority::released)
+                .ok_or_else(|| {
+                    IndexError::InvalidProviderRoots(format!(
+                        "released root {} has no connector binding",
+                        self.definition.id
+                    ))
+                }),
+        }
+    }
+
     pub fn routes(&self) -> &[SourceRouteIdentity] {
         &self.routes
     }
@@ -148,7 +144,7 @@ impl AppliedProviderRoot {
         validate_provider_root_definition(&self.definition)?;
         match (self.source_identity, &self.connector_binding) {
             (ProviderRootSourceIdentity::Released, Some(binding)) => {
-                binding.validate_contract()?;
+                validate_connector_binding(binding)?;
                 if released_connector_is_path_independent(self.definition.provider)
                     != binding.identity_root().is_none()
                 {

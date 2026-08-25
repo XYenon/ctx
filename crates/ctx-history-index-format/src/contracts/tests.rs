@@ -68,6 +68,24 @@ fn released_provider_root_retains_immutable_connector_authority_across_moves() {
             .unwrap(),
         original
     );
+
+    let mut moved_again = moved;
+    moved_again.path = temp.path().join("moved-again-hermes-home");
+    let reconstructed = AppliedProviderRoot::with_retained_authority(
+        moved_again.clone(),
+        retained.retained_authority().unwrap(),
+        Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(reconstructed.definition(), &moved_again);
+    assert_eq!(
+        reconstructed
+            .connector_binding()
+            .unwrap()
+            .identity_root()
+            .unwrap(),
+        original
+    );
 }
 
 #[test]

@@ -1,3 +1,4 @@
+pub use ctx_history_capture_model::ProviderRootConnectorBinding;
 use ctx_history_capture_model::{
     provider_source_config_digest, SourceRouteIdentity, SourceRouteIdentityError,
     MAX_CONFIGURED_PROVIDER_ROOTS,
@@ -21,7 +22,7 @@ use crate::{
 mod digest;
 mod provider_root;
 use digest::{decode_sha256_hex, is_sha256_hex};
-pub use provider_root::{AppliedProviderRoot, ProviderRootConnectorBinding};
+pub use provider_root::AppliedProviderRoot;
 
 pub const GENERATION_MANIFEST_VERSION: u32 = 10;
 pub const LEXICAL_SCHEMA_VERSION: u32 = LEXICAL_SCHEMA_REVISION;

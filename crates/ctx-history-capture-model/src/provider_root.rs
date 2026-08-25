@@ -78,6 +78,71 @@ impl ProviderRootSourceIdentity {
     }
 }
 
+/// Immutable automatic-discovery authority retained by a released root.
+///
+/// A configured definition records the current scan path. This binding records
+/// whether released identity is path-independent or retains an original
+/// automatic root that must survive later configured-path moves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProviderRootConnectorBinding {
+    ReleasedPathIndependentV1,
+    ReleasedRootedV1 { identity_root: PathBuf },
+}
+
+impl ProviderRootConnectorBinding {
+    pub const fn released_path_independent_v1() -> Self {
+        Self::ReleasedPathIndependentV1
+    }
+
+    pub fn released_rooted_v1(identity_root: impl Into<PathBuf>) -> Self {
+        Self::ReleasedRootedV1 {
+            identity_root: identity_root.into(),
+        }
+    }
+
+    pub fn identity_root(&self) -> Option<&std::path::Path> {
+        match self {
+            Self::ReleasedPathIndependentV1 => None,
+            Self::ReleasedRootedV1 { identity_root } => Some(identity_root),
+        }
+    }
+}
+
+/// Minimal retained root state needed to reconstruct discovery authority.
+///
+/// Generation route membership remains index-owned and is intentionally not
+/// exposed through the capture facade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetainedProviderRootAuthority {
+    NamedV1,
+    Released(ProviderRootConnectorBinding),
+}
+
+impl RetainedProviderRootAuthority {
+    pub const fn named_v1() -> Self {
+        Self::NamedV1
+    }
+
+    pub fn released(binding: ProviderRootConnectorBinding) -> Self {
+        Self::Released(binding)
+    }
+
+    pub const fn source_identity(&self) -> ProviderRootSourceIdentity {
+        match self {
+            Self::NamedV1 => ProviderRootSourceIdentity::NamedV1,
+            Self::Released(_) => ProviderRootSourceIdentity::Released,
+        }
+    }
+
+    pub fn connector_binding(&self) -> Option<&ProviderRootConnectorBinding> {
+        match self {
+            Self::NamedV1 => None,
+            Self::Released(binding) => Some(binding),
+        }
+    }
+}
+
 /// Canonical desired/applied identity for one user-named provider home.
 ///
 /// A provider adapter expands the home into physical routes. Human group
