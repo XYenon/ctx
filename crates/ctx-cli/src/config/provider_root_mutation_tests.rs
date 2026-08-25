@@ -190,7 +190,9 @@ fn provider_root_replace_adds_an_absent_name_and_remove_rejects_a_missing_name()
 
 #[test]
 fn provider_root_cli_mutation_uses_every_enabled_capability_path_kind() {
-    use ctx_history_capture::{configured_root_capabilities, ConfiguredRootPathKind};
+    use ctx_history_capture::{
+        configured_root_capabilities, ConfiguredRootPathKind, ProviderRootKind,
+    };
 
     for capability in configured_root_capabilities()
         .iter()
@@ -215,21 +217,25 @@ fn provider_root_cli_mutation_uses_every_enabled_capability_path_kind() {
             }
         }
 
-        add_provider_root(
+        let kind = (capability.provider == CaptureProvider::OpenHands)
+            .then_some(ProviderRootKind::OpenHandsCurrentConversations);
+        add_provider_root_with_kind(
             data_root.path(),
             "root",
             capability.provider,
             &original,
             None,
+            kind,
             false,
         )
         .unwrap();
-        let replaced = add_provider_root(
+        let replaced = add_provider_root_with_kind(
             data_root.path(),
             "root",
             capability.provider,
             &replacement,
             None,
+            kind,
             true,
         )
         .unwrap();
@@ -239,12 +245,13 @@ fn provider_root_cli_mutation_uses_every_enabled_capability_path_kind() {
 
         let error = format!(
             "{:#}",
-            add_provider_root(
+            add_provider_root_with_kind(
                 data_root.path(),
                 "root",
                 capability.provider,
                 &wrong_kind,
                 None,
+                kind,
                 true,
             )
             .unwrap_err()
@@ -320,4 +327,107 @@ fn provider_root_replace_revalidates_a_concurrent_config_edit_after_locking() {
     assert!(error.contains("unknown config key"), "{error}");
     assert!(error.contains("search.semantics"), "{error}");
     assert_eq!(fs::read_to_string(&config_path).unwrap(), concurrent_text);
+}
+
+#[test]
+fn openhands_root_kind_is_required_replaced_atomically_and_rejects_overlap() {
+    use ctx_history_capture::ProviderRootKind;
+
+    let data_root = tempfile::tempdir().unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let legacy = fixture.path().join("legacy");
+    let current = legacy.join("conversations");
+    let disjoint_current = fixture.path().join("current");
+    fs::create_dir_all(&current).unwrap();
+    fs::create_dir(&disjoint_current).unwrap();
+
+    let missing_kind = format!(
+        "{:#}",
+        add_provider_root(
+            data_root.path(),
+            "legacy",
+            CaptureProvider::OpenHands,
+            &legacy,
+            None,
+            false,
+        )
+        .unwrap_err()
+    );
+    assert!(missing_kind.contains("require --kind"), "{missing_kind}");
+
+    let added = add_provider_root_with_kind(
+        data_root.path(),
+        "legacy",
+        CaptureProvider::OpenHands,
+        &legacy,
+        None,
+        Some(ProviderRootKind::OpenHandsLegacyPersistence),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        added.root.kind,
+        Some(ProviderRootKind::OpenHandsLegacyPersistence)
+    );
+    let config_path = AppConfig::config_path(data_root.path());
+    let before = fs::read(&config_path).unwrap();
+
+    let overlap = format!(
+        "{:#}",
+        add_provider_root_with_kind(
+            data_root.path(),
+            "current",
+            CaptureProvider::OpenHands,
+            &current,
+            None,
+            Some(ProviderRootKind::OpenHandsCurrentConversations),
+            false,
+        )
+        .unwrap_err()
+    );
+    assert!(overlap.contains("overlaps legacy/current"), "{overlap}");
+    assert_eq!(fs::read(&config_path).unwrap(), before);
+
+    let changed_kind_without_replace = format!(
+        "{:#}",
+        add_provider_root_with_kind(
+            data_root.path(),
+            "legacy",
+            CaptureProvider::OpenHands,
+            &legacy,
+            None,
+            Some(ProviderRootKind::OpenHandsCurrentConversations),
+            false,
+        )
+        .unwrap_err()
+    );
+    assert!(changed_kind_without_replace.contains("pass --replace"));
+
+    let current = add_provider_root_with_kind(
+        data_root.path(),
+        "current",
+        CaptureProvider::OpenHands,
+        &disjoint_current,
+        None,
+        Some(ProviderRootKind::OpenHandsCurrentConversations),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        current.root.kind,
+        Some(ProviderRootKind::OpenHandsCurrentConversations)
+    );
+    let before_noop = fs::read(&config_path).unwrap();
+    let noop = add_provider_root_with_kind(
+        data_root.path(),
+        "current",
+        CaptureProvider::OpenHands,
+        &disjoint_current,
+        None,
+        Some(ProviderRootKind::OpenHandsCurrentConversations),
+        true,
+    )
+    .unwrap();
+    assert!(!noop.changed);
+    assert_eq!(fs::read(&config_path).unwrap(), before_noop);
 }

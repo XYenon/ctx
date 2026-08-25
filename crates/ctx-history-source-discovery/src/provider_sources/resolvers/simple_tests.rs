@@ -117,12 +117,14 @@ fn configured_codex_roots_add_to_scalar_selection_and_expand_independently() {
             provider: CaptureProvider::Codex,
             path: personal.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Codex,
             path: work.clone(),
             group: Some("work".to_owned()),
+            kind: None,
         },
     ];
     let report = resolve_provider(
@@ -168,12 +170,14 @@ fn configured_claude_roots_add_to_automatic_discovery() {
             provider: CaptureProvider::Claude,
             path: claude_personal.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Claude,
             path: claude_work.clone(),
             group: Some("work".to_owned()),
+            kind: None,
         },
     ];
     let context = base.clone().with_configured_provider_roots(configured);
@@ -207,6 +211,7 @@ fn distinct_configured_root_ids_cannot_share_one_physical_root() {
         provider: CaptureProvider::Claude,
         path: shared.clone(),
         group: None,
+        kind: None,
     };
     let report = resolve_provider(
         &base
@@ -241,6 +246,7 @@ fn global_automatic_disable_keeps_only_named_provider_roots() {
             provider: CaptureProvider::Claude,
             path: named_claude.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         }]);
 
     assert_eq!(
@@ -271,6 +277,7 @@ fn naming_the_automatic_home_deduplicates_the_physical_source() {
             provider: CaptureProvider::Claude,
             path: home.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         },
     ]);
 
@@ -300,6 +307,7 @@ fn naming_the_automatic_home_through_a_symlink_deduplicates_the_physical_source(
             provider: CaptureProvider::Claude,
             path: alias,
             group: Some("personal".to_owned()),
+            kind: None,
         },
     ]);
 
@@ -327,12 +335,14 @@ fn configured_roots_reject_present_roots_of_the_wrong_kind() {
             provider: CaptureProvider::Claude,
             path: unavailable_claude.clone(),
             group: None,
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "codex-unavailable".to_owned(),
             provider: CaptureProvider::Codex,
             path: unavailable_codex.clone(),
             group: None,
+            kind: None,
         },
     ];
     let context = base

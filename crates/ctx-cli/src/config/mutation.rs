@@ -82,12 +82,25 @@ pub struct ProviderRootMutation {
     pub replaced: bool,
 }
 
+#[cfg(test)]
 pub fn add_provider_root(
     data_root: &Path,
     id: &str,
     provider: CaptureProvider,
     root: &Path,
     group: Option<&str>,
+    replace: bool,
+) -> Result<ProviderRootMutation> {
+    add_provider_root_with_kind(data_root, id, provider, root, group, None, replace)
+}
+
+pub fn add_provider_root_with_kind(
+    data_root: &Path,
+    id: &str,
+    provider: CaptureProvider,
+    root: &Path,
+    group: Option<&str>,
+    kind: Option<ProviderRootKind>,
     replace: bool,
 ) -> Result<ProviderRootMutation> {
     validate_root_selector("provider root name", id)?;
@@ -108,12 +121,14 @@ pub fn add_provider_root(
     if let Some(group) = group {
         validate_root_selector("source group", group)?;
     }
+    validate_provider_root_kind(provider, kind)?;
     let root = validated_provider_root_path(data_root, provider, root)?;
     let desired = ProviderRootDefinition {
         id: id.to_owned(),
         provider,
         path: root,
         group: group.map(str::to_owned),
+        kind,
     };
     if let Some(conflicting) = current.provider_roots.values().find(|existing| {
         existing.id != id
@@ -123,6 +138,14 @@ pub fn add_provider_root(
         bail!(
             "{} history root `{id}` resolves to the same physical root as `{}`",
             provider.as_str(),
+            conflicting.id
+        );
+    }
+    if let Some(conflicting) = current.provider_roots.values().find(|existing| {
+        existing.id != id && existing.openhands_selected_histories_overlap(&desired)
+    }) {
+        bail!(
+            "openhands history root `{id}` overlaps legacy/current history selected by `{}`",
             conflicting.id
         );
     }
@@ -136,7 +159,7 @@ pub fn add_provider_root(
         }
         if !replace {
             bail!(
-                "provider root `{id}` already exists with different settings; pass --replace to atomically replace its path and group"
+                "provider root `{id}` already exists with different settings; pass --replace to atomically replace its kind, path, and group"
             );
         }
         let mut document = text
@@ -144,6 +167,14 @@ pub fn add_provider_root(
             .with_context(|| format!("parse {}", path.display()))?;
         let root = configured_root_table_mut(&mut document, id)?;
         root.insert("path", toml_edit::value(desired.path.display().to_string()));
+        match desired.kind {
+            Some(kind) => {
+                root.insert("kind", toml_edit::value(kind.as_str()));
+            }
+            None => {
+                root.remove("kind");
+            }
+        }
         match desired.group.as_deref() {
             Some(group) => {
                 root.insert("group", toml_edit::value(group));
@@ -167,6 +198,9 @@ pub fn add_provider_root(
     let mut item = toml_edit::Table::new();
     item.insert("provider", toml_edit::value(provider.as_str()));
     item.insert("path", toml_edit::value(desired.path.display().to_string()));
+    if let Some(kind) = desired.kind {
+        item.insert("kind", toml_edit::value(kind.as_str()));
+    }
     if let Some(group) = desired.group.as_deref() {
         item.insert("group", toml_edit::value(group));
     }

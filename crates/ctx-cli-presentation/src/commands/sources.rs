@@ -55,6 +55,12 @@ pub enum SourcesCommand {
         source_group: Option<String>,
         #[arg(
             long,
+            value_name = "KIND",
+            help = "OpenHands layout: current-conversations or legacy-persistence"
+        )]
+        kind: Option<ctx_history_cli::ProviderRootKind>,
+        #[arg(
+            long,
             help = "Atomically replace an existing same-provider root; omitting --source-group clears its group"
         )]
         replace: bool,
@@ -155,6 +161,7 @@ mod tests {
                 provider,
                 root,
                 source_group: Some(ref group),
+                kind: None,
                 replace: false,
                 ..
             }) if provider.capture_provider() == ctx_history_core::CaptureProvider::Claude
@@ -175,6 +182,39 @@ mod tests {
         ])
         .unwrap_err();
         assert!(error.to_string().contains("--scope"));
+
+        let openhands = TestCli::try_parse_from([
+            "ctx",
+            "add",
+            "openhands-current",
+            "--provider",
+            "openhands",
+            "--root",
+            "/tmp/openhands",
+            "--kind",
+            "current-conversations",
+        ])
+        .unwrap();
+        assert!(matches!(
+            openhands.sources.command,
+            Some(SourcesCommand::Add {
+                kind: Some(ctx_history_cli::ProviderRootKind::OpenHandsCurrentConversations),
+                ..
+            })
+        ));
+
+        assert!(TestCli::try_parse_from([
+            "ctx",
+            "add",
+            "openhands-current",
+            "--provider",
+            "openhands",
+            "--root",
+            "/tmp/openhands",
+            "--kind",
+            "Current-Conversations",
+        ])
+        .is_err());
     }
 
     #[test]
@@ -194,6 +234,7 @@ mod tests {
             cleared.sources.command,
             Some(SourcesCommand::Add {
                 source_group: None,
+                kind: None,
                 replace: true,
                 ..
             })
@@ -216,6 +257,7 @@ mod tests {
             set.sources.command,
             Some(SourcesCommand::Add {
                 source_group: Some(ref group),
+                kind: None,
                 replace: true,
                 ..
             }) if group == "team"

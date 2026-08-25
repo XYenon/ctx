@@ -144,6 +144,7 @@ fn named_v1_source_session_and_event_keep_released_identity_bytes() {
         provider: ctx_history_core::CaptureProvider::Claude,
         path: PathBuf::from("/old/claude"),
         group: None,
+        kind: None,
     };
     let root_lineage = ProviderRootSourceIdentity::NamedV1.lineage(&root).unwrap();
     root.path = PathBuf::from("/new/claude");

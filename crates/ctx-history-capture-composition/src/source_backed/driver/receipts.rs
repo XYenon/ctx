@@ -454,9 +454,7 @@ impl SourceBackedProviderRegistry {
             let definition = root.definition();
             let Some(previous) = retained.iter().find(|previous| {
                 let previous_definition = previous.definition();
-                previous_definition.id == definition.id
-                    && previous_definition.provider == definition.provider
-                    && previous_definition.path == definition.path
+                previous_definition == definition
             }) else {
                 continue;
             };
@@ -915,6 +913,7 @@ mod tests {
                 provider,
                 path: PathBuf::from("/machine-specific-provider-home"),
                 group: None,
+                kind: None,
             };
             let lineage = ProviderRootSourceIdentity::NamedV1.lineage(&root).unwrap();
             let identity = provider_root_source_backed_route_identity(
@@ -989,5 +988,38 @@ mod tests {
             error,
             SourceBackedCoordinatorError::Index(IndexError::InvalidSourceRouteIdentity)
         ));
+    }
+
+    #[test]
+    fn unavailable_configured_root_retention_requires_matching_kind() {
+        use ctx_history_capture_model::ProviderRootKind;
+
+        let definition = |kind| ProviderRootDefinition {
+            id: "openhands".to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: PathBuf::from("/configured/openhands"),
+            group: None,
+            kind: Some(kind),
+        };
+        let legacy = definition(ProviderRootKind::OpenHandsLegacyPersistence);
+        let current = definition(ProviderRootKind::OpenHandsCurrentConversations);
+        let route = SourceRouteIdentity::from_sha256("5a".repeat(32)).unwrap();
+        let retained = AppliedProviderRoot::new(legacy, vec![route]).unwrap();
+        let mut registry = SourceBackedProviderRegistry::new();
+        registry
+            .set_applied_provider_roots(
+                false,
+                "digest".to_owned(),
+                vec![AppliedProviderRoot::new(current, Vec::new()).unwrap()],
+            )
+            .unwrap();
+
+        registry
+            .retain_unavailable_provider_root_routes(&[retained])
+            .unwrap();
+
+        assert!(registry.applied_provider_roots().unwrap().2[0]
+            .routes()
+            .is_empty());
     }
 }

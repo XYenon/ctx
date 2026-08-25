@@ -1,6 +1,6 @@
 use super::*;
 use ctx_history_capture_model::{
-    ProviderRootDefinition, ProviderRouteRole, ProviderSourceRouteProvenance,
+    ProviderRootDefinition, ProviderRootKind, ProviderRouteRole, ProviderSourceRouteProvenance,
 };
 use std::str::FromStr;
 
@@ -194,6 +194,7 @@ fn only_one_configured_root_per_provider_can_own_the_released_namespace() {
             provider: CaptureProvider::Claude,
             path: path.to_path_buf(),
             group: None,
+            kind: None,
         })
         .collect::<Vec<_>>();
     let context = DiscoveryContext::new(
@@ -267,12 +268,14 @@ fn configured_claude_roots_register_as_independent_routes_and_aliases() {
             provider: CaptureProvider::Claude,
             path: personal.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Claude,
             path: work.clone(),
             group: Some("work".to_owned()),
+            kind: None,
         },
     ];
     let context = DiscoveryContext::new(
@@ -333,6 +336,126 @@ fn configured_claude_roots_register_as_independent_routes_and_aliases() {
 }
 
 #[test]
+fn configured_openhands_kinds_register_distinct_cross_root_identities() {
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let current = temp.path().join("openhands-current");
+    let legacy = temp.path().join("openhands-legacy");
+    for path in [&home, &cwd, &current, &legacy] {
+        fs::create_dir_all(path).unwrap();
+    }
+    let roots = vec![
+        ProviderRootDefinition {
+            id: "current".to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: current.clone(),
+            group: None,
+            kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+        },
+        ProviderRootDefinition {
+            id: "legacy".to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: legacy.clone(),
+            group: None,
+            kind: Some(ProviderRootKind::OpenHandsLegacyPersistence),
+        },
+    ];
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_configured_provider_roots(roots.clone());
+    let sources = vec![
+        configured_source(
+            fixture_provider_source_at(
+                CaptureProvider::OpenHands,
+                OPENHANDS_CURRENT_CLI_SOURCE_FORMAT,
+                ProviderImportSupport::Native,
+                current.clone(),
+            ),
+            "current",
+            current,
+            "openhands-current-conversations",
+        ),
+        configured_source(
+            fixture_provider_source_at(
+                CaptureProvider::OpenHands,
+                "openhands_file_events",
+                ProviderImportSupport::Native,
+                legacy.clone(),
+            ),
+            "legacy",
+            legacy,
+            "openhands-legacy-persistence",
+        ),
+    ];
+
+    let build = build_automatic_source_backed_registry_from_parts(
+        &context,
+        &temp.path().join("ctx-data"),
+        sources,
+        Vec::new(),
+    );
+    assert!(build.issues.is_empty(), "{:?}", build.issues);
+    let (_, _, applied) = build.registry.applied_provider_roots().unwrap();
+    assert_eq!(applied.len(), 2);
+    assert_eq!(applied[0].routes().len(), 1);
+    assert_eq!(applied[1].routes().len(), 1);
+    assert_ne!(applied[0].routes(), applied[1].routes());
+}
+
+#[test]
+fn cold_missing_configured_openhands_root_creates_no_sessions() {
+    let temp = tempdir().unwrap();
+    let missing = temp.path().join("missing-openhands");
+    let root = ProviderRootDefinition {
+        id: "current".to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path: missing.clone(),
+        group: None,
+        kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+    };
+    let context = DiscoveryContext::new(
+        temp.path(),
+        temp.path(),
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_configured_provider_roots(vec![root]);
+    let mut source = fixture_provider_source_at(
+        CaptureProvider::OpenHands,
+        OPENHANDS_CURRENT_CLI_SOURCE_FORMAT,
+        ProviderImportSupport::Native,
+        missing.clone(),
+    );
+    source.exists = false;
+    source.status = ProviderSourceStatus::Missing;
+    let build = build_automatic_source_backed_registry_from_parts(
+        &context,
+        &temp.path().join("ctx-data"),
+        vec![configured_source(
+            source,
+            "current",
+            missing,
+            "openhands-current-conversations",
+        )],
+        Vec::new(),
+    );
+    assert!(build.issues.is_empty(), "{:?}", build.issues);
+
+    let receipt = refresh_source_backed_generation(
+        temp.path().join("index"),
+        &build.registry,
+        WriterOptions::default(),
+    )
+    .unwrap();
+    assert!(receipt.sources.is_empty());
+}
+
+#[test]
 fn nested_claude_homes_keep_exact_root_alias_membership() {
     let temp = tempdir().unwrap();
     let outer = temp.path().join("claude-outer");
@@ -346,12 +469,14 @@ fn nested_claude_homes_keep_exact_root_alias_membership() {
             provider: CaptureProvider::Claude,
             path: outer.clone(),
             group: None,
+            kind: None,
         },
         ProviderRootDefinition {
             id: "inner".to_owned(),
             provider: CaptureProvider::Claude,
             path: inner.clone(),
             group: None,
+            kind: None,
         },
     ];
     let context = DiscoveryContext::new(
@@ -417,12 +542,14 @@ fn nested_codex_homes_keep_exact_root_alias_membership() {
             provider: CaptureProvider::Codex,
             path: outer.clone(),
             group: None,
+            kind: None,
         },
         ProviderRootDefinition {
             id: "inner".to_owned(),
             provider: CaptureProvider::Codex,
             path: inner.clone(),
             group: None,
+            kind: None,
         },
     ];
     let context = DiscoveryContext::new(
@@ -499,6 +626,7 @@ fn configured_codex_root_keeps_its_route_alias_for_a_present_session_tree() {
         provider: CaptureProvider::Codex,
         path: root.clone(),
         group: Some("personal".to_owned()),
+        kind: None,
     };
     let context = DiscoveryContext::new(
         &home,
@@ -551,6 +679,7 @@ fn naming_the_released_codex_home_preserves_the_compound_session_route() {
         provider: CaptureProvider::Codex,
         path: root.clone(),
         group: Some("released".to_owned()),
+        kind: None,
     };
     let context = DiscoveryContext::new(
         &home,

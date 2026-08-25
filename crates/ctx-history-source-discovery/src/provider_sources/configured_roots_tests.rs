@@ -5,6 +5,7 @@ use std::{
 };
 
 use ctx_history_capture_model::ProviderRootDefinition;
+use ctx_history_capture_model::ProviderRootKind;
 
 use super::*;
 use crate::provider_sources::{
@@ -203,6 +204,10 @@ const COMPOUND_CAPABILITIES: &[(CaptureProvider, ConfiguredRootExpander)] = &[
         CaptureProvider::Cline,
         ConfiguredRootExpander::ClineCommonDataRootV1,
     ),
+    (
+        CaptureProvider::OpenHands,
+        ConfiguredRootExpander::OpenHandsKindV1,
+    ),
 ];
 
 fn context(temp: &tempfile::TempDir) -> DiscoveryContext {
@@ -224,6 +229,18 @@ fn root(id: &str, provider: CaptureProvider, path: PathBuf) -> ProviderRootDefin
         provider,
         path,
         group: None,
+        kind: (provider == CaptureProvider::OpenHands)
+            .then_some(ProviderRootKind::OpenHandsCurrentConversations),
+    }
+}
+
+fn openhands_root(id: &str, path: PathBuf, kind: ProviderRootKind) -> ProviderRootDefinition {
+    ProviderRootDefinition {
+        id: id.to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path,
+        group: None,
+        kind: Some(kind),
     }
 }
 
@@ -270,7 +287,7 @@ fn assert_configured(source: &ProviderSource, expected_id: &str, expected_root: 
 }
 
 #[test]
-fn capability_table_is_exhaustive_and_freezes_31_9_1_inventory() {
+fn capability_table_is_exhaustive_and_freezes_32_9_0_inventory() {
     assert_eq!(configured_root_capabilities().len(), 41);
     let actual = configured_root_capabilities()
         .iter()
@@ -302,13 +319,13 @@ fn capability_table_is_exhaustive_and_freezes_31_9_1_inventory() {
         .map(|capability| capability.provider)
         .collect::<Vec<_>>();
 
-    assert_eq!(enabled, 31);
+    assert_eq!(enabled, 32);
     assert_eq!(intentional.len(), 9);
     assert_eq!(
         intentional,
         INTENTIONAL_AUTOMATIC_EXACT.iter().copied().collect()
     );
-    assert_eq!(pending, vec![CaptureProvider::OpenHands]);
+    assert!(pending.is_empty());
 }
 
 #[test]
@@ -356,7 +373,7 @@ fn all_enabled_roots_emit_missing_candidates_with_provenance_when_automatic_is_f
         &context,
     );
 
-    assert_eq!(report.sources.len(), 34);
+    assert_eq!(report.sources.len(), 35);
     assert!(report.issues.is_empty());
     assert!(report
         .sources
@@ -689,6 +706,7 @@ fn every_expander_family_rejects_symlinked_configured_roots() {
         CaptureProvider::Codex,
         CaptureProvider::OpenClaw,
         CaptureProvider::Cline,
+        CaptureProvider::OpenHands,
     ] {
         let temp = crate::test_support_paths::tempdir().unwrap();
         let target = temp.path().join("target");
@@ -712,6 +730,32 @@ fn every_expander_family_rejects_symlinked_configured_roots() {
         assert_eq!(report.issues.len(), 1, "{provider:?}");
         assert_eq!(report.issues[0].reason, CONFIGURED_ROOT_SYMLINK_REASON);
     }
+}
+
+#[test]
+fn empty_openhands_current_root_is_accepted_without_content_inference() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let selected = temp.path().join("openhands-current");
+    fs::create_dir_all(&selected).unwrap();
+
+    let report = configured_report(
+        context(&temp),
+        vec![openhands_root(
+            "current",
+            selected.clone(),
+            ProviderRootKind::OpenHandsCurrentConversations,
+        )],
+        CaptureProvider::OpenHands,
+    );
+
+    assert!(report.issues.is_empty());
+    assert_eq!(report.sources.len(), 1);
+    assert_eq!(report.sources[0].path, selected);
+    assert_eq!(report.sources[0].source_format, "openhands_cli_file_events");
+    assert_eq!(
+        route_role(&report.sources[0]),
+        b"openhands-current-conversations"
+    );
 }
 
 #[cfg(unix)]
@@ -857,7 +901,7 @@ fn codex_child_kinds_are_checked_independently_without_hiding_valid_peers() {
 }
 
 #[test]
-fn intentional_and_pending_rows_ignore_configured_roots_even_when_layouts_exist() {
+fn intentional_rows_ignore_configured_roots_even_when_layouts_exist() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     for &provider in INTENTIONAL_AUTOMATIC_EXACT {
         let selected = temp.path().join(provider.as_str());
@@ -877,14 +921,58 @@ fn intentional_and_pending_rows_ignore_configured_roots_even_when_layouts_exist(
     let report = configured_report(
         context(&temp),
         vec![
-            root("legacy", CaptureProvider::OpenHands, legacy),
-            root("current", CaptureProvider::OpenHands, current),
+            openhands_root(
+                "legacy",
+                legacy,
+                ProviderRootKind::OpenHandsLegacyPersistence,
+            ),
+            openhands_root(
+                "current",
+                current,
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
+        ],
+        CaptureProvider::OpenHands,
+    );
+    assert_eq!(report.sources.len(), 2);
+    assert_eq!(report.sources[0].source_format, "openhands_cli_file_events");
+    assert_eq!(
+        route_role(&report.sources[0]),
+        b"openhands-current-conversations"
+    );
+    assert_eq!(report.sources[1].source_format, "openhands_file_events");
+    assert_eq!(
+        route_role(&report.sources[1]),
+        b"openhands-legacy-persistence"
+    );
+}
+
+#[test]
+fn openhands_configured_legacy_and_nested_current_roots_fail_closed() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let legacy = temp.path().join("legacy");
+    let current = legacy.join("current");
+    fs::create_dir_all(&current).unwrap();
+    let report = configured_report(
+        context(&temp),
+        vec![
+            openhands_root(
+                "legacy",
+                legacy,
+                ProviderRootKind::OpenHandsLegacyPersistence,
+            ),
+            openhands_root(
+                "current",
+                current,
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
         ],
         CaptureProvider::OpenHands,
     );
     assert!(report.sources.is_empty());
+    assert_eq!(report.issues.len(), 1);
     assert_eq!(
-        configured_root_capability(CaptureProvider::OpenHands).map(|row| row.state),
-        Some(ConfiguredRootCapabilityState::PendingNamedSupport)
+        report.issues[0].kind,
+        DiscoveryIssueKind::ConfiguredRootConflict
     );
 }

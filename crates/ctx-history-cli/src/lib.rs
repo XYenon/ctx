@@ -38,7 +38,7 @@ pub use cli::{
     ContentScopeArg, LocateArgs, LocateEventArgs, LocateSessionArgs, LocateTarget, SearchArgs,
     SearchBackendArg, ShowArgs, ShowEventArgs, ShowSessionArgs, ShowTarget,
 };
-pub use ctx_history_capture::ProviderRootDefinition;
+pub use ctx_history_capture::{ProviderRootDefinition, ProviderRootKind};
 pub use import_application::{run_import_application, ImportApplicationPort};
 pub use import_report::{
     import_completion_error, import_error_scope, import_failure_type, import_report_failure_type,

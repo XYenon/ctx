@@ -7,6 +7,46 @@ use sha2::{Digest, Sha256};
 pub const MAX_CONFIGURED_PROVIDER_ROOTS: usize = 64;
 pub const MAX_PROVIDER_ROOT_SELECTOR_BYTES: usize = 64;
 
+/// Exact persisted OpenHands history layout selected by a configured root.
+///
+/// This is deliberately not a provider-general selector: OpenHands has two
+/// incompatible native history layouts whose paths alone do not establish the
+/// intended contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderRootKind {
+    #[serde(rename = "current-conversations")]
+    OpenHandsCurrentConversations,
+    #[serde(rename = "legacy-persistence")]
+    OpenHandsLegacyPersistence,
+}
+
+impl ProviderRootKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenHandsCurrentConversations => "current-conversations",
+            Self::OpenHandsLegacyPersistence => "legacy-persistence",
+        }
+    }
+}
+
+impl std::fmt::Display for ProviderRootKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ProviderRootKind {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "current-conversations" => Ok(Self::OpenHandsCurrentConversations),
+            "legacy-persistence" => Ok(Self::OpenHandsLegacyPersistence),
+            _ => Err("expected current-conversations or legacy-persistence"),
+        }
+    }
+}
+
 /// Source-identity namespace applied to one configured provider home.
 ///
 /// Released homes retain the identity contract used by automatic discovery
@@ -50,6 +90,40 @@ pub struct ProviderRootDefinition {
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ProviderRootKind>,
+}
+
+impl ProviderRootDefinition {
+    /// Validates the narrow provider/kind pairing at every persisted boundary.
+    pub const fn has_valid_kind(&self) -> bool {
+        match self.provider {
+            CaptureProvider::OpenHands => self.kind.is_some(),
+            _ => self.kind.is_none(),
+        }
+    }
+
+    /// OpenHands legacy persistence recursively owns its configured directory.
+    /// A current-conversations root nested within it would select the same
+    /// history, while disjoint roots remain independently valid.
+    pub fn openhands_selected_histories_overlap(&self, other: &Self) -> bool {
+        let (legacy, current) = match (self.provider, self.kind, other.provider, other.kind) {
+            (
+                CaptureProvider::OpenHands,
+                Some(ProviderRootKind::OpenHandsLegacyPersistence),
+                CaptureProvider::OpenHands,
+                Some(ProviderRootKind::OpenHandsCurrentConversations),
+            ) => (self, other),
+            (
+                CaptureProvider::OpenHands,
+                Some(ProviderRootKind::OpenHandsCurrentConversations),
+                CaptureProvider::OpenHands,
+                Some(ProviderRootKind::OpenHandsLegacyPersistence),
+            ) => (other, self),
+            _ => return false,
+        };
+        current.path.starts_with(&legacy.path)
+    }
 }
 
 pub fn provider_source_config_digest(
@@ -86,6 +160,15 @@ pub fn provider_source_config_digest(
                     }
                     None => digest.update([0]),
                 }
+                match root.kind {
+                    Some(kind) => {
+                        digest.update([1]);
+                        let kind = kind.as_str().as_bytes();
+                        digest.update((kind.len() as u64).to_be_bytes());
+                        digest.update(kind);
+                    }
+                    None => digest.update([0]),
+                }
             }
         }
     }
@@ -105,6 +188,7 @@ mod tests {
             provider: CaptureProvider::Claude,
             path: PathBuf::from(OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', byte])),
             group: None,
+            kind: None,
         };
 
         assert_ne!(
@@ -124,6 +208,7 @@ mod tests {
             provider: CaptureProvider::Claude,
             path: PathBuf::from("/old/claude"),
             group: None,
+            kind: None,
         };
         let original = ProviderRootSourceIdentity::NamedV1.lineage(&root);
         root.path = PathBuf::from("/new/claude");
@@ -131,5 +216,52 @@ mod tests {
         root.id = "work".to_owned();
         assert_ne!(original, ProviderRootSourceIdentity::NamedV1.lineage(&root));
         assert_eq!(ProviderRootSourceIdentity::Released.lineage(&root), None);
+    }
+
+    #[test]
+    fn openhands_kind_has_exact_wire_spellings_and_changes_config_digest_only() {
+        let mut root = ProviderRootDefinition {
+            id: "work".to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: PathBuf::from("/history/openhands"),
+            group: None,
+            kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+        };
+        assert_eq!(
+            serde_json::to_string(&root).unwrap(),
+            r#"{"id":"work","provider":"openhands","path":"/history/openhands","kind":"current-conversations"}"#
+        );
+        assert_eq!(
+            "legacy-persistence".parse(),
+            Ok(ProviderRootKind::OpenHandsLegacyPersistence)
+        );
+        assert!("Current-Conversations".parse::<ProviderRootKind>().is_err());
+        let current_digest = provider_source_config_digest(true, std::slice::from_ref(&root));
+        let lineage = ProviderRootSourceIdentity::NamedV1.lineage(&root);
+        root.kind = Some(ProviderRootKind::OpenHandsLegacyPersistence);
+        assert_ne!(
+            current_digest,
+            provider_source_config_digest(true, std::slice::from_ref(&root))
+        );
+        assert_eq!(lineage, ProviderRootSourceIdentity::NamedV1.lineage(&root));
+    }
+
+    #[test]
+    fn old_provider_json_and_digest_remain_byte_compatible() {
+        let root = ProviderRootDefinition {
+            id: "work".to_owned(),
+            provider: CaptureProvider::Claude,
+            path: PathBuf::from("/history/claude"),
+            group: Some("team".to_owned()),
+            kind: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&root).unwrap(),
+            r#"{"id":"work","provider":"claude","path":"/history/claude","group":"team"}"#
+        );
+        assert_eq!(
+            provider_source_config_digest(true, std::slice::from_ref(&root)),
+            "3ed4b8cc54b28c0c87bde2fb771ee2b60d57fd27c84833b6e245b262f3c24bcd"
+        );
     }
 }

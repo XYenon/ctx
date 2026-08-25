@@ -586,6 +586,7 @@ mod ui_tests {
             provider: CaptureProvider::Claude,
             path: PathBuf::from("/tmp/claude"),
             group: Some("personal".to_owned()),
+            kind: None,
         };
         assert_eq!(
             configured_root_for_source(std::slice::from_ref(&root), &configured_source)
@@ -637,6 +638,7 @@ mod ui_tests {
             provider: CaptureProvider::Claude,
             path: alias,
             group: Some("personal".to_owned()),
+            kind: None,
         };
 
         assert_eq!(

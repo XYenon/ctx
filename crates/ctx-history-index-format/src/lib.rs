@@ -26,7 +26,7 @@ pub use contracts::{
     LEXICAL_SEGMENT_MERGE_FAN_IN, MAX_PUBLICATION_METADATA_BYTES,
 };
 pub use ctx_history_capture_model::{
-    ProviderRootDefinition, ProviderRootSourceIdentity, SourceRouteIdentity,
+    ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity, SourceRouteIdentity,
 };
 #[doc(hidden)]
 pub use policy::is_semantic_candidate;

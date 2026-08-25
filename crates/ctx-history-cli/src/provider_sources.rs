@@ -489,6 +489,7 @@ mod tests {
             provider: CaptureProvider::Claude,
             path: claude_home.clone(),
             group: Some("work".to_owned()),
+            kind: None,
         }];
 
         for automatic_provider_discovery in [true, false] {

@@ -32,13 +32,15 @@ pub(crate) fn run_sources(
             provider,
             root,
             source_group,
+            kind,
             replace,
-        } => crate::config::add_provider_root(
+        } => crate::config::add_provider_root_with_kind(
             &environment.data_root,
             &name,
             provider.capture_provider(),
             &root,
             source_group.as_deref(),
+            kind,
             replace,
         )?,
         SourcesCommand::Remove { name } => {
@@ -58,16 +60,20 @@ fn provider_root_mutation_json(
     operation: &str,
     mutation: &crate::config::ProviderRootMutation,
 ) -> serde_json::Value {
+    let mut root = serde_json::json!({
+        "name": mutation.root.id.clone(),
+        "provider": mutation.root.provider.as_str(),
+        "path": mutation.root.path.clone(),
+        "group": mutation.root.group.clone(),
+    });
+    if mutation.root.provider == ctx_history_core::CaptureProvider::OpenHands {
+        root["kind"] = serde_json::json!(mutation.root.kind.map(|kind| kind.as_str()));
+    }
     serde_json::json!({
         "schema_version": 1,
         "operation": operation,
         "changed": mutation.changed,
-        "root": {
-            "name": mutation.root.id.clone(),
-            "provider": mutation.root.provider.as_str(),
-            "path": mutation.root.path.clone(),
-            "group": mutation.root.group.clone(),
-        }
+        "root": root,
     })
 }
 
@@ -107,6 +113,7 @@ mod tests {
                 provider: CaptureProvider::Claude,
                 path: PathBuf::from("/history/work"),
                 group: Some("team".to_owned()),
+                kind: None,
             },
             changed,
             replaced,
@@ -164,5 +171,20 @@ mod tests {
             );
             assert!(!rendered.contains("provider home"), "{rendered}");
         }
+    }
+
+    #[test]
+    fn openhands_json_adds_kind_without_changing_old_provider_shape() {
+        let mut openhands = mutation(true, false);
+        openhands.root.provider = CaptureProvider::OpenHands;
+        openhands.root.kind =
+            Some(ctx_history_capture::ProviderRootKind::OpenHandsCurrentConversations);
+        let value = provider_root_mutation_json("add", &openhands);
+        assert_eq!(value["root"]["kind"], "current-conversations");
+        assert!(
+            provider_root_mutation_json("add", &mutation(true, false))["root"]
+                .get("kind")
+                .is_none()
+        );
     }
 }

@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use anyhow::{bail, Context, Result};
 use ctx_history_capture::{
     configured_root_capabilities, configured_root_capability, ConfiguredRootPathKind,
-    MAX_PROVIDER_ROOT_SELECTOR_BYTES,
+    ProviderRootKind, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
 };
 use ctx_history_core::CaptureProvider;
 
@@ -23,6 +23,22 @@ pub(super) fn validate_provider_root_support(provider: CaptureProvider) -> Resul
         "configured history roots are not enabled for {}; enabled providers: {enabled}",
         provider.as_str(),
     )
+}
+
+pub(super) fn validate_provider_root_kind(
+    provider: CaptureProvider,
+    kind: Option<ProviderRootKind>,
+) -> Result<()> {
+    match (provider, kind) {
+        (CaptureProvider::OpenHands, None) => {
+            bail!("openhands configured history roots require --kind current-conversations or legacy-persistence")
+        }
+        (CaptureProvider::OpenHands, Some(_)) | (_, None) => Ok(()),
+        (_, Some(kind)) => bail!(
+            "configured history root kind {} is only supported for openhands",
+            kind.as_str()
+        ),
+    }
 }
 
 pub(super) fn validate_provider_root_existing_kind(

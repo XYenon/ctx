@@ -84,6 +84,12 @@ fn validate_provider_root_definition(root: &ProviderRootDefinition) -> Result<()
             root.id
         )));
     }
+    if !root.has_valid_kind() {
+        return Err(IndexError::InvalidProviderRoots(format!(
+            "root {} has an invalid provider/kind combination",
+            root.id
+        )));
+    }
     if root
         .group
         .as_deref()

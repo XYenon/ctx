@@ -289,10 +289,7 @@ fn configured_provider_root_identities(
                     .manifest()
                     .provider_roots()
                     .iter()
-                    .find(|applied| {
-                        applied.definition().id == root.id
-                            && applied.definition().provider == root.provider
-                    })
+                    .find(|applied| applied.definition() == root)
                     .map(|applied| applied.source_identity())
             });
             retained.map(|identity| (root.id.clone(), identity))

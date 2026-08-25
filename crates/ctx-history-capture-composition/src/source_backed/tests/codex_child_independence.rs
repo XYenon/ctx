@@ -469,12 +469,14 @@ fn unavailable_configured_codex_home_carries_only_itself_while_peer_refreshes() 
             provider: CaptureProvider::Codex,
             path: personal_home.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Codex,
             path: work_home.clone(),
             group: Some("work".to_owned()),
+            kind: None,
         },
     ]);
     let data_root = fixture.join("data");
@@ -565,12 +567,14 @@ fn cold_unavailable_configured_codex_home_does_not_block_healthy_peer() {
             provider: CaptureProvider::Codex,
             path: personal_home,
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Codex,
             path: work_home,
             group: Some("work".to_owned()),
+            kind: None,
         },
     ]);
     let build = build_discovered_codex_registry(&context, &fixture.join("data"));

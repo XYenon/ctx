@@ -275,12 +275,14 @@ fn logical_all_publication_retires_removed_root_during_exact_physical_execution(
         provider: CaptureProvider::Claude,
         path: temp.path().join("claude-personal"),
         group: Some("personal".to_owned()),
+        kind: None,
     };
     let work_definition = ctx_history_capture_model::ProviderRootDefinition {
         id: "work".to_owned(),
         provider: CaptureProvider::Claude,
         path: temp.path().join("claude-work"),
         group: Some("work".to_owned()),
+        kind: None,
     };
 
     let mut initial_registry = SourceBackedProviderRegistry::new();
@@ -375,12 +377,14 @@ fn cold_configured_root_scan_failure_does_not_block_healthy_peer_publication() {
             provider: CaptureProvider::Claude,
             path: temp.path().join("claude-personal"),
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Claude,
             path: temp.path().join("claude-work"),
             group: Some("work".to_owned()),
+            kind: None,
         },
     ];
     let mut registry = SourceBackedProviderRegistry::new();

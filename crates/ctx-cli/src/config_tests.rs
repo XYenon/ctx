@@ -1200,6 +1200,35 @@ fn provider_root_cli_mutations_are_durable_and_preserve_other_config() {
 }
 
 #[test]
+fn persisted_provider_root_kind_is_openhands_only_and_exact() {
+    let data_root = tempfile::tempdir().unwrap();
+    let path = data_root.path().join("openhands-root");
+    let missing_kind = format!(
+        "[sources.roots.work]\nprovider = \"openhands\"\npath = {:?}\n",
+        path.display().to_string()
+    );
+    fs::write(data_root.path().join(CONFIG_FILE), missing_kind).unwrap();
+    let error = format!("{:#}", AppConfig::load(data_root.path()).unwrap_err());
+    assert!(error.contains("require --kind"), "{error}");
+
+    let old_provider_kind = format!(
+        "[sources.roots.work]\nprovider = \"claude\"\npath = {:?}\nkind = \"legacy-persistence\"\n",
+        path.display().to_string()
+    );
+    fs::write(data_root.path().join(CONFIG_FILE), old_provider_kind).unwrap();
+    let error = format!("{:#}", AppConfig::load(data_root.path()).unwrap_err());
+    assert!(error.contains("only supported for openhands"), "{error}");
+
+    let invalid_spelling = format!(
+        "[sources.roots.work]\nprovider = \"openhands\"\npath = {:?}\nkind = \"Current-Conversations\"\n",
+        path.display().to_string()
+    );
+    fs::write(data_root.path().join(CONFIG_FILE), invalid_spelling).unwrap();
+    let error = format!("{:#}", AppConfig::load(data_root.path()).unwrap_err());
+    assert!(error.contains("must be current-conversations"), "{error}");
+}
+
+#[test]
 fn provider_root_cli_mutation_validates_the_capability_path_kind() {
     let data_root = tempfile::tempdir().unwrap();
     let provider_parent = tempfile::tempdir().unwrap();

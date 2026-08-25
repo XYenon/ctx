@@ -610,6 +610,7 @@ fn configured_claude_home_is_additive_and_naming_the_automatic_home_deduplicates
                 provider: CaptureProvider::Claude,
                 path: configured_home.clone(),
                 group: Some("work".to_owned()),
+                kind: None,
             };
             let configured_discovery = automatic_discovery
                 .clone()
@@ -684,7 +685,7 @@ fn configured_claude_home_is_additive_and_naming_the_automatic_home_deduplicates
 }
 
 #[test]
-fn watch_catalog_retains_released_identity_after_named_default_home_moves() {
+fn watch_catalog_does_not_borrow_a_moved_configured_root_identity() {
     let temp = tempfile::tempdir().unwrap();
     let fixture = fs::canonicalize(temp.path()).unwrap();
     let data_root = fixture.join("data");
@@ -713,6 +714,7 @@ fn watch_catalog_retains_released_identity_after_named_default_home_moves() {
         provider: CaptureProvider::Claude,
         path,
         group: Some("work".to_owned()),
+        kind: None,
     };
     let initial_discovery = discovery
         .with_env("CLAUDE_CONFIG_DIR", &released_home)
@@ -753,14 +755,14 @@ fn watch_catalog_retains_released_identity_after_named_default_home_moves() {
         initial_discovery.with_configured_provider_roots(vec![definition(moved_home)]);
     let catalog = source_backed_watch_catalog(&data_root, &moved_discovery).unwrap();
 
-    assert_eq!(
+    assert_ne!(
         catalog.route_ids().cloned().collect::<BTreeSet<_>>(),
         BTreeSet::from([published_route])
     );
 }
 
 #[test]
-fn moved_released_root_wins_if_the_old_automatic_location_reappears() {
+fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes() {
     for automatic_first in [true, false] {
         let temp = tempfile::tempdir().unwrap();
         let fixture = fs::canonicalize(temp.path()).unwrap();
@@ -802,6 +804,7 @@ fn moved_released_root_wins_if_the_old_automatic_location_reappears() {
             provider: CaptureProvider::Claude,
             path,
             group: Some("work".to_owned()),
+            kind: None,
         };
         let initial_discovery = discovery
             .with_env("CLAUDE_CONFIG_DIR", &released_home)
@@ -871,12 +874,12 @@ fn moved_released_root_wins_if_the_old_automatic_location_reappears() {
         .unwrap();
 
         let published = VerifiedIndex::open(&index_root).unwrap();
-        assert_eq!(published.manifest().sources.len(), 2);
-        assert_eq!(published.manifest().source_routes().len(), 1);
+        assert_eq!(published.manifest().sources.len(), 3);
+        assert_eq!(published.manifest().source_routes().len(), 2);
         assert_eq!(published.manifest().provider_roots().len(), 1);
         assert_eq!(
             published.manifest().provider_roots()[0].source_identity(),
-            ProviderRootSourceIdentity::Released
+            ProviderRootSourceIdentity::NamedV1
         );
         assert_eq!(published.manifest().provider_roots()[0].routes().len(), 1);
         let allowed_source_keys = published
@@ -905,10 +908,13 @@ fn moved_released_root_wins_if_the_old_automatic_location_reappears() {
             .search_event_candidates_with_filters("oldautomaticcanary", &work_filter, 10)
             .unwrap()
             .is_empty());
-        assert!(published
-            .search_event_candidates("oldautomaticcanary", 10)
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            published
+                .search_event_candidates("oldautomaticcanary", 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
 
@@ -963,6 +969,7 @@ fn naming_a_failing_automatic_home_carries_it_while_named_peer_advances() {
         provider: CaptureProvider::Claude,
         path,
         group: Some(id.to_owned()),
+        kind: None,
     };
     let peer_definition = definition("peer", peer_home.clone());
     let initial_discovery = discovery
@@ -1131,6 +1138,7 @@ fn unchanged_symlinked_configured_root_retains_history_while_peer_advances() {
         provider: CaptureProvider::Claude,
         path,
         group: Some(id.to_owned()),
+        kind: None,
     };
     let definitions = vec![
         definition("retained", retained_home.clone()),
@@ -1259,6 +1267,7 @@ fn removing_last_configured_claude_home_returns_to_one_automatic_route() {
             provider: CaptureProvider::Claude,
             path: home.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         }]);
     let configured_source = configured_provider_source_for_path(
         CaptureProvider::Claude,
@@ -1346,6 +1355,7 @@ fn moving_a_named_claude_home_preserves_route_and_source_identity() {
         provider: CaptureProvider::Claude,
         path,
         group: Some("work".to_owned()),
+        kind: None,
     };
     let first_discovery = discovery
         .clone()
@@ -1471,6 +1481,7 @@ fn moving_a_named_codex_home_preserves_route_and_source_identity() {
         provider: CaptureProvider::Codex,
         path,
         group: Some("work".to_owned()),
+        kind: None,
     };
     let first_discovery = discovery
         .clone()

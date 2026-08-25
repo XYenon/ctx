@@ -173,6 +173,7 @@ fn daemon_watch_test_catalog_with_provider_root_group(
         provider: CaptureProvider::Codex,
         path: path.parent().expect("history path parent").to_path_buf(),
         group: Some(group.to_owned()),
+        kind: None,
     };
     registry
         .set_applied_provider_roots(
@@ -533,6 +534,7 @@ fn write_observation_fixture_generation(
                 .expect("provider-root fixture file parent")
                 .to_path_buf(),
             group: Some(group.to_owned()),
+            kind: None,
         };
         writer.set_applied_provider_roots(
             true,

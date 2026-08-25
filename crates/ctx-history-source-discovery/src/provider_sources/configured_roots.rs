@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use ctx_history_capture_model::{
-    ProviderRootDefinition, ProviderRouteRole, ProviderSourceRouteProvenance,
+    ProviderRootDefinition, ProviderRootKind, ProviderRouteRole, ProviderSourceRouteProvenance,
 };
 use ctx_history_core::CaptureProvider;
 
@@ -38,6 +38,10 @@ const CONFIGURED_ROOT_PATH_LIMIT_REASON: &str =
     "the configured provider history path exceeds the discovery path limit";
 const CONFIGURED_ROOT_CONFLICT_REASON: &str =
     "distinct configured roots resolve to the same physical provider root";
+const OPENHANDS_CONFIGURED_ROOT_CONFLICT_REASON: &str =
+    "configured OpenHands legacy persistence owns the nested current-conversations history root";
+const OPENHANDS_CONFIGURED_ROOT_KIND_REASON: &str =
+    "configured OpenHands history root requires a valid kind";
 const CONFIGURED_ROOT_ROLE_LIMIT_REASON: &str =
     "the configured provider history child role exceeds the route-role limit";
 const OPENCLAW_CONFIG_INVALID_REASON: &str =
@@ -70,6 +74,8 @@ pub enum ConfiguredRootExpander {
     OpenClawStateRootV1,
     /// Cline common data/store root with independent task and SDK routes.
     ClineCommonDataRootV1,
+    /// OpenHands exact root whose native layout is selected explicitly.
+    OpenHandsKindV1,
 }
 
 /// Support state and complete expansion metadata for one landed provider.
@@ -368,7 +374,7 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::OpenHands,
-        state: ConfiguredRootCapabilityState::PendingNamedSupport,
+        state: compound_source(ConfiguredRootExpander::OpenHandsKindV1),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Cline,
@@ -518,7 +524,29 @@ pub(super) fn expand_configured_roots_for_provider(
         ));
         return report;
     }
+    if roots.iter().enumerate().any(|(index, left)| {
+        roots[index + 1..]
+            .iter()
+            .any(|right| left.openhands_selected_histories_overlap(right))
+    }) {
+        report.issues.push(issue(
+            spec.provider,
+            None,
+            DiscoveryIssueKind::ConfiguredRootConflict,
+            OPENHANDS_CONFIGURED_ROOT_CONFLICT_REASON,
+        ));
+        return report;
+    }
     for root in roots {
+        if !root.has_valid_kind() {
+            report.issues.push(issue(
+                spec.provider,
+                Some(root.path.clone()),
+                DiscoveryIssueKind::SelectorUnreconstructible,
+                OPENHANDS_CONFIGURED_ROOT_KIND_REASON,
+            ));
+            continue;
+        }
         let Some(availability) =
             inspect_configured_path(&mut report, spec, &root.path, expected_path_kind, true)
         else {
@@ -573,9 +601,50 @@ pub(super) fn expand_configured_roots_for_provider(
                 root,
                 CLINE_ROUTES,
             ),
+            ConfiguredRootExpander::OpenHandsKindV1 => {
+                let Some((source_format, route_role)) = openhands_configured_root_route(root)
+                else {
+                    push_issue_once(
+                        &mut report,
+                        spec,
+                        Some(root.path.clone()),
+                        DiscoveryIssueKind::SelectorUnreconstructible,
+                        OPENHANDS_CONFIGURED_ROOT_KIND_REASON,
+                    );
+                    continue;
+                };
+                add_static_routes(
+                    probes,
+                    context.data_root(),
+                    &mut report,
+                    spec,
+                    root,
+                    &[StaticRouteExpansion {
+                        relative_path: &[],
+                        expected_path_kind,
+                        source_format,
+                        route_role,
+                    }],
+                );
+            }
         }
     }
     report
+}
+
+fn openhands_configured_root_route(
+    root: &ProviderRootDefinition,
+) -> Option<(&'static str, &'static str)> {
+    match root.kind {
+        Some(ProviderRootKind::OpenHandsCurrentConversations) => Some((
+            "openhands_cli_file_events",
+            "openhands-current-conversations",
+        )),
+        Some(ProviderRootKind::OpenHandsLegacyPersistence) => {
+            Some(("openhands_file_events", "openhands-legacy-persistence"))
+        }
+        None => None,
+    }
 }
 
 fn add_static_routes(

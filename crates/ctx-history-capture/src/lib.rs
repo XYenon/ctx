@@ -51,7 +51,7 @@ pub use provider_sources::{
 pub use ctx_history_capture_model::{
     provider_source_config_digest, stable_capture_uuid, CatalogSummary, OutputObservationKind,
     OutputOutcome, OutputOutcomeMetadata, ProviderImportFailure, ProviderImportSummary,
-    ProviderImportWorkResult, ProviderRootDefinition, ProviderRootSourceIdentity,
+    ProviderImportWorkResult, ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
     ProviderRouteRole, ProviderRouteRoleError, ProviderSourceFailureKind,
     MAX_CONFIGURED_PROVIDER_ROOTS, MAX_PROVIDER_ROOT_SELECTOR_BYTES, MAX_PROVIDER_ROUTE_ROLE_BYTES,
 };

@@ -1,5 +1,7 @@
 use super::*;
-use ctx_history_capture_model::{ProviderRootDefinition, ProviderRootSourceIdentity};
+use ctx_history_capture_model::{
+    ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
+};
 use ctx_history_core::CaptureProvider;
 
 #[test]
@@ -35,6 +37,7 @@ fn provider_root_aliases_are_bounded_and_generation_local() {
         provider: CaptureProvider::Claude,
         path: temp.path().join("claude-personal"),
         group: Some("personal".to_owned()),
+        kind: None,
     };
     let manifest = GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(
         Vec::new(),
@@ -71,6 +74,7 @@ fn provider_root_manifest_validation_is_provider_generic() {
         provider: CaptureProvider::Cursor,
         path: temp.path().join("cursor-root"),
         group: None,
+        kind: None,
     };
 
     let applied = AppliedProviderRoot::new(definition.clone(), Vec::new()).unwrap();
@@ -82,6 +86,34 @@ fn provider_root_manifest_validation_is_provider_generic() {
 }
 
 #[test]
+fn provider_root_manifest_validates_openhands_kind_at_the_persisted_boundary() {
+    let temp = tempfile::tempdir().unwrap();
+    let invalid = ProviderRootDefinition {
+        id: "openhands".to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path: temp.path().join("openhands"),
+        group: None,
+        kind: None,
+    };
+    assert!(matches!(
+        AppliedProviderRoot::new(invalid, Vec::new()),
+        Err(IndexError::InvalidProviderRoots(_))
+    ));
+
+    let invalid_old_provider = ProviderRootDefinition {
+        id: "claude".to_owned(),
+        provider: CaptureProvider::Claude,
+        path: temp.path().join("claude"),
+        group: None,
+        kind: Some(ProviderRootKind::OpenHandsLegacyPersistence),
+    };
+    assert!(matches!(
+        AppliedProviderRoot::new(invalid_old_provider, Vec::new()),
+        Err(IndexError::InvalidProviderRoots(_))
+    ));
+}
+
+#[test]
 fn provider_root_manifest_prunes_unretained_routes_and_rejects_shared_routes() {
     let temp = tempfile::tempdir().unwrap();
     let route_identity = SourceRouteIdentity::from_sha256("ef".repeat(32)).unwrap();
@@ -90,6 +122,7 @@ fn provider_root_manifest_prunes_unretained_routes_and_rejects_shared_routes() {
         provider: CaptureProvider::Codex,
         path: temp.path().join(format!("codex-{id}")),
         group: None,
+        kind: None,
     };
     let first = definition("first");
     let pruned = GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(

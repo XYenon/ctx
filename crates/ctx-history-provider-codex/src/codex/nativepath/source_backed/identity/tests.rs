@@ -96,6 +96,7 @@ fn named_v1_source_session_and_event_keep_released_identity_bytes() {
         provider: CaptureProvider::Codex,
         path: PathBuf::from("/old/codex"),
         group: None,
+        kind: None,
     };
     let personal_lineage = ProviderRootSourceIdentity::NamedV1
         .lineage(&personal_root)
@@ -111,6 +112,7 @@ fn named_v1_source_session_and_event_keep_released_identity_bytes() {
             provider: CaptureProvider::Codex,
             path: PathBuf::from("/same/codex"),
             group: None,
+            kind: None,
         })
         .unwrap();
 

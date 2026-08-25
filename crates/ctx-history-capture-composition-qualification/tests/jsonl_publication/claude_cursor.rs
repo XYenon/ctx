@@ -452,6 +452,7 @@ fn claude_roots_with_the_same_relative_session_path_publish_independent_sources(
             provider: CaptureProvider::Claude,
             path: path.to_path_buf(),
             group: None,
+            kind: None,
         },
     )
     .collect::<Vec<_>>();
@@ -568,12 +569,14 @@ fn unavailable_configured_claude_home_carries_only_itself_while_peer_refreshes()
             provider: CaptureProvider::Claude,
             path: personal_home.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Claude,
             path: work_home.clone(),
             group: Some("work".to_owned()),
+            kind: None,
         },
     ];
     let context = DiscoveryContext::new(
@@ -655,12 +658,14 @@ fn cold_unavailable_configured_claude_home_does_not_block_healthy_peer() {
             provider: CaptureProvider::Claude,
             path: personal_home.clone(),
             group: Some("personal".to_owned()),
+            kind: None,
         },
         ctx_history_capture_model::ProviderRootDefinition {
             id: "work".to_owned(),
             provider: CaptureProvider::Claude,
             path: work_home.clone(),
             group: Some("work".to_owned()),
+            kind: None,
         },
     ];
     let context = DiscoveryContext::new(

@@ -7,7 +7,8 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use ctx_history_capture::{
-    provider_paths_equivalent, ProviderRootDefinition, MAX_CONFIGURED_PROVIDER_ROOTS,
+    provider_paths_equivalent, ProviderRootDefinition, ProviderRootKind,
+    MAX_CONFIGURED_PROVIDER_ROOTS,
 };
 use ctx_history_core::CaptureProvider;
 use ctx_history_platform::platform_security::{
@@ -19,15 +20,17 @@ mod mutation;
 mod provider_roots;
 mod toml_subset;
 
+#[cfg(test)]
+pub(crate) use mutation::add_provider_root;
 pub(crate) use mutation::{
-    add_provider_root, persisted_daemon_enabled, remove_provider_root, set_daemon_enabled,
-    set_semantic_search_enabled, write_default_config, ProviderRootMutation,
+    add_provider_root_with_kind, persisted_daemon_enabled, remove_provider_root,
+    set_daemon_enabled, set_semantic_search_enabled, write_default_config, ProviderRootMutation,
 };
 
 use crate::deprecated_controls::DeprecatedControls;
 use durable_write::{write_config_durably, ConfigMutationLock};
 use provider_roots::{
-    validate_provider_root_existing_kind, validate_provider_root_path,
+    validate_provider_root_existing_kind, validate_provider_root_kind, validate_provider_root_path,
     validate_provider_root_support, validate_root_selector,
 };
 use toml_subset::*;
@@ -409,8 +412,15 @@ impl AppConfig {
     fn apply_values(&mut self, values: &BTreeMap<String, ConfigValue>) -> Result<()> {
         let mut legacy_daemon_enabled = None;
         let mut indexing_mode = None;
-        let mut provider_roots =
-            BTreeMap::<String, (Option<CaptureProvider>, Option<PathBuf>, Option<String>)>::new();
+        let mut provider_roots = BTreeMap::<
+            String,
+            (
+                Option<CaptureProvider>,
+                Option<PathBuf>,
+                Option<String>,
+                Option<ProviderRootKind>,
+            ),
+        >::new();
         for (key, value) in values {
             if let Some(dynamic) = key.strip_prefix("sources.roots.") {
                 let Some((id, field)) = dynamic.rsplit_once('.') else {
@@ -443,6 +453,15 @@ impl AppConfig {
                         let group = parse_non_empty_string(key, value)?;
                         validate_root_selector("source group", &group)?;
                         draft.2 = Some(group);
+                    }
+                    "kind" => {
+                        let kind = parse_non_empty_string(key, value)?.parse().map_err(|_| {
+                            anyhow::anyhow!(
+                                "sources.roots.{id}.kind at line {} must be current-conversations or legacy-persistence",
+                                value.line
+                            )
+                        })?;
+                        draft.3 = Some(kind);
                     }
                     _ => bail!("unknown config key `{key}` at line {}", value.line),
                 }
@@ -499,11 +518,12 @@ impl AppConfig {
         }
         self.provider_roots = provider_roots
             .into_iter()
-            .map(|(id, (provider, path, group))| {
+            .map(|(id, (provider, path, group, kind))| {
                 let provider = provider
                     .ok_or_else(|| anyhow::anyhow!("sources.roots.{id}.provider is required"))?;
                 let path =
                     path.ok_or_else(|| anyhow::anyhow!("sources.roots.{id}.path is required"))?;
+                validate_provider_root_kind(provider, kind)?;
                 Ok((
                     id.clone(),
                     ProviderRootDefinition {
@@ -511,6 +531,7 @@ impl AppConfig {
                         provider,
                         path,
                         group,
+                        kind,
                     },
                 ))
             })
@@ -536,6 +557,19 @@ impl AppConfig {
                     root.path.display()
                 );
             }
+        }
+        let roots = self.provider_roots.values().collect::<Vec<_>>();
+        if let Some((left, right)) = roots.iter().enumerate().find_map(|(index, left)| {
+            roots[index + 1..]
+                .iter()
+                .find(|right| left.openhands_selected_histories_overlap(right))
+                .map(|right| (*left, *right))
+        }) {
+            bail!(
+                "openhands provider roots `{}` and `{}` select overlapping legacy and current history",
+                left.id,
+                right.id
+            );
         }
         Ok(())
     }
