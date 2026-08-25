@@ -256,8 +256,9 @@ configured-root capability, `sources add` registers an existing provider
 history root under a stable local name in `config.toml`; `sources remove`
 removes that definition. The provider capability determines whether the root
 must be a file or directory; the
-[provider support matrix](provider-support-matrix.json) publishes that state,
-path kind, and expansion strategy for every provider. Configured roots are
+[provider support matrix](provider-support-matrix.json) publishes that state
+and, when enabled, the path kind and expansion strategy for every provider.
+Configured roots are
 added to the provider's ordinary environment/default winner, and every distinct
 configured root is indexed. Registering the already inferred root gives it a name and optional
 group without indexing it twice. Other providers keep their ordinary discovery

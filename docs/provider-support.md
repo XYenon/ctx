@@ -29,8 +29,9 @@ per-file adapter format, such as
 `codex_session_jsonl` for files discovered under `codex_session_jsonl_tree`.
 
 Each row's `configured_root` object also records whether persistent named roots
-are enabled, the required file or directory kind, and the provider's expansion
-strategy. `intentional_automatic_exact` means the provider retains automatic
+are enabled and, when enabled, the required file or directory kind and the
+provider's expansion strategy. `intentional_automatic_exact` means the provider
+retains automatic
 discovery plus one-shot exact import but does not accept `ctx sources add`.
 
 Each provider row also has `lineage_support`. `session_relationship` is either
