@@ -52,6 +52,7 @@ impl HermesSourceCandidate {
         &self.path
     }
 
+    #[cfg(test)]
     pub(crate) fn automatic(
         data_root: impl Into<PathBuf>,
         source: ProviderSource,
@@ -97,6 +98,7 @@ impl HermesSourceCandidate {
 
 /// Admits an explicitly selected Hermes database with caller-owned persistent
 /// lineage. This is the only provider-local entry point for inactive profiles.
+#[cfg(test)]
 pub(crate) fn hermes_source_backed_explicit(
     data_root: impl Into<PathBuf>,
     path: impl Into<PathBuf>,
@@ -155,6 +157,7 @@ fn valid_automatic_profile_name(name: &str) -> bool {
         })
 }
 
+#[cfg(test)]
 fn hermes_source_key(anchor: SourceAnchor) -> HermesSourceBackedResult<SourceKey> {
     hermes_source_key_scoped(anchor, SourceAnchorScope::Unqualified)
 }
