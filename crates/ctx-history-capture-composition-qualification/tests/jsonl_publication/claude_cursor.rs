@@ -483,6 +483,7 @@ fn claude_roots_with_the_same_relative_session_path_publish_independent_sources(
                         route_role: ctx_history_capture_model::ProviderRouteRole::from_static(
                             "claude-projects",
                         ),
+                        automatic_route_role: None,
                     },
             })
             .collect(),

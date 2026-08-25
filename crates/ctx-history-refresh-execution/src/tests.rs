@@ -103,6 +103,25 @@ fn discovery_fixture(root: &Path) -> (PathBuf, PathBuf, DiscoveryContext) {
     (home, cwd, discovery)
 }
 
+#[test]
+fn configured_provider_root_identity_matching_rejects_duplicate_stable_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let (_, _, discovery) = discovery_fixture(temp.path());
+    let roots = [CaptureProvider::Claude, CaptureProvider::Hermes]
+        .map(|provider| ctx_history_capture::ProviderRootDefinition {
+            id: "duplicate".to_owned(),
+            provider,
+            path: temp.path().join(provider.as_str()),
+            group: None,
+            kind: None,
+        })
+        .to_vec();
+    let discovery = discovery.with_configured_provider_roots(roots);
+
+    let error = configured_provider_root_identities(&discovery, None).unwrap_err();
+    assert!(error.to_string().contains("not unique"), "{error:#}");
+}
+
 fn configured_provider_source_for_path(
     provider: CaptureProvider,
     path: PathBuf,
@@ -115,6 +134,7 @@ fn configured_provider_source_for_path(
         root_id: root_id.to_owned(),
         root_path,
         route_role: ProviderRouteRole::from_static(route_role),
+        automatic_route_role: None,
     };
     source
 }

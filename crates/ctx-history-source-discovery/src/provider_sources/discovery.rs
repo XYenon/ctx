@@ -319,21 +319,19 @@ fn preserve_matching_automatic_route_roles(
     canonical: &[ProviderSource],
 ) {
     for source in configured {
-        let Some(route_role) = canonical.iter().find_map(|automatic| {
-            (automatic.provider == source.provider
+        let Some(automatic) = canonical.iter().find(|automatic| {
+            automatic.provider == source.provider
                 && automatic.source_format == source.source_format
-                && super::resolvers::provider_paths_equivalent(&automatic.path, &source.path))
-            .then(|| automatic.route_provenance.automatic_route_role().cloned())
-            .flatten()
+                && super::resolvers::provider_paths_equivalent(&automatic.path, &source.path)
         }) else {
             continue;
         };
         if let ctx_history_capture_model::ProviderSourceRouteProvenance::ConfiguredRoot {
-            route_role: configured_role,
+            automatic_route_role,
             ..
         } = &mut source.route_provenance
         {
-            *configured_role = route_role;
+            *automatic_route_role = automatic.route_provenance.automatic_route_role().cloned();
         }
     }
 }
@@ -405,6 +403,7 @@ mod boundary_error_tests {
                     route_role: ctx_history_capture_model::ProviderRouteRole::from_static(
                         "claude-projects",
                     ),
+                    automatic_route_role: None,
                 },
         }
     }

@@ -688,7 +688,7 @@ fn configured_claude_home_is_additive_and_naming_the_automatic_home_deduplicates
 }
 
 #[test]
-fn watch_catalog_does_not_borrow_a_moved_configured_root_identity() {
+fn watch_catalog_preserves_released_identity_across_path_and_group_replacement() {
     let temp = tempfile::tempdir().unwrap();
     let fixture = fs::canonicalize(temp.path()).unwrap();
     let data_root = fixture.join("data");
@@ -712,17 +712,17 @@ fn watch_catalog_does_not_borrow_a_moved_configured_root_identity() {
         ),
     )
     .unwrap();
-    let definition = |path| ctx_history_capture::ProviderRootDefinition {
+    let definition = |path, group: &str| ctx_history_capture::ProviderRootDefinition {
         id: "work".to_owned(),
         provider: CaptureProvider::Claude,
         path,
-        group: Some("work".to_owned()),
+        group: Some(group.to_owned()),
         kind: None,
     };
     let initial_discovery = discovery
         .with_env("CLAUDE_CONFIG_DIR", &released_home)
         .with_automatic_provider_discovery(false)
-        .with_configured_provider_roots(vec![definition(released_home.clone())]);
+        .with_configured_provider_roots(vec![definition(released_home.clone(), "work")]);
     let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
     refresh_all_provider_sources(
         &initial_discovery,
@@ -754,11 +754,11 @@ fn watch_catalog_does_not_borrow_a_moved_configured_root_identity() {
 
     let moved_home = fixture.join("claude-moved");
     fs::rename(&released_home, &moved_home).unwrap();
-    let moved_discovery =
-        initial_discovery.with_configured_provider_roots(vec![definition(moved_home)]);
+    let moved_discovery = initial_discovery
+        .with_configured_provider_roots(vec![definition(moved_home, "renamed-group")]);
     let catalog = source_backed_watch_catalog(&data_root, &moved_discovery).unwrap();
 
-    assert_ne!(
+    assert_eq!(
         catalog.route_ids().cloned().collect::<BTreeSet<_>>(),
         BTreeSet::from([published_route])
     );
@@ -845,10 +845,10 @@ fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes()
             "oldautomaticcanary",
         );
         let automatic_source =
-            provider_source_for_path(CaptureProvider::Claude, recreated_projects);
+            provider_source_for_path(CaptureProvider::Claude, recreated_projects.clone());
         let configured_source = configured_provider_source_for_path(
             CaptureProvider::Claude,
-            moved_projects,
+            moved_projects.clone(),
             "work",
             moved_home.clone(),
             "claude-projects",
@@ -860,7 +860,7 @@ fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes()
         };
         let moved_discovery = initial_discovery
             .with_automatic_provider_discovery(true)
-            .with_configured_provider_roots(vec![definition(moved_home)]);
+            .with_configured_provider_roots(vec![definition(moved_home.clone())]);
         refresh_all_provider_sources(
             &moved_discovery,
             DiscoveryReport {
@@ -882,7 +882,7 @@ fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes()
         assert_eq!(published.manifest().provider_roots().len(), 1);
         assert_eq!(
             published.manifest().provider_roots()[0].source_identity(),
-            ProviderRootSourceIdentity::NamedV1
+            ProviderRootSourceIdentity::Released
         );
         assert_eq!(published.manifest().provider_roots()[0].routes().len(), 1);
         let allowed_source_keys = published
@@ -913,6 +913,107 @@ fn moved_configured_root_and_reappeared_automatic_home_keep_independent_routes()
             .is_empty());
         assert_eq!(
             published
+                .search_event_candidates("oldautomaticcanary", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(published);
+
+        let removed_discovery = moved_discovery
+            .clone()
+            .with_configured_provider_roots(Vec::new());
+        refresh_all_provider_sources(
+            &removed_discovery,
+            DiscoveryReport {
+                sources: vec![provider_source_for_path(
+                    CaptureProvider::Claude,
+                    recreated_projects.clone(),
+                )],
+                issues: Vec::new(),
+            },
+            StdDuration::ZERO,
+            &data_root,
+            &index_root,
+            None,
+            SourceBackedRefreshScope::All,
+            &mut progress,
+        )
+        .unwrap();
+        let removed = VerifiedIndex::open(&index_root).unwrap();
+        assert!(removed.manifest().provider_roots().is_empty());
+        assert_eq!(removed.manifest().source_routes().len(), 1);
+        assert_eq!(
+            removed
+                .search_event_candidates("oldautomaticcanary", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(removed
+            .search_event_candidates("releasedfirstcanary", 10)
+            .unwrap()
+            .is_empty());
+        drop(removed);
+
+        let rejoined_discovery =
+            removed_discovery.with_configured_provider_roots(vec![definition(moved_home.clone())]);
+        let automatic_source =
+            provider_source_for_path(CaptureProvider::Claude, recreated_projects.clone());
+        let configured_source = configured_provider_source_for_path(
+            CaptureProvider::Claude,
+            moved_projects.clone(),
+            "work",
+            moved_home,
+            "claude-projects",
+        );
+        let sources = if automatic_first {
+            vec![automatic_source, configured_source]
+        } else {
+            vec![configured_source, automatic_source]
+        };
+        refresh_all_provider_sources(
+            &rejoined_discovery,
+            DiscoveryReport {
+                sources,
+                issues: Vec::new(),
+            },
+            StdDuration::ZERO,
+            &data_root,
+            &index_root,
+            None,
+            SourceBackedRefreshScope::All,
+            &mut progress,
+        )
+        .unwrap();
+        let rejoined = VerifiedIndex::open(&index_root).unwrap();
+        assert_eq!(rejoined.manifest().source_routes().len(), 2);
+        assert_eq!(rejoined.manifest().provider_roots().len(), 1);
+        assert_eq!(
+            rejoined.manifest().provider_roots()[0].source_identity(),
+            ProviderRootSourceIdentity::NamedV1
+        );
+        let allowed_source_keys = rejoined
+            .manifest()
+            .provider_root_source_tokens(&["work".to_owned()], &[])
+            .unwrap();
+        let work_filter = EventSearchFilters {
+            allowed_source_keys: Some(allowed_source_keys),
+            ..EventSearchFilters::default()
+        };
+        assert_eq!(
+            rejoined
+                .search_event_candidates_with_filters("releasedfirstcanary", &work_filter, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(rejoined
+            .search_event_candidates_with_filters("oldautomaticcanary", &work_filter, 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            rejoined
                 .search_event_candidates("oldautomaticcanary", 10)
                 .unwrap()
                 .len(),

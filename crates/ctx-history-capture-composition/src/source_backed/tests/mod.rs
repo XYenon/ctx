@@ -2,6 +2,7 @@ mod copilot;
 mod hermes;
 mod inventory;
 mod registry;
+mod released_root_equivalence;
 
 use std::{
     fs,

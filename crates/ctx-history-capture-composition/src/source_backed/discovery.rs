@@ -191,10 +191,11 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
         ctx_history_source_discovery::discover_canonical_automatic_provider_sources_with_context(
             probes, discovery,
         );
+    let canonical_automatic_sources = canonical_automatic.sources;
     let provider_root_identities = normalized_provider_root_identities(
         discovery,
         &sources,
-        &canonical_automatic.sources,
+        &canonical_automatic_sources,
         data_root,
         provider_root_identities,
     );
@@ -225,6 +226,10 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 .copied()
                 .unwrap_or_else(|| default_provider_root_source_identity(discovery, root))
         });
+        let matched_automatic_source = configured_source_identity
+            .filter(|identity| *identity == ProviderRootSourceIdentity::Released)
+            .and_then(|_| matched_canonical_automatic_source(&source, &canonical_automatic_sources))
+            .cloned();
         if let Err(error) =
             validate_provider_source_roots_outside_data_root(data_root, std::iter::once(&source))
         {
@@ -383,6 +388,57 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 );
                 continue;
             };
+            if let Some(matched_automatic_source) = matched_automatic_source
+                .as_ref()
+                .filter(|_| released_root_uses_automatic_registration(source.provider))
+            {
+                let mut released_source = source.clone();
+                apply_matched_automatic_route_role(&mut released_source, matched_automatic_source);
+                let automatic_registration_source = matched_automatic_source.clone();
+                let compound_provider = matches!(
+                    format_route.constructor,
+                    SourceBackedRouteConstructor::FiniteInventory
+                        | SourceBackedRouteConstructor::DiscoveryContext
+                );
+                let registration = register_discovered_automatic_route(
+                    &mut registry,
+                    probes,
+                    discovery,
+                    data_root,
+                    format_route,
+                    automatic_registration_source.clone(),
+                    None,
+                )
+                .and_then(|()| {
+                    bind_released_route_to_configured_root(
+                        &mut registry,
+                        &automatic_registration_source,
+                        released_source.clone(),
+                    )
+                    .map_err(automatic_registration_rejected)
+                });
+                match registration {
+                    Ok(()) => {
+                        if compound_provider {
+                            compound_provider_registered.insert(released_source.provider);
+                        }
+                    }
+                    Err(reason) => {
+                        if compound_provider {
+                            compound_provider_registered.insert(released_source.provider);
+                        }
+                        registry.register(SourceBackedRoute::unsupported(
+                            released_source.clone(),
+                            automatic_unavailable_detail(&reason),
+                        ));
+                        issues.push(SourceBackedAutomaticRegistryIssue::Unavailable {
+                            source: released_source,
+                            reason,
+                        });
+                    }
+                }
+                continue;
+            }
             if source.provider == CaptureProvider::Codex
                 && source.source_format == "codex_session_jsonl_tree"
                 && configured_source_identity == Some(ProviderRootSourceIdentity::Released)
@@ -430,6 +486,7 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 | (CaptureProvider::Warp, "warp_sqlite") => register_configured_compound_route(
                     &mut registry,
                     discovery,
+                    configured_root,
                     source.clone(),
                     data_root,
                     source_root_lineage,
@@ -472,6 +529,12 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
             continue;
         }
 
+        let coexistence_lineage = released_root_automatic_coexistence_lineage(
+            &registry,
+            discovery,
+            &provider_root_identities,
+            &source,
+        );
         match register_discovered_automatic_route(
             &mut registry,
             probes,
@@ -479,6 +542,7 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
             data_root,
             format_route,
             source.clone(),
+            coexistence_lineage,
         ) {
             Ok(()) => {
                 if compound_provider {
@@ -696,16 +760,89 @@ fn configured_root_matches_canonical_automatic_routes(
                 source.status,
                 ProviderSourceStatus::Available | ProviderSourceStatus::Empty
             ) && validate_provider_source_roots_outside_data_root(data_root, [*source]).is_ok()
-                && canonical_automatic_sources.iter().any(|automatic| {
-                    automatic.provider == source.provider
-                        && automatic.source_format == source.source_format
-                        && matches!(
-                            automatic.status,
-                            ProviderSourceStatus::Available | ProviderSourceStatus::Empty
-                        )
-                        && provider_paths_equivalent(&automatic.path, &source.path)
-                })
+                && matched_canonical_automatic_source(source, canonical_automatic_sources).is_some()
         })
+}
+
+fn matched_canonical_automatic_source<'a>(
+    configured: &ProviderSource,
+    canonical_automatic_sources: &'a [ProviderSource],
+) -> Option<&'a ProviderSource> {
+    canonical_automatic_sources.iter().find(|automatic| {
+        automatic.provider == configured.provider
+            && automatic.source_format == configured.source_format
+            && matches!(
+                automatic.status,
+                ProviderSourceStatus::Available | ProviderSourceStatus::Empty
+            )
+            && provider_paths_equivalent(&automatic.path, &configured.path)
+    })
+}
+
+fn apply_matched_automatic_route_role(configured: &mut ProviderSource, automatic: &ProviderSource) {
+    let ProviderSourceRouteProvenance::ConfiguredRoot {
+        automatic_route_role,
+        ..
+    } = &mut configured.route_provenance
+    else {
+        return;
+    };
+    *automatic_route_role = automatic.route_provenance.automatic_route_role().cloned();
+}
+
+fn bind_released_route_to_configured_root(
+    registry: &mut SourceBackedProviderRegistry,
+    automatic: &ProviderSource,
+    configured: ProviderSource,
+) -> SourceBackedCoordinatorResult<()> {
+    let route_identity = automatic_source_backed_route_identity(automatic)?;
+    let route = registry
+        .routes
+        .iter_mut()
+        .find(|route| route.metadata.route_identity.as_ref() == Some(&route_identity))
+        .ok_or_else(|| {
+            invalid_route(
+                automatic.provider,
+                "released automatic registration produced no matching route",
+            )
+        })?;
+    route.metadata.source = configured;
+    Ok(())
+}
+
+fn released_root_automatic_coexistence_lineage(
+    registry: &SourceBackedProviderRegistry,
+    discovery: &DiscoveryContext,
+    provider_root_identities: &BTreeMap<String, ProviderRootSourceIdentity>,
+    automatic: &ProviderSource,
+) -> Option<[u8; 32]> {
+    let ordinary_route = automatic_source_backed_route_identity(automatic).ok()?;
+    let adopted = registry.routes.iter().find(|route| {
+        route.metadata.route_identity.as_ref() == Some(&ordinary_route)
+            && !provider_paths_equivalent(&route.metadata.source.path, &automatic.path)
+    })?;
+    let (root_id, _) = adopted.metadata.source.route_provenance.configured_root()?;
+    if provider_root_identities.get(root_id) != Some(&ProviderRootSourceIdentity::Released) {
+        return None;
+    }
+    let root = discovery
+        .configured_provider_roots()
+        .iter()
+        .find(|root| root.id == root_id && root.provider == automatic.provider)?;
+    Some(automatic_provider_root_coexistence_source_lineage(root))
+}
+
+const fn released_root_uses_automatic_registration(provider: CaptureProvider) -> bool {
+    matches!(
+        provider,
+        CaptureProvider::OpenClaw
+            | CaptureProvider::Hermes
+            | CaptureProvider::Crush
+            | CaptureProvider::Goose
+            | CaptureProvider::AstrBot
+            | CaptureProvider::Lingma
+            | CaptureProvider::Warp
+    )
 }
 
 fn configured_provider_root_for_source<'a>(
@@ -753,6 +890,7 @@ fn apply_configured_route_identity(
 fn register_configured_compound_route(
     registry: &mut SourceBackedProviderRegistry,
     discovery: &DiscoveryContext,
+    configured_root: &ProviderRootDefinition,
     source: ProviderSource,
     data_root: &Path,
     source_root_lineage: Option<[u8; 32]>,
@@ -775,10 +913,10 @@ fn register_configured_compound_route(
             )?;
         }
         CaptureProvider::Goose => {
-            let platform_root = source.path.parent().and_then(Path::parent).ok_or_else(|| {
+            let platform_root = source.path.parent().ok_or_else(|| {
                 invalid_route(
                     source.provider,
-                    "configured Goose database has no exact platform-root parent",
+                    "configured Goose database has no attachment-context parent",
                 )
             })?;
             register_goose_source_backed_route(
@@ -808,12 +946,16 @@ fn register_configured_compound_route(
             )?;
         }
         CaptureProvider::AstrBot => {
+            let root_local_discovery = discovery
+                .clone()
+                .with_automatic_provider_discovery(false)
+                .with_configured_provider_roots(vec![configured_root.clone()]);
             register_astrbot_source_backed_route(
                 registry,
                 source.clone(),
                 SourceBackedRouteSelection::ExplicitManual,
                 data_root,
-                discovery.clone(),
+                root_local_discovery,
                 source_root_lineage,
             )?;
         }
@@ -950,6 +1092,58 @@ fn register_discovered_automatic_route(
     data_root: &Path,
     format_route: &'static SourceBackedProviderRouteMetadata,
     source: ProviderSource,
+    source_root_lineage: Option<[u8; 32]>,
+) -> Result<(), SourceBackedAutomaticUnavailableReason> {
+    let Some(source_root_lineage) = source_root_lineage else {
+        return register_discovered_automatic_route_scoped(
+            registry,
+            probes,
+            discovery,
+            data_root,
+            format_route,
+            source,
+            None,
+        );
+    };
+    let provider = source.provider;
+    let mut scoped = SourceBackedProviderRegistry::new();
+    register_discovered_automatic_route_scoped(
+        &mut scoped,
+        probes,
+        discovery,
+        data_root,
+        format_route,
+        source,
+        Some(source_root_lineage),
+    )?;
+    if scoped.routes.len() != 1 {
+        return Err(
+            SourceBackedAutomaticUnavailableReason::RegistrationRejected {
+                kind: SourceBackedRouteErrorKind::Internal,
+                detail: format!(
+                    "{} automatic coexistence registration produced {} routes instead of one",
+                    provider.as_str(),
+                    scoped.routes.len()
+                ),
+            },
+        );
+    }
+    let mut route = scoped.routes.pop().expect("one scoped route was validated");
+    route
+        .apply_automatic_coexistence_identity(source_root_lineage)
+        .map_err(automatic_registration_rejected)?;
+    registry.register(route);
+    Ok(())
+}
+
+fn register_discovered_automatic_route_scoped(
+    registry: &mut SourceBackedProviderRegistry,
+    probes: &StaticProviderProbeCatalog,
+    discovery: &DiscoveryContext,
+    data_root: &Path,
+    format_route: &'static SourceBackedProviderRouteMetadata,
+    source: ProviderSource,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> Result<(), SourceBackedAutomaticUnavailableReason> {
     let result = match (format_route.constructor, source.provider) {
         (SourceBackedRouteConstructor::NamedSurface, CaptureProvider::Warp) => {
@@ -965,7 +1159,7 @@ fn register_discovered_automatic_route(
                 SourceBackedRouteSelection::Automatic,
                 data_root,
                 selected.surface_key().as_str(),
-                None,
+                source_root_lineage,
             )
         }
         (SourceBackedRouteConstructor::SelectedWithRetainedRoutes, CaptureProvider::Goose) => {
@@ -981,7 +1175,7 @@ fn register_discovered_automatic_route(
                 data_root,
                 platform_root,
                 Vec::new(),
-                None,
+                source_root_lineage,
             )
         }
         (SourceBackedRouteConstructor::FiniteInventory, CaptureProvider::Crush) => {
@@ -992,13 +1186,13 @@ fn register_discovered_automatic_route(
                 SourceBackedRouteSelection::Automatic,
                 data_root,
                 inventory_source,
-                None,
+                source_root_lineage,
             )
         }
         (SourceBackedRouteConstructor::FiniteInventory, CaptureProvider::Lingma) => {
             let selector = LingmaInventorySelector::new(discovery.clone(), *probes);
             let registration =
-                ctx_history_providers_sqlite_inventory::registration::discovered_lingma_registration::<
+                ctx_history_providers_sqlite_inventory::registration::discovered_lingma_registration_scoped::<
                     crate::provider::source_backed::family::document::CaptureDocumentLifecycle,
                     crate::provider::source_backed::family::document::CaptureDocumentSpool,
                     _,
@@ -1007,6 +1201,10 @@ fn register_discovered_automatic_route(
                     SourceBackedRouteSelection::Automatic,
                     data_root,
                     move || selector.observe(),
+                    source_root_lineage.map_or(
+                        ctx_history_core::SourceAnchorScope::Unqualified,
+                        ctx_history_core::SourceAnchorScope::Lineage,
+                    ),
                 )
                 .map_err(|error| match error {
                     ctx_history_providers_sqlite_inventory::registration::LingmaRegistrationError::SelectorAuthorityUnavailable(detail) => {
@@ -1031,10 +1229,18 @@ fn register_discovered_automatic_route(
                 SourceBackedRouteSelection::Automatic,
                 data_root,
                 discovery.clone(),
-                None,
+                source_root_lineage,
             )
         }
         (SourceBackedRouteConstructor::CatalogLineage, CaptureProvider::NanoClaw) => {
+            if source_root_lineage.is_some() {
+                return Err(
+                    SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
+                        detail:
+                            "NanoClaw automatic coexistence requires a scoped catalog connector",
+                    },
+                );
+            }
             let lineage = explicit_source_catalog_lineage(
                 source.provider,
                 format_route.certified_source_format,
@@ -1050,6 +1256,14 @@ fn register_discovered_automatic_route(
             )
         }
         (SourceBackedRouteConstructor::ExactCwd, CaptureProvider::Shelley) => {
+            if source_root_lineage.is_some() {
+                return Err(
+                    SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
+                        detail:
+                            "Shelley automatic coexistence requires a scoped exact-CWD connector",
+                    },
+                );
+            }
             let exact_cwd = discovery.cwd().ok_or(
                 SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
                     detail: "Shelley automatic registration requires the exact discovery CWD",
@@ -1064,6 +1278,11 @@ fn register_discovered_automatic_route(
             )
         }
         (SourceBackedRouteConstructor::ProviderSource, CaptureProvider::OpenHands) => {
+            if source_root_lineage.is_some() {
+                return Err(SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
+                    detail: "OpenHands automatic coexistence requires a scoped current-root connector",
+                });
+            }
             let current_root = resolve_openhands_conversations_root(discovery).ok_or(
                 SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
                     detail: "OpenHands automatic registration requires its exact current conversation root",
@@ -1072,11 +1291,12 @@ fn register_discovered_automatic_route(
             register_openhands_automatic_route(registry, source, &current_root)
         }
         (SourceBackedRouteConstructor::ProviderSource, _) => {
-            register_landed_source_backed_route_with_data_root(
+            register_landed_source_backed_route_with_data_root_and_lineage(
                 registry,
                 source,
                 SourceBackedRouteSelection::Automatic,
                 data_root,
+                source_root_lineage,
             )
         }
         _ => Err(invalid_route(

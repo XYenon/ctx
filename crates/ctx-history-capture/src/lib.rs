@@ -94,8 +94,9 @@ pub fn hermes_route_control_database_identity(control: &[u8]) -> Option<[u8; 32]
 pub use provider::adapter::{CaptureWorkLimit, ProviderAdapterContext, ProviderImportOptions};
 pub use provider::source_backed::register_nanoclaw_source_backed_route_with_base_sources;
 pub use provider::source_backed::{
-    automatic_source_backed_route_identity, build_automatic_source_backed_registry,
-    build_automatic_source_backed_registry_from_report,
+    automatic_provider_root_coexistence_route_identity,
+    automatic_provider_root_coexistence_source_lineage, automatic_source_backed_route_identity,
+    build_automatic_source_backed_registry, build_automatic_source_backed_registry_from_report,
     build_automatic_source_backed_registry_from_report_with_root_identities,
     explicit_source_catalog_lineage, legacy_automatic_source_backed_route_identity,
     prepare_automatic_route_splits, refresh_source_backed_generation,

@@ -16,7 +16,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use ctx_history_capture_model::{
     provider_source_config_digest, ProviderRootDefinition, ProviderRootSourceIdentity,
-    ProviderRouteRole, SourceRouteIdentity,
+    ProviderRouteRole, ProviderSourceRouteProvenance, SourceRouteIdentity,
 };
 use ctx_history_capture_runtime::{
     CaptureLifecycleSink, CapturePublicationContext, CapturePublicationDisposition,

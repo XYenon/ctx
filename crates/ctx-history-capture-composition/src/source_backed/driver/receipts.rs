@@ -118,6 +118,29 @@ impl SourceBackedRoute {
         Ok(())
     }
 
+    pub(in crate::source_backed) fn apply_automatic_coexistence_identity(
+        &mut self,
+        source_root_lineage: [u8; 32],
+    ) -> SourceBackedCoordinatorResult<()> {
+        if self.metadata.selection != Some(SourceBackedRouteSelection::Automatic) {
+            return Err(invalid_route(
+                self.metadata.source.provider,
+                "automatic coexistence identity requires an automatic route",
+            ));
+        }
+        let ordinary = self.metadata.route_identity.as_ref().ok_or_else(|| {
+            invalid_route(
+                self.metadata.source.provider,
+                "automatic coexistence route has no ordinary identity",
+            )
+        })?;
+        self.metadata.route_identity = Some(automatic_provider_root_coexistence_route_identity(
+            ordinary,
+            source_root_lineage,
+        )?);
+        Ok(())
+    }
+
     pub fn automatic(
         source: ProviderSource,
         selector_authority: SourceBackedSelectorAuthority,
@@ -346,6 +369,37 @@ impl SourceBackedRoute {
     }
 }
 
+#[doc(hidden)]
+pub fn automatic_provider_root_coexistence_source_lineage(
+    root: &ProviderRootDefinition,
+) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"ctx.automatic-provider-root-coexistence-source.v1\0");
+    digest.update(root.provider.as_str().as_bytes());
+    digest.update([0]);
+    digest.update((root.id.len() as u64).to_be_bytes());
+    digest.update(root.id.as_bytes());
+    digest.finalize().into()
+}
+
+#[doc(hidden)]
+pub fn automatic_provider_root_coexistence_route_identity(
+    ordinary: &SourceRouteIdentity,
+    source_root_lineage: [u8; 32],
+) -> SourceBackedCoordinatorResult<SourceRouteIdentity> {
+    let mut digest = Sha256::new();
+    digest.update(b"ctx.automatic-provider-root-coexistence-route.v1\0");
+    digest.update(ordinary.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(source_root_lineage);
+    SourceRouteIdentity::from_sha256(format!("{:x}", digest.finalize())).map_err(|_| {
+        invalid_route(
+            CaptureProvider::Unknown,
+            "automatic coexistence route identity was invalid",
+        )
+    })
+}
+
 fn provider_root_source_backed_route_identity(
     source: &ProviderSource,
     certified_source_format: &str,
@@ -411,6 +465,25 @@ pub struct SourceBackedProviderRegistry {
     pub(in super::super) automatic_split_cohort_barriers: Vec<AutomaticSplitCohortBarrier>,
 }
 
+fn validate_unique_provider_root_ids(
+    roots: &[AppliedProviderRoot],
+) -> SourceBackedCoordinatorResult<()> {
+    let mut ids = HashSet::new();
+    if let Some(duplicate) = roots
+        .iter()
+        .find(|root| !ids.insert(root.definition().id.as_str()))
+    {
+        return Err(invalid_route(
+            CaptureProvider::Unknown,
+            format!(
+                "configured provider root id {:?} is not unique",
+                duplicate.definition().id
+            ),
+        ));
+    }
+    Ok(())
+}
+
 impl SourceBackedProviderRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -440,9 +513,10 @@ impl SourceBackedProviderRegistry {
         self.applied_provider_roots.as_ref()
     }
 
-    /// Keeps the last generation's route ownership for an unchanged configured
-    /// root whose current no-follow discovery could not safely reconstruct any
-    /// route. Desired-state removal is handled separately by refresh execution.
+    /// Keeps the last generation's route ownership for a provider-compatible
+    /// configured root whose stable id still exists but whose current no-follow
+    /// discovery could not safely reconstruct any route. Mutable path and group
+    /// fields are aliases; desired-state removal is handled by refresh execution.
     pub fn retain_unavailable_provider_root_routes(
         &mut self,
         retained: &[AppliedProviderRoot],
@@ -450,11 +524,15 @@ impl SourceBackedProviderRegistry {
         let Some((_, _, current)) = self.applied_provider_roots.as_mut() else {
             return Ok(());
         };
+        validate_unique_provider_root_ids(current)?;
+        validate_unique_provider_root_ids(retained)?;
         for root in current.iter_mut().filter(|root| root.routes().is_empty()) {
-            let definition = root.definition();
+            let definition = root.definition().clone();
             let Some(previous) = retained.iter().find(|previous| {
                 let previous_definition = previous.definition();
-                previous_definition == definition
+                previous_definition.id == definition.id
+                    && previous_definition.provider == definition.provider
+                    && previous_definition.kind == definition.kind
             }) else {
                 continue;
             };
@@ -462,8 +540,8 @@ impl SourceBackedProviderRegistry {
                 continue;
             }
             *root = AppliedProviderRoot::with_source_identity(
-                definition.clone(),
-                root.source_identity(),
+                definition,
+                previous.source_identity(),
                 previous.routes().to_vec(),
             )
             .map_err(SourceBackedCoordinatorError::Index)?;
@@ -848,24 +926,29 @@ mod tests {
 
     #[test]
     fn unavailable_openclaw_root_restores_all_prior_agent_routes() {
-        let definition = ProviderRootDefinition {
+        let prior_definition = ProviderRootDefinition {
             id: "openclaw-state".to_owned(),
             provider: CaptureProvider::OpenClaw,
-            path: PathBuf::from("/fixture/openclaw-state"),
-            group: None,
+            path: PathBuf::from("/fixture/old-openclaw-state"),
+            group: Some("old".to_owned()),
             kind: None,
+        };
+        let current_definition = ProviderRootDefinition {
+            path: PathBuf::from("/fixture/moved-openclaw-state"),
+            group: Some("moved".to_owned()),
+            ..prior_definition.clone()
         };
         let alpha = SourceRouteIdentity::from_sha256("a".repeat(64)).unwrap();
         let beta = SourceRouteIdentity::from_sha256("b".repeat(64)).unwrap();
         let prior = AppliedProviderRoot::with_source_identity(
-            definition.clone(),
-            ProviderRootSourceIdentity::NamedV1,
+            prior_definition,
+            ProviderRootSourceIdentity::Released,
             vec![alpha.clone(), beta.clone()],
         )
         .unwrap();
         let current = AppliedProviderRoot::with_source_identity(
-            definition,
-            ProviderRootSourceIdentity::NamedV1,
+            current_definition.clone(),
+            ProviderRootSourceIdentity::Released,
             Vec::new(),
         )
         .unwrap();
@@ -878,10 +961,80 @@ mod tests {
             .retain_unavailable_provider_root_routes(&[prior])
             .unwrap();
 
+        let restored = &registry.applied_provider_roots().unwrap().2[0];
+        assert_eq!(restored.definition(), &current_definition);
         assert_eq!(
-            registry.applied_provider_roots().unwrap().2[0].routes(),
-            &[alpha, beta]
+            restored.source_identity(),
+            ProviderRootSourceIdentity::Released
         );
+        assert_eq!(restored.routes(), &[alpha, beta]);
+    }
+
+    #[test]
+    fn unavailable_root_retention_rejects_duplicate_stable_ids() {
+        let definition = |provider| ProviderRootDefinition {
+            id: "duplicate".to_owned(),
+            provider,
+            path: PathBuf::from(format!("/fixture/{}", provider.as_str())),
+            group: None,
+            kind: None,
+        };
+        let mut registry = SourceBackedProviderRegistry::new();
+        registry
+            .set_applied_provider_roots(
+                false,
+                "fixture".to_owned(),
+                [CaptureProvider::OpenClaw, CaptureProvider::Hermes]
+                    .map(|provider| {
+                        AppliedProviderRoot::new(definition(provider), Vec::new()).unwrap()
+                    })
+                    .to_vec(),
+            )
+            .unwrap();
+
+        let error = registry
+            .retain_unavailable_provider_root_routes(&[])
+            .unwrap_err();
+        assert!(error.to_string().contains("not unique"), "{error}");
+    }
+
+    #[test]
+    fn unavailable_root_retention_requires_matching_provider() {
+        let definition = |provider| ProviderRootDefinition {
+            id: "provider-stable-id".to_owned(),
+            provider,
+            path: PathBuf::from(format!("/fixture/{}", provider.as_str())),
+            group: None,
+            kind: None,
+        };
+        let prior_route = SourceRouteIdentity::from_sha256("4c".repeat(32)).unwrap();
+        let prior = AppliedProviderRoot::with_source_identity(
+            definition(CaptureProvider::OpenClaw),
+            ProviderRootSourceIdentity::Released,
+            vec![prior_route],
+        )
+        .unwrap();
+        let mut registry = SourceBackedProviderRegistry::new();
+        registry
+            .set_applied_provider_roots(
+                false,
+                "fixture".to_owned(),
+                vec![AppliedProviderRoot::with_source_identity(
+                    definition(CaptureProvider::Hermes),
+                    ProviderRootSourceIdentity::Released,
+                    Vec::new(),
+                )
+                .unwrap()],
+            )
+            .unwrap();
+
+        registry
+            .retain_unavailable_provider_root_routes(&[prior])
+            .unwrap();
+
+        assert!(registry.applied_provider_roots().unwrap().2[0]
+            .routes()
+            .is_empty());
     }
 
     fn route_identity_source(

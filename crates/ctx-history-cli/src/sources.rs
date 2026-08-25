@@ -580,6 +580,7 @@ mod ui_tests {
             root_id: "personal-claude".to_owned(),
             root_path: PathBuf::from("/tmp/claude"),
             route_role: ProviderRouteRole::from_static("claude-projects"),
+            automatic_route_role: None,
         };
         let root = ctx_history_capture::ProviderRootDefinition {
             id: "personal-claude".to_owned(),
@@ -632,6 +633,7 @@ mod ui_tests {
             root_id: "personal-claude".to_owned(),
             root_path: alias.clone(),
             route_role: ProviderRouteRole::from_static("claude-projects"),
+            automatic_route_role: None,
         };
         let root = ctx_history_capture::ProviderRootDefinition {
             id: "personal-claude".to_owned(),

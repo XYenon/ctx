@@ -932,6 +932,7 @@ fn apply_configured_provenance(
         root_id: root.id.clone(),
         root_path: root.path.clone(),
         route_role,
+        automatic_route_role: None,
     };
 }
 

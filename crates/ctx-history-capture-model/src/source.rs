@@ -43,6 +43,7 @@ pub enum ProviderSourceRouteProvenance {
         root_id: String,
         root_path: PathBuf,
         route_role: ProviderRouteRole,
+        automatic_route_role: Option<ProviderRouteRole>,
     },
 }
 
@@ -59,7 +60,11 @@ impl ProviderSourceRouteProvenance {
     pub fn automatic_route_role(&self) -> Option<&ProviderRouteRole> {
         match self {
             Self::Automatic { route_role } => Some(route_role),
-            Self::Unroled | Self::ConfiguredRoot { .. } => None,
+            Self::ConfiguredRoot {
+                automatic_route_role,
+                ..
+            } => automatic_route_role.as_ref(),
+            Self::Unroled => None,
         }
     }
 

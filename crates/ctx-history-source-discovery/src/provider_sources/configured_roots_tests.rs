@@ -278,6 +278,14 @@ fn route_role(source: &ProviderSource) -> &[u8] {
         .as_bytes()
 }
 
+fn automatic_route_role(source: &ProviderSource) -> &[u8] {
+    source
+        .route_provenance
+        .automatic_route_role()
+        .expect("matching automatic route role")
+        .as_bytes()
+}
+
 fn assert_configured(source: &ProviderSource, expected_id: &str, expected_root: &Path) {
     assert_eq!(
         source.route_provenance.configured_root(),
@@ -636,6 +644,12 @@ fn configured_openclaw_route_matching_automatic_keeps_automatic_role_bytes() {
     assert_eq!(configured.len(), 1);
     assert_eq!(
         route_role(configured[0]),
+        ProviderRouteRole::from_dynamic([b"openclaw-agent".as_slice(), b"alpha".as_slice(),])
+            .unwrap()
+            .as_bytes()
+    );
+    assert_eq!(
+        automatic_route_role(configured[0]),
         ProviderRouteRole::from_dynamic([b"agent".as_slice(), b"alpha".as_slice()])
             .unwrap()
             .as_bytes()

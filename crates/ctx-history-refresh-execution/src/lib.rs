@@ -22,7 +22,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use ctx_history_capture::{
-    automatic_source_backed_route_identity,
+    automatic_provider_root_coexistence_route_identity,
+    automatic_provider_root_coexistence_source_lineage, automatic_source_backed_route_identity,
     build_automatic_source_backed_registry_from_report_with_root_identities,
     discover_provider_sources_with_context_and_work_budget, source_backed_refresh_work_budget,
     source_backed_refresh_writer_options, validate_provider_source_roots_outside_data_root,
@@ -265,7 +266,7 @@ pub fn source_backed_watch_catalog(
         Err(error) => return Err(error.into()),
     };
     let provider_root_identities =
-        configured_provider_root_identities(&discovery, retained_generation.as_ref());
+        configured_provider_root_identities(&discovery, retained_generation.as_ref())?;
     let mut build = build_automatic_source_backed_registry_from_report_with_root_identities(
         &discovery,
         data_root,
@@ -279,9 +280,16 @@ pub fn source_backed_watch_catalog(
 fn configured_provider_root_identities(
     discovery: &DiscoveryContext,
     retained_generation: Option<&VerifiedIndex>,
-) -> BTreeMap<String, ProviderRootSourceIdentity> {
-    discovery
-        .configured_provider_roots()
+) -> Result<BTreeMap<String, ProviderRootSourceIdentity>> {
+    let roots = discovery.configured_provider_roots();
+    let mut root_ids = BTreeSet::new();
+    if let Some(duplicate) = roots.iter().find(|root| !root_ids.insert(root.id.as_str())) {
+        bail!(
+            "configured provider root id {:?} is not unique",
+            duplicate.id
+        );
+    }
+    Ok(roots
         .iter()
         .filter_map(|root| {
             let retained = retained_generation.and_then(|generation| {
@@ -289,12 +297,21 @@ fn configured_provider_root_identities(
                     .manifest()
                     .provider_roots()
                     .iter()
-                    .find(|applied| applied.definition() == root)
+                    .find(|applied| provider_root_retention_compatible(applied.definition(), root))
                     .map(|applied| applied.source_identity())
             });
             retained.map(|identity| (root.id.clone(), identity))
         })
-        .collect()
+        .collect())
+}
+
+fn provider_root_retention_compatible(
+    retained: &ctx_history_capture::ProviderRootDefinition,
+    current: &ctx_history_capture::ProviderRootDefinition,
+) -> bool {
+    retained.id == current.id
+        && retained.provider == current.provider
+        && retained.kind == current.kind
 }
 
 #[doc(hidden)]

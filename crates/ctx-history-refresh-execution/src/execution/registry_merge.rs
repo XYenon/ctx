@@ -35,7 +35,7 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
         route_controls: previous_route_controls,
     } = published_state.open_published_state(data_root)?;
     let provider_root_identities =
-        configured_provider_root_identities(discovery, retained_generation.as_ref());
+        configured_provider_root_identities(discovery, retained_generation.as_ref())?;
     let mut build = build_automatic_source_backed_registry_from_report_with_root_identities(
         discovery,
         data_root,
@@ -128,6 +128,35 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
         .executable_route_identities()
         .into_iter()
         .collect::<BTreeSet<_>>();
+    if let Some(retained) = retained_generation.as_ref() {
+        let desired_root_ids = discovery
+            .configured_provider_roots()
+            .iter()
+            .map(|root| root.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for root in retained.manifest().provider_roots().iter().filter(|root| {
+            root.source_identity() == ProviderRootSourceIdentity::Released
+                && !desired_root_ids.contains(root.definition().id.as_str())
+        }) {
+            let coexistence_lineage =
+                automatic_provider_root_coexistence_source_lineage(root.definition());
+            for ordinary in root
+                .routes()
+                .iter()
+                .filter(|route| current_executable_routes.contains(*route))
+            {
+                let coexistence = automatic_provider_root_coexistence_route_identity(
+                    ordinary,
+                    coexistence_lineage,
+                )?;
+                if retained.manifest().source_route(&coexistence).is_some() {
+                    build
+                        .registry
+                        .retire_routes_after_success(ordinary, [coexistence])?;
+                }
+            }
+        }
+    }
     let retired_provider_root_routes = previous_provider_root_routes
         .difference(&current_provider_root_routes)
         .filter(|route| !current_executable_routes.contains(*route))
