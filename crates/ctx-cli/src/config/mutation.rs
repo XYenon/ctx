@@ -75,6 +75,97 @@ pub fn set_semantic_search_enabled(data_root: &Path, enabled: bool) -> Result<()
     set_config_bool(data_root, "search", "semantic", enabled)
 }
 
+pub(super) fn set_config_bool(
+    data_root: &Path,
+    section: &str,
+    key: &str,
+    enabled: bool,
+) -> Result<()> {
+    establish_private_data_root(data_root)?;
+    let path = AppConfig::config_path(data_root);
+    let _mutation_lock = ConfigMutationLock::acquire(&path)?;
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    };
+    let parsed = parse_toml_subset(&text).with_context(|| format!("parse {}", path.display()))?;
+    let mut config = AppConfig::default();
+    config
+        .apply_values(&parsed)
+        .with_context(|| format!("load {}", path.display()))?;
+    config
+        .validate_provider_root_data_root(data_root)
+        .with_context(|| format!("load {}", path.display()))?;
+    let updated = set_toml_bool(&text, section, key, enabled);
+    let parsed =
+        parse_toml_subset(&updated).with_context(|| format!("parse updated {}", path.display()))?;
+    let mut config = AppConfig::default();
+    config
+        .apply_values(&parsed)
+        .with_context(|| format!("load updated {}", path.display()))?;
+    config
+        .validate_provider_root_data_root(data_root)
+        .with_context(|| format!("load updated {}", path.display()))?;
+    if updated == text {
+        return Ok(());
+    }
+    write_config_durably(&path, updated.as_bytes())?;
+    Ok(())
+}
+
+fn set_toml_bool(text: &str, section: &str, key: &str, enabled: bool) -> String {
+    let rendered = format!("{key} = {enabled}");
+    let mut lines = text.lines().map(str::to_owned).collect::<Vec<_>>();
+    let mut current_section = String::new();
+    let mut section_start = None;
+    let mut insert_before = lines.len();
+    for (index, raw_line) in lines.iter().enumerate() {
+        let line = strip_comment(raw_line).trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            if section_start.is_some() && current_section == section {
+                insert_before = index;
+                break;
+            }
+            current_section = line[1..line.len() - 1].trim().to_owned();
+            if current_section == section {
+                section_start = Some(index);
+                insert_before = lines.len();
+            }
+            continue;
+        }
+        if current_section == section {
+            if let Some((candidate, _)) = line.split_once('=') {
+                if candidate.trim() == key {
+                    lines[index] = rendered;
+                    return ensure_trailing_newline(lines.join("\n"));
+                }
+            }
+        }
+    }
+    match section_start {
+        Some(start) => {
+            let insert_at = insert_before.max(start + 1);
+            lines.insert(insert_at, rendered);
+        }
+        None => {
+            if !lines.last().is_none_or(|line| line.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push(format!("[{section}]"));
+            lines.push(rendered);
+        }
+    }
+    ensure_trailing_newline(lines.join("\n"))
+}
+
+fn ensure_trailing_newline(mut text: String) -> String {
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
 #[derive(Debug, Clone)]
 pub struct ProviderRootMutation {
     pub root: ProviderRootDefinition,
