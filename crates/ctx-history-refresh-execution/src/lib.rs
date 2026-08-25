@@ -326,6 +326,7 @@ fn provider_root_retention_compatible(
         && retained.kind == current.kind
 }
 
+#[cfg(test)]
 fn incompatible_configured_provider_root_routes(
     retained: &[ctx_history_index::AppliedProviderRoot],
     desired: &[ctx_history_capture::ProviderRootDefinition],
