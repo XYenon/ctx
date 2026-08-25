@@ -559,6 +559,7 @@ fn nanoclaw_internal(detail: impl Into<String>) -> SourceBackedRouteError {
     SourceBackedRouteError::new(SourceBackedRouteErrorKind::Internal, detail)
 }
 
+#[cfg(test)]
 pub(crate) fn nanoclaw_source_key(
     catalog_lineage: [u8; 32],
 ) -> NanoClawSourceBackedResult<SourceKey> {
