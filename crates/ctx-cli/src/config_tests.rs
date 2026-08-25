@@ -1000,6 +1000,9 @@ fn hand_edited_provider_roots_reject_invalid_provider_names() {
 fn rejects_invalid_provider_root_config_as_one_atomic_config() {
     let provider_home = tempfile::tempdir().unwrap();
     let provider_path = provider_home.path().display().to_string();
+    let oversized_path = provider_home
+        .path()
+        .join("x".repeat(ctx_history_capture::MAX_PROVIDER_ROOT_ENCODED_PATH_BYTES + 1));
     let cases = [
         (
             format!(
@@ -1011,6 +1014,13 @@ fn rejects_invalid_provider_root_config_as_one_atomic_config() {
         (
             "[sources.roots.work]\nprovider = \"claude\"\npath = \"relative\"\n".to_owned(),
             "normalized absolute UTF-8 path",
+        ),
+        (
+            format!(
+                "[sources.roots.work]\nprovider = \"claude\"\npath = {:?}\n",
+                oversized_path.display().to_string()
+            ),
+            "encoded path limit",
         ),
         (
             format!(

@@ -380,6 +380,26 @@ fn provider_root_manifest_validation_is_provider_generic() {
 }
 
 #[test]
+fn provider_root_manifest_rejects_paths_over_the_shared_encoded_bound() {
+    let temp = tempfile::tempdir().unwrap();
+    let invalid = ProviderRootDefinition {
+        id: "oversized".to_owned(),
+        provider: CaptureProvider::Claude,
+        path: temp
+            .path()
+            .join("x".repeat(ctx_history_capture_model::MAX_PROVIDER_ROOT_ENCODED_PATH_BYTES + 1)),
+        group: None,
+        kind: None,
+    };
+
+    assert!(matches!(
+        AppliedProviderRoot::new(invalid, Vec::new()),
+        Err(IndexError::InvalidProviderRoots(detail))
+            if detail.contains("bounded normalized absolute")
+    ));
+}
+
+#[test]
 fn provider_root_manifest_validates_openhands_kind_at_the_persisted_boundary() {
     let temp = tempfile::tempdir().unwrap();
     let invalid = ProviderRootDefinition {

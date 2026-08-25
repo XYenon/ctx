@@ -2,8 +2,9 @@ use std::{fs, path::Path};
 
 use anyhow::{bail, Context, Result};
 use ctx_history_capture::{
-    configured_root_capabilities, configured_root_capability, ConfiguredRootPathKind,
-    ProviderRootKind, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
+    configured_root_capabilities, configured_root_capability, provider_root_path_within_limit,
+    ConfiguredRootPathKind, ProviderRootKind, MAX_PROVIDER_ROOT_ENCODED_PATH_BYTES,
+    MAX_PROVIDER_ROOT_SELECTOR_BYTES,
 };
 use ctx_history_core::CaptureProvider;
 
@@ -92,6 +93,12 @@ pub(super) fn validate_root_selector(kind: &str, value: &str) -> Result<()> {
 }
 
 pub(super) fn validate_provider_root_path(path: &Path) -> Result<()> {
+    if !provider_root_path_within_limit(path) {
+        bail!(
+            "configured history root path exceeds the {MAX_PROVIDER_ROOT_ENCODED_PATH_BYTES}-byte encoded path limit: {}",
+            path.display()
+        );
+    }
     if !path.is_absolute()
         || path.to_str().is_none()
         || path.components().any(|component| {

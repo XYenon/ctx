@@ -1,13 +1,12 @@
 use ctx_history_capture_model::{
-    ProviderRootConnectorBinding, ProviderRootDefinition, ProviderRootSourceIdentity,
-    ProviderRouteRole, ReleasedProviderRootAutomaticRole, RetainedProviderRootAuthority,
-    SourceRouteIdentity, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
+    provider_root_path_within_limit, ProviderRootConnectorBinding, ProviderRootDefinition,
+    ProviderRootSourceIdentity, ProviderRouteRole, ReleasedProviderRootAutomaticRole,
+    RetainedProviderRootAuthority, SourceRouteIdentity, MAX_PROVIDER_ROOT_SELECTOR_BYTES,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{is_sha256_hex, IndexError, Result};
 
-const MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES: usize = 16 * 1024;
 const MAX_RELEASED_CONNECTOR_AUTOMATIC_ROUTE_ROLES: usize = 256;
 
 fn validate_connector_binding(binding: &ProviderRootConnectorBinding) -> Result<()> {
@@ -46,13 +45,13 @@ fn validate_connector_binding(binding: &ProviderRootConnectorBinding) -> Result<
     let Some(path) = binding.identity_root() else {
         return Ok(());
     };
-    let Some(text) = path.to_str() else {
+    if path.to_str().is_none() {
         return Err(IndexError::InvalidProviderRoots(
             "released connector identity root is not UTF-8".to_owned(),
         ));
-    };
+    }
     if !path.is_absolute()
-        || text.len() > MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES
+        || !provider_root_path_within_limit(path)
         || path.components().any(|component| {
             matches!(
                 component,
@@ -434,6 +433,7 @@ fn validate_provider_root_definition(root: &ProviderRootDefinition) -> Result<()
     }
     if !root.path.is_absolute()
         || root.path.to_str().is_none()
+        || !provider_root_path_within_limit(&root.path)
         || root.path.components().any(|component| {
             matches!(
                 component,
@@ -442,7 +442,7 @@ fn validate_provider_root_definition(root: &ProviderRootDefinition) -> Result<()
         })
     {
         return Err(IndexError::InvalidProviderRoots(format!(
-            "root {} path is not normalized absolute UTF-8",
+            "root {} path is not a bounded normalized absolute UTF-8 path",
             root.id
         )));
     }

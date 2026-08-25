@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ctx_history_core::CaptureProvider;
 use serde::{Deserialize, Serialize};
@@ -6,6 +6,29 @@ use sha2::{Digest, Sha256};
 
 pub const MAX_CONFIGURED_PROVIDER_ROOTS: usize = 64;
 pub const MAX_PROVIDER_ROOT_SELECTOR_BYTES: usize = 64;
+pub const MAX_PROVIDER_ROOT_ENCODED_PATH_BYTES: usize = 16 * 1024;
+
+/// Platform-native encoded length used by configured-root resource bounds.
+pub fn provider_root_encoded_path_len(path: &Path) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().len()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        path.as_os_str().encode_wide().count().saturating_mul(2)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.as_os_str().to_string_lossy().len()
+    }
+}
+
+pub fn provider_root_path_within_limit(path: &Path) -> bool {
+    provider_root_encoded_path_len(path) <= MAX_PROVIDER_ROOT_ENCODED_PATH_BYTES
+}
 
 /// Exact persisted OpenHands history layout selected by a configured root.
 ///
@@ -233,6 +256,11 @@ pub struct ProviderRootDefinition {
 }
 
 impl ProviderRootDefinition {
+    /// Whether this definition can cross discovery and persistence boundaries.
+    pub fn has_bounded_path(&self) -> bool {
+        provider_root_path_within_limit(&self.path)
+    }
+
     /// Validates the narrow provider/kind pairing at every persisted boundary.
     pub const fn has_valid_kind(&self) -> bool {
         match self.provider {
