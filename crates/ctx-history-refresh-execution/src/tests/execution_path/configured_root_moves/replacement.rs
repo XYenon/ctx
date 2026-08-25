@@ -1,6 +1,176 @@
 use super::*;
 
 #[test]
+fn moving_named_qoder_transcript_tree_preserves_supported_layouts_and_identity() {
+    const ROOT_ID: &str = "qoder-archive";
+    const DIRECT_MARKER: &str = "qoderrenameddirectcanary";
+    const LEGACY_MARKER: &str = "qoderrenamedlegacycanary";
+    const NESTED_MARKER: &str = "qoderunsupportednestedcanary";
+
+    let temp = tempfile::tempdir().unwrap();
+    let fixture = fs::canonicalize(temp.path()).unwrap();
+    let data_root = fixture.join("data");
+    let index_root = source_backed_index_root(&data_root);
+    ctx_history_platform::platform_security::establish_private_data_root(&data_root).unwrap();
+    let (_, _, discovery) = discovery_fixture(&fixture);
+    let first_root = fixture.join("qoder-history");
+    write_qoder_message(
+        &first_root.join("current/nested/not-a-session.jsonl"),
+        "qoder-renamed-nested",
+        NESTED_MARKER,
+    );
+    let definition = |path| ctx_history_capture::ProviderRootDefinition {
+        id: ROOT_ID.to_owned(),
+        provider: CaptureProvider::Qoder,
+        path,
+        group: Some("archive".to_owned()),
+        kind: None,
+    };
+    let first_discovery = discovery
+        .clone()
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(vec![definition(first_root.clone())]);
+    let nested_only_report =
+        ctx_history_capture::discover_provider_sources_for_provider_with_context(
+            &first_discovery,
+            CaptureProvider::Qoder,
+        );
+    assert!(nested_only_report.issues.is_empty());
+    assert_eq!(nested_only_report.sources.len(), 1);
+    assert_eq!(nested_only_report.sources[0].path, first_root);
+    assert_eq!(
+        nested_only_report.sources[0].status,
+        ProviderSourceStatus::Empty
+    );
+
+    write_qoder_message(
+        &first_root.join("current/direct-session.jsonl"),
+        "qoder-renamed-direct",
+        DIRECT_MARKER,
+    );
+    write_qoder_message(
+        &first_root.join("legacy/transcript/legacy-session.jsonl"),
+        "qoder-renamed-legacy",
+        LEGACY_MARKER,
+    );
+    let first_report = ctx_history_capture::discover_provider_sources_for_provider_with_context(
+        &first_discovery,
+        CaptureProvider::Qoder,
+    );
+    assert!(first_report.issues.is_empty(), "{:?}", first_report.issues);
+    assert_eq!(first_report.sources.len(), 1);
+    assert_eq!(first_report.sources[0].path, first_root);
+    assert_eq!(
+        first_report.sources[0].status,
+        ProviderSourceStatus::Available
+    );
+    assert!(matches!(
+        &first_report.sources[0].route_provenance,
+        ProviderSourceRouteProvenance::ConfiguredRoot { root_id, .. }
+            if root_id == ROOT_ID
+    ));
+    run_report(&first_discovery, first_report, &data_root, &index_root).unwrap();
+
+    let first = VerifiedIndex::open(&index_root).unwrap();
+    assert_eq!(
+        first
+            .search_event_candidates(DIRECT_MARKER, 8)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        first
+            .search_event_candidates(LEGACY_MARKER, 8)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(first
+        .search_event_candidates(NESTED_MARKER, 8)
+        .unwrap()
+        .is_empty());
+    let first_root_manifest = first.manifest().provider_root(ROOT_ID).unwrap();
+    assert_eq!(
+        first_root_manifest.source_identity(),
+        ProviderRootSourceIdentity::NamedV1
+    );
+    let first_routes = first_root_manifest.routes().to_vec();
+    let first_sources = first
+        .manifest()
+        .sources
+        .iter()
+        .map(|source| {
+            let source = source.observation().source();
+            (
+                ctx_history_index::source_token(source),
+                serde_json::to_vec(source).unwrap(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(first_sources.len(), 2);
+    drop(first);
+
+    let moved_root = fixture.join("qoder-history-moved");
+    fs::rename(&first_root, &moved_root).unwrap();
+    let moved_discovery = discovery
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(vec![definition(moved_root.clone())]);
+    let moved_report = ctx_history_capture::discover_provider_sources_for_provider_with_context(
+        &moved_discovery,
+        CaptureProvider::Qoder,
+    );
+    assert!(moved_report.issues.is_empty(), "{:?}", moved_report.issues);
+    assert_eq!(moved_report.sources.len(), 1);
+    assert_eq!(moved_report.sources[0].path, moved_root);
+    assert_eq!(
+        moved_report.sources[0].status,
+        ProviderSourceStatus::Available
+    );
+    run_report(&moved_discovery, moved_report, &data_root, &index_root).unwrap();
+
+    let moved = VerifiedIndex::open(&index_root).unwrap();
+    let moved_root_manifest = moved.manifest().provider_root(ROOT_ID).unwrap();
+    assert_eq!(moved_root_manifest.routes(), first_routes);
+    assert_eq!(moved_root_manifest.definition().path, moved_root);
+    assert_eq!(
+        moved_root_manifest.source_identity(),
+        ProviderRootSourceIdentity::NamedV1
+    );
+    let moved_sources = moved
+        .manifest()
+        .sources
+        .iter()
+        .map(|source| {
+            let source = source.observation().source();
+            (
+                ctx_history_index::source_token(source),
+                serde_json::to_vec(source).unwrap(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(moved_sources, first_sources);
+    assert_eq!(
+        moved
+            .search_event_candidates(DIRECT_MARKER, 8)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        moved
+            .search_event_candidates(LEGACY_MARKER, 8)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(moved
+        .search_event_candidates(NESTED_MARKER, 8)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn failed_same_name_incompatible_replacement_keeps_predecessor_until_success() {
     let temp = tempfile::tempdir().unwrap();
     let fixture = fs::canonicalize(temp.path()).unwrap();

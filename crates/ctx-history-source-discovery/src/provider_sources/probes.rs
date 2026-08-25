@@ -96,9 +96,9 @@ pub(super) fn default_location_import_probe(
         }),
         CaptureProvider::Gemini | CaptureProvider::Tabnine => has_gemini_chat_jsonl(path, 10_000),
         CaptureProvider::Cursor => has_cursor_agent_transcript(probes, path),
-        CaptureProvider::Qoder => {
-            has_jsonl_file_under_matching(path, 10_000, qoder_jsonl_path_is_supported)
-        }
+        CaptureProvider::Qoder => has_file_under_matching(path, 10_000, |candidate| {
+            qoder_jsonl_path_is_supported(path, candidate)
+        }),
         CaptureProvider::Zed => path_is_file_probe(path),
         CaptureProvider::CopilotCli => has_jsonl_file_under_matching(path, 10_000, |candidate| {
             candidate.file_name().and_then(|name| name.to_str()) == Some("events.jsonl")
@@ -585,15 +585,48 @@ pub(super) fn has_openhands_v1_event_json(root: &Path, max_entries: usize) -> Bo
     })
 }
 
-fn qoder_jsonl_path_is_supported(path: &Path) -> bool {
-    if path_has_component(path, "transcript") {
-        return true;
+fn qoder_jsonl_path_is_supported(root: &Path, path: &Path) -> bool {
+    if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+        return false;
     }
-    path.parent()
-        .and_then(Path::parent)
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-        == Some("projects")
+
+    // An explicitly selected Qoder file retains its released path admission.
+    // Directory sources instead name the projects transcript tree itself, so
+    // classify its two native layouts relative to that selected authority.
+    if root == path {
+        return path_has_component(path, "transcript")
+            || path
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some("projects");
+    }
+
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut components = relative.components();
+    match (
+        components.next(),
+        components.next(),
+        components.next(),
+        components.next(),
+    ) {
+        (
+            Some(std::path::Component::Normal(_project)),
+            Some(std::path::Component::Normal(_session)),
+            None,
+            None,
+        ) => true,
+        (
+            Some(std::path::Component::Normal(_project)),
+            Some(std::path::Component::Normal(transcript)),
+            Some(std::path::Component::Normal(_session)),
+            None,
+        ) => transcript == "transcript",
+        _ => false,
+    }
 }
 
 pub(super) fn is_openhands_current_event_json(path: &Path) -> bool {

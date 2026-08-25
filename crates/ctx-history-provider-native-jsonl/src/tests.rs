@@ -69,12 +69,21 @@ fn antigravity_dialect_prefers_the_full_transcript_sibling() {
 #[test]
 fn qoder_dialect_admits_transcript_and_direct_project_jsonl_only() {
     let temp = tempdir().unwrap();
-    let root = temp.path().join(".qoder/projects");
+    let root = temp.path().join("renamed-qoder-history");
     let transcript = root.join("legacy/transcript/legacy.jsonl");
     let direct = root.join("current/direct.jsonl");
     let nested = root.join("current/nested/not-a-session.jsonl");
+    let nested_transcript = root.join("legacy/transcript/nested/not-a-session.jsonl");
+    let root_session = root.join("not-a-project-session.jsonl");
     let sidecar = root.join("current/state.json");
-    for path in [&transcript, &direct, &nested, &sidecar] {
+    for path in [
+        &transcript,
+        &direct,
+        &nested,
+        &nested_transcript,
+        &root_session,
+        &sidecar,
+    ] {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"{}\n").unwrap();
     }

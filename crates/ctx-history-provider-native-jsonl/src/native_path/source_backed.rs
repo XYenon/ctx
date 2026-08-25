@@ -208,8 +208,12 @@ impl<R: NativeJsonlRuntime> DirectJsonlFamilyAdapter<R> {
                 if observation != opening {
                     return Err(CaptureError::SourceChangedDuringCapture);
                 }
-                if super::super::dialect::native_jsonl_file_is_selected(self.provider, root, false)
-                {
+                if super::super::dialect::native_jsonl_file_is_selected(
+                    self.provider,
+                    root,
+                    root,
+                    false,
+                ) {
                     bind_opened_leaf(
                         self,
                         root,
@@ -386,7 +390,13 @@ impl<R: NativeJsonlRuntime> DirectJsonlDirectoryTraversal<'_, R> {
             }
             let child_path = absolute_path.join(&name);
             let child_relative_path = relative_path.join(&name);
-            let selected = selected_file(self.adapter.provider, directory, &child_path, &name)?;
+            let selected = selected_file(
+                self.adapter.provider,
+                self.source_root,
+                directory,
+                &child_path,
+                &name,
+            )?;
             let opened = match directory.open_child(&name) {
                 Ok(opened) => opened,
                 Err(error) if selected && self.adapter.provider == CaptureProvider::Tabnine => {
@@ -442,6 +452,7 @@ fn membership_open_error_is_ignorable(selected: bool, error: &CaptureError) -> b
 
 fn selected_file(
     provider: CaptureProvider,
+    source_root: &Path,
     directory: &ProviderSourceDirectory<CaptureError>,
     path: &Path,
     name: &OsStr,
@@ -460,6 +471,7 @@ fn selected_file(
         };
     Ok(super::super::dialect::native_jsonl_file_is_selected(
         provider,
+        source_root,
         path,
         full_transcript_is_regular,
     ))

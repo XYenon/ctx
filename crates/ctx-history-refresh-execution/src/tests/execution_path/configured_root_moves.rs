@@ -99,3 +99,33 @@ fn write_openhands_current_message(root: &Path, marker: &str) {
     )
     .unwrap();
 }
+
+fn write_qoder_message(path: &Path, session_id: &str, marker: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            "{}\n{}\n",
+            json!({
+                "type": "session_meta",
+                "sessionId": session_id,
+                "uuid": format!("{session_id}-meta"),
+                "timestamp": "2026-07-01T12:00:00Z",
+                "cwd": "/workspace/qoder-cli",
+                "data": {
+                    "meta_type": "session_info",
+                    "content": {"mode": "agent", "session_type": "assistant"}
+                }
+            }),
+            json!({
+                "type": "user",
+                "sessionId": session_id,
+                "uuid": format!("{session_id}-user"),
+                "timestamp": "2026-07-01T12:00:01Z",
+                "cwd": "/workspace/qoder-cli",
+                "message": {"role": "user", "content": marker}
+            })
+        ),
+    )
+    .unwrap();
+}
