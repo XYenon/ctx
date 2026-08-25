@@ -489,7 +489,7 @@ fn claude_roots_with_the_same_relative_session_path_publish_independent_sources(
             .collect(),
         issues: Vec::new(),
     };
-    let build = build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+    let build = build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
         &crate::test_provider_probes(),
         &context,
         &temp.path().join("data"),
@@ -604,18 +604,20 @@ fn unavailable_configured_claude_home_carries_only_itself_while_peer_refreshes()
     );
     let displaced_work_home = temp.path().join("work-displaced");
     fs::rename(&work_home, &displaced_work_home).unwrap();
-    fs::write(&work_home, b"temporarily not a directory").unwrap();
     let current = build_discovered_provider_registry(&context, &data_root, CaptureProvider::Claude);
     assert!(
         current.issues.iter().any(|issue| matches!(
             issue,
-            SourceBackedAutomaticRegistryIssue::Discovery(issue)
-                if issue.path.as_deref() == Some(work_home.as_path())
+            SourceBackedAutomaticRegistryIssue::Unavailable {
+                source,
+                reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                    ProviderSourceStatus::Missing
+                ),
+            } if source.path == work
         )),
         "{:?}",
         current.issues
     );
-    fs::remove_file(&work_home).unwrap();
     fs::rename(&displaced_work_home, &work_home).unwrap();
     let receipt =
         refresh_source_backed_generation(&index, &current.registry, writer_options()).unwrap();
@@ -660,7 +662,6 @@ fn cold_unavailable_configured_claude_home_does_not_block_healthy_peer() {
             "personal cold marker",
         )],
     );
-    fs::write(&work_home, b"temporarily not a directory").unwrap();
     let definitions = vec![
         ctx_history_capture_model::ProviderRootDefinition {
             id: "personal".to_owned(),
@@ -692,8 +693,12 @@ fn cold_unavailable_configured_claude_home_does_not_block_healthy_peer() {
     assert!(
         build.issues.iter().any(|issue| matches!(
             issue,
-            SourceBackedAutomaticRegistryIssue::Discovery(issue)
-                if issue.path.as_deref() == Some(work_home.as_path())
+            SourceBackedAutomaticRegistryIssue::Unavailable {
+                source,
+                reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                    ProviderSourceStatus::Missing
+                ),
+            } if source.path == work_home.join("projects")
         )),
         "{:?}",
         build.issues

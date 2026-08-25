@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use ctx_history_capture_model::{ProviderRootDefinition, ProviderRootSourceIdentity};
 use rusqlite::Connection;
@@ -22,7 +22,7 @@ struct RouteBytes {
 
 #[derive(Debug, PartialEq, Eq)]
 struct PublicationBytes {
-    sources: Vec<u8>,
+    sources: Vec<Vec<u8>>,
     aggregates: Vec<u8>,
     source_routes: Vec<u8>,
     route_controls: Vec<u8>,
@@ -179,6 +179,38 @@ fn build_provider_registry(
     build
 }
 
+fn build_provider_registry_with_retained(
+    context: &DiscoveryContext,
+    data_root: &Path,
+    provider: CaptureProvider,
+    retained: &BTreeMap<String, RetainedProviderRootAuthority>,
+) -> SourceBackedAutomaticRegistryBuild {
+    let report = ctx_history_source_discovery::discover_provider_sources_for_provider_with_context(
+        &crate::test_provider_probes(),
+        context,
+        provider,
+    );
+    let build = build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
+        &crate::test_provider_probes(),
+        context,
+        data_root,
+        report,
+        retained,
+    );
+    assert!(build.issues.is_empty(), "{provider}: {:?}", build.issues);
+    build
+}
+
+fn move_provider_root(path: &Path, destination_root: &Path, step: usize) -> std::path::PathBuf {
+    let destination = destination_root.join(format!("move-{step}")).join(
+        path.file_name()
+            .expect("provider fixture root has a final component"),
+    );
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    fs::rename(path, &destination).unwrap();
+    destination
+}
+
 fn route_bytes(registry: &SourceBackedProviderRegistry) -> Vec<RouteBytes> {
     let mut routes = registry
         .routes()
@@ -214,7 +246,12 @@ fn publication_bytes(
     );
     assert!(!receipt.sources.is_empty());
     let manifest = receipt.commit.manifest();
-    let sources = serde_json::to_vec(&manifest.sources).unwrap();
+    let mut sources = manifest
+        .sources
+        .iter()
+        .map(|source| serde_json::to_vec(source.observation().source()).unwrap())
+        .collect::<Vec<_>>();
+    sources.sort();
     let aggregates = serde_json::to_vec(&manifest.core_record_aggregates).unwrap();
     let source_routes = serde_json::to_vec(manifest.source_routes()).unwrap();
     let route_controls = serde_json::to_vec(&receipt.route_controls).unwrap();
@@ -242,6 +279,27 @@ fn publication_bytes(
         route_controls,
         records,
     }
+}
+
+fn assert_publication_bytes_eq(
+    actual: &PublicationBytes,
+    expected: &PublicationBytes,
+    context: &str,
+) {
+    assert_eq!(actual.sources, expected.sources, "{context} sources");
+    assert_eq!(
+        actual.aggregates, expected.aggregates,
+        "{context} aggregates"
+    );
+    assert_eq!(
+        actual.source_routes, expected.source_routes,
+        "{context} source routes"
+    );
+    assert_eq!(
+        actual.route_controls, expected.route_controls,
+        "{context} route controls"
+    );
+    assert_eq!(actual.records, expected.records, "{context} records");
 }
 
 #[test]
@@ -311,6 +369,132 @@ fn matching_released_roots_reproduce_automatic_authority_and_record_bytes() {
                 ),
                 automatic_publication,
                 "{provider} automatic={automatic_enabled} source/session/event bytes"
+            );
+        }
+    }
+}
+
+#[test]
+fn moved_released_roots_survive_restart_and_second_move_without_rotating_bytes() {
+    for provider in [
+        CaptureProvider::OpenClaw,
+        CaptureProvider::Hermes,
+        CaptureProvider::Crush,
+        CaptureProvider::Goose,
+        CaptureProvider::AstrBot,
+        CaptureProvider::Lingma,
+        CaptureProvider::Warp,
+    ] {
+        for automatic_enabled in [true, false] {
+            let temp = tempdir().unwrap();
+            let mut fixture = provider_fixture(temp.path(), provider);
+            let identity_root = fixture.root.path.clone();
+            let automatic = build_provider_registry(
+                &fixture.context,
+                &temp.path().join("automatic-data"),
+                provider,
+            );
+            let automatic_routes = route_bytes(&automatic.registry);
+            let automatic_publication = publication_bytes(
+                &temp.path().join("automatic-index"),
+                &automatic.registry,
+                fixture.marker,
+            );
+
+            let initial_context = fixture
+                .context
+                .clone()
+                .with_automatic_provider_discovery(automatic_enabled)
+                .with_configured_provider_roots(vec![fixture.root.clone()]);
+            let initial = build_provider_registry(
+                &initial_context,
+                &temp.path().join("initial-configured-data"),
+                provider,
+            );
+            let initial_applied = initial.registry.applied_provider_roots().unwrap().2[0].clone();
+            assert_eq!(
+                initial_applied
+                    .connector_binding()
+                    .expect("released root has a connector binding")
+                    .identity_root(),
+                Some(identity_root.as_path()),
+                "{provider} automatic={automatic_enabled} initial binding"
+            );
+
+            fixture.root.path =
+                move_provider_root(&fixture.root.path, &temp.path().join("moved"), 1);
+            let first_context = fixture
+                .context
+                .clone()
+                .with_automatic_provider_discovery(automatic_enabled)
+                .with_configured_provider_roots(vec![fixture.root.clone()]);
+            let first_retained = BTreeMap::from([(
+                fixture.root.id.clone(),
+                initial_applied.retained_authority().unwrap(),
+            )]);
+            let first = build_provider_registry_with_retained(
+                &first_context,
+                &temp.path().join("first-move-data"),
+                provider,
+                &first_retained,
+            );
+            assert_eq!(
+                route_bytes(&first.registry),
+                automatic_routes,
+                "{provider} automatic={automatic_enabled} first move route authority"
+            );
+            assert_publication_bytes_eq(
+                &publication_bytes(
+                    &temp.path().join("first-move-index"),
+                    &first.registry,
+                    fixture.marker,
+                ),
+                &automatic_publication,
+                &format!("{provider} automatic={automatic_enabled} first move"),
+            );
+
+            let first_applied = first.registry.applied_provider_roots().unwrap().2[0].clone();
+            let persisted = serde_json::to_vec(&first_applied).unwrap();
+            let restarted: AppliedProviderRoot = serde_json::from_slice(&persisted).unwrap();
+            assert_eq!(
+                restarted
+                    .connector_binding()
+                    .expect("restarted released root has a connector binding")
+                    .identity_root(),
+                Some(identity_root.as_path()),
+                "{provider} automatic={automatic_enabled} restarted binding"
+            );
+
+            fixture.root.path =
+                move_provider_root(&fixture.root.path, &temp.path().join("moved"), 2);
+            let second_context = fixture
+                .context
+                .clone()
+                .with_automatic_provider_discovery(automatic_enabled)
+                .with_configured_provider_roots(vec![fixture.root.clone()]);
+            let second_retained = BTreeMap::from([(
+                fixture.root.id.clone(),
+                restarted.retained_authority().unwrap(),
+            )]);
+            let second = build_provider_registry_with_retained(
+                &second_context,
+                &temp.path().join("second-move-data"),
+                provider,
+                &second_retained,
+            );
+            assert_eq!(
+                route_bytes(&second.registry),
+                automatic_routes,
+                "{provider} automatic={automatic_enabled} second move route authority"
+            );
+            assert_publication_bytes_eq(
+                &publication_bytes(
+                    &temp.path().join("second-move-index"),
+                    &second.registry,
+                    fixture.marker,
+                ),
+                &automatic_publication,
+                &format!("{provider} automatic={automatic_enabled} second move"),
             );
         }
     }

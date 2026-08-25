@@ -159,7 +159,7 @@ fn configured_goose_accepts_a_shallow_absolute_database_path() {
 }
 
 #[test]
-fn configured_astrbot_roots_scan_only_their_root_local_inventory() {
+fn released_astrbot_root_scans_only_its_inventory_and_cannot_absorb_named_peer() {
     let temp = tempdir().unwrap();
     let home = temp.path().join("home");
     let cwd = temp.path().join("cwd");
@@ -216,7 +216,7 @@ fn configured_astrbot_roots_scan_only_their_root_local_inventory() {
             )
             .unwrap();
     };
-    let first = temp.path().join("astrbot-first/data_v4.db");
+    let first = home.join(".astrbot/data/data_v4.db");
     let second = temp.path().join("astrbot-second/data_v4.db");
     create_database(&first, "first-session", "astrbotrootalpha");
     create_database(&second, "second-session", "astrbotrootbeta");
@@ -251,6 +251,15 @@ fn configured_astrbot_roots_scan_only_their_root_local_inventory() {
     );
     assert!(build.issues.is_empty(), "{:?}", build.issues);
     assert_eq!(build.executable_route_count(), 2);
+    let applied = &build.registry.applied_provider_roots().unwrap().2;
+    assert_eq!(
+        applied[0].source_identity(),
+        ProviderRootSourceIdentity::Released
+    );
+    assert_eq!(
+        applied[1].source_identity(),
+        ProviderRootSourceIdentity::NamedV1
+    );
 
     refresh_source_backed_generation(
         temp.path().join("index"),
@@ -327,7 +336,7 @@ fn canonical_equivalence_replay_fails_closed_after_path_changes_and_retains_prio
     // available/empty equivalence gate rather than minting a Released owner.
     fs::remove_file(&database).unwrap();
     let no_retained =
-        build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+        build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
             &crate::test_provider_probes(),
             &context,
             &temp.path().join("ctx-data"),
@@ -342,9 +351,18 @@ fn canonical_equivalence_replay_fails_closed_after_path_changes_and_retains_prio
         ProviderRootSourceIdentity::NamedV1
     );
 
-    let retained = BTreeMap::from([(definition.id.clone(), ProviderRootSourceIdentity::Released)]);
+    let retained_root = AppliedProviderRoot::with_source_identity(
+        definition.clone(),
+        ProviderRootSourceIdentity::Released,
+        Vec::new(),
+    )
+    .unwrap();
+    let retained = BTreeMap::from([(
+        definition.id.clone(),
+        retained_root.retained_authority().unwrap(),
+    )]);
     let with_retained =
-        build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+        build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
             &crate::test_provider_probes(),
             &context,
             &temp.path().join("ctx-data-retained"),
@@ -404,12 +422,24 @@ fn only_one_configured_root_per_provider_can_own_the_released_namespace() {
             .collect(),
         issues: Vec::new(),
     };
-    let retained = BTreeMap::from([
-        ("first".to_owned(), ProviderRootSourceIdentity::Released),
-        ("second".to_owned(), ProviderRootSourceIdentity::Released),
-    ]);
+    let retained = roots
+        .iter()
+        .map(|root| {
+            (
+                root.id.clone(),
+                AppliedProviderRoot::with_source_identity(
+                    root.clone(),
+                    ProviderRootSourceIdentity::Released,
+                    Vec::new(),
+                )
+                .unwrap()
+                .retained_authority()
+                .unwrap(),
+            )
+        })
+        .collect();
 
-    let build = build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+    let build = build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
         &crate::test_provider_probes(),
         &context,
         &temp.path().join("ctx-data"),
@@ -489,7 +519,15 @@ fn configured_claude_roots_register_as_independent_routes_and_aliases() {
         sources,
         Vec::new(),
     );
-    assert!(build.issues.is_empty(), "{:?}", build.issues);
+    assert!(matches!(
+        build.issues.as_slice(),
+        [SourceBackedAutomaticRegistryIssue::Unavailable {
+            source,
+            reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                ProviderSourceStatus::Missing
+            ),
+        }] if source.path == work.join("projects")
+    ));
     assert_eq!(build.registry.routes().len(), 2);
     assert_eq!(build.executable_route_count(), 1);
     let route_ids = build
@@ -622,20 +660,34 @@ fn cold_missing_configured_openhands_root_creates_no_sessions() {
         vec![configured_source(
             source,
             "current",
-            missing,
+            missing.clone(),
             "openhands-current-conversations",
         )],
         Vec::new(),
     );
-    assert!(build.issues.is_empty(), "{:?}", build.issues);
+    assert!(matches!(
+        build.issues.as_slice(),
+        [SourceBackedAutomaticRegistryIssue::Unavailable {
+            source,
+            reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                ProviderSourceStatus::Missing
+            ),
+        }] if source.path == missing
+    ));
 
-    let receipt = refresh_source_backed_generation(
+    let error = refresh_source_backed_generation(
         temp.path().join("index"),
         &build.registry,
         WriterOptions::default(),
     )
-    .unwrap();
-    assert!(receipt.sources.is_empty());
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SourceBackedCoordinatorError::NoUsableSourceRoutes { failed_routes }
+            if failed_routes.len() == 1
+                && failed_routes[0].class == SourceBackedSourceFailureClass::Unavailable
+                && !failed_routes[0].carried_forward
+    ));
 }
 
 #[test]

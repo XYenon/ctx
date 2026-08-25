@@ -44,7 +44,10 @@ pub fn build_automatic_source_backed_registry_from_report_with_retained_roots(
     discovery: &DiscoveryContext,
     data_root: &Path,
     report: DiscoveryReport,
-    retained_provider_roots: &BTreeMap<String, ctx_history_index::AppliedProviderRoot>,
+    retained_provider_roots: &BTreeMap<
+        String,
+        ctx_history_capture_model::RetainedProviderRootAuthority,
+    >,
 ) -> SourceBackedAutomaticRegistryBuild {
     ctx_history_capture_composition::build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
         &crate::provider_sources::BUILTIN_PROVIDER_PROBES,

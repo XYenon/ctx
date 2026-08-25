@@ -202,8 +202,10 @@ pub(super) fn refresh_source_backed_generation_with_detailed_progress_and_discov
         let mut successful_this_attempt = BTreeSet::new();
         let mut completed_routes = 0;
         for route in registry.routes.iter().filter(|route| {
-            route.metadata.source.status == ProviderSourceStatus::Unknown
-                && route.driver.is_none()
+            matches!(
+                route.metadata.source.status,
+                ProviderSourceStatus::Missing | ProviderSourceStatus::Unknown
+            ) && route.driver.is_none()
                 && route.certified_missing_paths.is_empty()
                 && route.metadata.route_identity.is_some()
         }) {

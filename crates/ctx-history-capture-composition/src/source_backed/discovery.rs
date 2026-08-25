@@ -167,7 +167,7 @@ pub fn build_automatic_source_backed_registry_from_report_with_probes_and_retain
     discovery: &DiscoveryContext,
     data_root: &Path,
     report: DiscoveryReport,
-    retained_provider_roots: &BTreeMap<String, AppliedProviderRoot>,
+    retained_provider_roots: &BTreeMap<String, RetainedProviderRootAuthority>,
 ) -> SourceBackedAutomaticRegistryBuild {
     build_automatic_source_backed_registry_from_parts_with_probes(
         probes,
@@ -185,7 +185,7 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
     data_root: &Path,
     sources: Vec<ProviderSource>,
     discovery_issues: Vec<DiscoveryIssue>,
-    retained_provider_roots: &BTreeMap<String, AppliedProviderRoot>,
+    retained_provider_roots: &BTreeMap<String, RetainedProviderRootAuthority>,
 ) -> SourceBackedAutomaticRegistryBuild {
     let canonical_automatic =
         ctx_history_source_discovery::discover_canonical_automatic_provider_sources_with_context(
@@ -320,10 +320,22 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
         }
 
         if source.status == ProviderSourceStatus::Missing {
+            if configured_source_identity == Some(ProviderRootSourceIdentity::Released)
+                && released_root_uses_automatic_registration(source.provider)
+            {
+                // A missing moved Released root cannot reconstruct current
+                // connector routes. Leave its applied membership empty so the
+                // refresh merge restores the exact prior route set instead of
+                // minting a configured-path identity for the missing scan path.
+                let reason = SourceBackedAutomaticUnavailableReason::SourceStatus(source.status);
+                issues.push(SourceBackedAutomaticRegistryIssue::Unavailable { source, reason });
+                continue;
+            }
             let route = if configured_root.is_some() {
-                SourceBackedRoute::certified_explicit_missing(
+                let reason = SourceBackedAutomaticUnavailableReason::SourceStatus(source.status);
+                SourceBackedRoute::unavailable_explicit(
                     source.clone(),
-                    SourceBackedSelectorAuthority::ExplicitPath,
+                    automatic_unavailable_detail(&reason),
                 )
             } else {
                 SourceBackedRoute::certified_missing(
@@ -342,7 +354,18 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 Ok(route)
             });
             match route {
-                Ok(route) => registry.register(route),
+                Ok(route) => {
+                    registry.register(route);
+                    if configured_root.is_some() {
+                        let reason = SourceBackedAutomaticUnavailableReason::SourceStatus(
+                            ProviderSourceStatus::Missing,
+                        );
+                        issues.push(SourceBackedAutomaticRegistryIssue::Unavailable {
+                            source,
+                            reason,
+                        });
+                    }
+                }
                 Err(error) => {
                     let reason = automatic_registration_rejected(error);
                     registry.register(SourceBackedRoute::unsupported(
@@ -631,16 +654,21 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 .filter_map(|route| route.metadata.route_identity.clone())
                 .collect::<Vec<_>>();
             let registration = provider_root_registrations.get(&definition.id);
-            AppliedProviderRoot::with_source_identity_and_released_identity_root(
-                definition.clone(),
-                registration
-                    .map(|registration| registration.source_identity)
-                    .unwrap_or_else(|| {
-                        default_provider_root_source_identity(discovery, definition)
-                    }),
-                registration.and_then(|registration| registration.released_identity_root.clone()),
-                routes,
-            )
+            let source_identity = registration
+                .map(|registration| registration.source_identity)
+                .unwrap_or_else(|| default_provider_root_source_identity(discovery, definition));
+            match registration.and_then(|registration| registration.retained_authority.as_ref()) {
+                Some(authority) => AppliedProviderRoot::with_retained_authority(
+                    definition.clone(),
+                    authority.clone(),
+                    routes,
+                ),
+                None => AppliedProviderRoot::with_source_identity(
+                    definition.clone(),
+                    source_identity,
+                    routes,
+                ),
+            }
             .map_err(SourceBackedCoordinatorError::Index)
         })
         .collect::<SourceBackedCoordinatorResult<Vec<_>>>();
@@ -697,6 +725,7 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
 struct ProviderRootRegistration {
     source_identity: ProviderRootSourceIdentity,
     released_identity_root: Option<PathBuf>,
+    retained_authority: Option<RetainedProviderRootAuthority>,
 }
 
 fn normalized_provider_root_registrations(
@@ -704,7 +733,7 @@ fn normalized_provider_root_registrations(
     configured_sources: &[ProviderSource],
     canonical_automatic_sources: &[ProviderSource],
     data_root: &Path,
-    retained: &BTreeMap<String, AppliedProviderRoot>,
+    retained: &BTreeMap<String, RetainedProviderRootAuthority>,
 ) -> BTreeMap<String, ProviderRootRegistration> {
     // Composition may run after the discovery report crossed an I/O boundary,
     // so the canonical automatic view is deliberately revalidated before it
@@ -718,7 +747,7 @@ fn normalized_provider_root_registrations(
     for root in discovery.configured_provider_roots() {
         let provider = root.provider.as_str().to_owned();
         let retained_root = retained.get(&root.id);
-        let identity = match retained_root.map(AppliedProviderRoot::source_identity) {
+        let identity = match retained_root.map(RetainedProviderRootAuthority::source_identity) {
             Some(ProviderRootSourceIdentity::Released)
                 if !released_owner.contains_key(&provider) =>
             {
@@ -741,16 +770,16 @@ fn normalized_provider_root_registrations(
         };
         let released_identity_root = match identity {
             ProviderRootSourceIdentity::Released => retained_root
-                .and_then(AppliedProviderRoot::released_identity_root)
-                .map(Path::to_path_buf)
-                .or_else(|| retained_root.map(|root| root.definition().path.clone()))
+                .and_then(RetainedProviderRootAuthority::connector_binding)
+                .and_then(|binding| binding.identity_root().map(Path::to_path_buf))
                 .or_else(|| {
-                    configured_root_matches_canonical_automatic_routes(
-                        root,
-                        configured_sources,
-                        canonical_automatic_sources,
-                        data_root,
-                    )
+                    (retained_root.is_none()
+                        && configured_root_matches_canonical_automatic_routes(
+                            root,
+                            configured_sources,
+                            canonical_automatic_sources,
+                            data_root,
+                        ))
                     .then(|| root.path.clone())
                 }),
             ProviderRootSourceIdentity::NamedV1 => None,
@@ -760,6 +789,9 @@ fn normalized_provider_root_registrations(
             ProviderRootRegistration {
                 source_identity: identity,
                 released_identity_root,
+                retained_authority: retained_root
+                    .filter(|authority| authority.source_identity() == identity)
+                    .cloned(),
             },
         );
     }
@@ -948,7 +980,7 @@ fn register_released_provider_root_route(
                 .collect::<SourceBackedCoordinatorResult<Vec<_>>>()?;
             databases.push((
                 configured_source.path.clone(),
-                identity.catalog_lineage().typed_key().map_err(|error| {
+                identity.typed_key().map_err(|error| {
                     invalid_route(configured_source.provider, error.to_string())
                 })?,
             ));

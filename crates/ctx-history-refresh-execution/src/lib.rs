@@ -41,7 +41,7 @@ use ctx_history_capture::{
 use ctx_history_capture_model::DiscoveryIssue;
 use ctx_history_capture_model::{
     DiscoveryIssueKind, DiscoveryReport, ProviderRootSourceIdentity, ProviderSource,
-    ProviderSourceStatus,
+    ProviderSourceStatus, RetainedProviderRootAuthority,
 };
 use ctx_history_capture_runtime::{CapturePublicationDisposition, ImmutableCaptureSnapshot};
 use ctx_history_core::{CaptureProvider, CertifiedSource, ScannedSourceCounts};
@@ -280,7 +280,7 @@ pub fn source_backed_watch_catalog(
 fn configured_retained_provider_roots(
     discovery: &DiscoveryContext,
     retained_generation: Option<&VerifiedIndex>,
-) -> Result<BTreeMap<String, ctx_history_index::AppliedProviderRoot>> {
+) -> Result<BTreeMap<String, RetainedProviderRootAuthority>> {
     let roots = discovery.configured_provider_roots();
     let mut root_ids = BTreeSet::new();
     if let Some(duplicate) = roots.iter().find(|root| !root_ids.insert(root.id.as_str())) {
@@ -289,7 +289,7 @@ fn configured_retained_provider_roots(
             duplicate.id
         );
     }
-    Ok(roots
+    roots
         .iter()
         .filter_map(|root| {
             let retained = retained_generation.and_then(|generation| {
@@ -298,11 +298,15 @@ fn configured_retained_provider_roots(
                     .provider_roots()
                     .iter()
                     .find(|applied| provider_root_retention_compatible(applied.definition(), root))
-                    .cloned()
             });
-            retained.map(|applied| (root.id.clone(), applied))
+            retained.map(|applied| {
+                applied
+                    .retained_authority()
+                    .map(|authority| (root.id.clone(), authority))
+            })
         })
-        .collect())
+        .collect::<ctx_history_index::Result<BTreeMap<_, _>>>()
+        .map_err(Into::into)
 }
 
 fn provider_root_retention_compatible(
@@ -312,6 +316,21 @@ fn provider_root_retention_compatible(
     retained.id == current.id
         && retained.provider == current.provider
         && retained.kind == current.kind
+}
+
+fn incompatible_configured_provider_root_routes(
+    retained: &[ctx_history_index::AppliedProviderRoot],
+    desired: &[ctx_history_capture::ProviderRootDefinition],
+) -> BTreeSet<SourceRouteIdentity> {
+    retained
+        .iter()
+        .filter(|root| {
+            !desired
+                .iter()
+                .any(|current| provider_root_retention_compatible(root.definition(), current))
+        })
+        .flat_map(|root| root.routes().iter().cloned())
+        .collect()
 }
 
 #[doc(hidden)]

@@ -306,10 +306,10 @@ impl SourceBackedRoute {
         })
     }
 
-    /// Represents one configured physical route whose path could not be
-    /// classified safely during discovery. It retains the same path-derived
-    /// identity as the executable route so a warm refresh can carry only this
-    /// route while healthy peers continue.
+    /// Represents one configured physical route whose path is absent or could
+    /// not be classified safely during discovery. It retains the same
+    /// path-derived identity as the executable route so a warm refresh can
+    /// carry only this route while healthy peers continue.
     pub fn unavailable_explicit(
         source: ProviderSource,
         reason: impl Into<String>,
@@ -557,10 +557,12 @@ impl SourceBackedProviderRegistry {
             if previous.routes().is_empty() {
                 continue;
             }
-            *root = AppliedProviderRoot::with_source_identity_and_released_identity_root(
+            let authority = previous
+                .retained_authority()
+                .map_err(SourceBackedCoordinatorError::Index)?;
+            *root = AppliedProviderRoot::with_retained_authority(
                 definition,
-                previous.source_identity(),
-                previous.released_identity_root().map(Path::to_path_buf),
+                authority,
                 previous.routes().to_vec(),
             )
             .map_err(SourceBackedCoordinatorError::Index)?;

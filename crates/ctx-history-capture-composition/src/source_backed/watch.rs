@@ -356,7 +356,10 @@ impl SourceBackedProviderRegistry {
             .flat_map(|root| root.routes().iter().cloned())
             .collect::<BTreeSet<_>>();
         for route in &self.routes {
-            if route.driver.is_none() && route.certified_missing_paths.is_empty() {
+            if route.driver.is_none()
+                && route.certified_missing_paths.is_empty()
+                && route.metadata.source.status != ProviderSourceStatus::Missing
+            {
                 continue;
             }
             let Some(identity) = route.metadata.route_identity.clone() else {

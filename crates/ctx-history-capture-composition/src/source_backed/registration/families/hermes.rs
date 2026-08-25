@@ -47,7 +47,7 @@ pub(super) fn register_hermes_source_backed_route(
     install_hermes_registration(registry, registration)
 }
 
-pub(super) fn register_hermes_released_source_backed_route(
+pub(in crate::source_backed) fn register_hermes_released_source_backed_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     data_root: &Path,

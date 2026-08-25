@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ctx_history_core::TypedKey;
+use ctx_history_core::{CaptureProvider, TypedKey};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 

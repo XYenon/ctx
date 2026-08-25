@@ -122,6 +122,85 @@ fn configured_provider_root_identity_matching_rejects_duplicate_stable_ids() {
     assert!(error.to_string().contains("not unique"), "{error:#}");
 }
 
+#[test]
+fn incompatible_provider_or_kind_replacement_retires_only_authenticated_root_routes() {
+    use ctx_history_capture::{ProviderRootDefinition, ProviderRootKind};
+    use ctx_history_index::AppliedProviderRoot;
+
+    let route = |byte: &str| SourceRouteIdentity::from_sha256(byte.repeat(64)).unwrap();
+    let replaced_provider_route = route("1");
+    let replaced_kind_route = route("2");
+    let compatible_route = route("3");
+    let applied = |definition, route| {
+        AppliedProviderRoot::with_source_identity(
+            definition,
+            ProviderRootSourceIdentity::NamedV1,
+            vec![route],
+        )
+        .unwrap()
+    };
+    let retained = vec![
+        applied(
+            ProviderRootDefinition {
+                id: "provider-replacement".to_owned(),
+                provider: CaptureProvider::Claude,
+                path: "/old/claude".into(),
+                group: None,
+                kind: None,
+            },
+            replaced_provider_route.clone(),
+        ),
+        applied(
+            ProviderRootDefinition {
+                id: "kind-replacement".to_owned(),
+                provider: CaptureProvider::OpenHands,
+                path: "/old/openhands".into(),
+                group: None,
+                kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+            },
+            replaced_kind_route.clone(),
+        ),
+        applied(
+            ProviderRootDefinition {
+                id: "compatible-move".to_owned(),
+                provider: CaptureProvider::Claude,
+                path: "/old/path".into(),
+                group: Some("old-group".to_owned()),
+                kind: None,
+            },
+            compatible_route,
+        ),
+    ];
+    let desired = vec![
+        ProviderRootDefinition {
+            id: "provider-replacement".to_owned(),
+            provider: CaptureProvider::Codex,
+            path: "/new/codex".into(),
+            group: None,
+            kind: None,
+        },
+        ProviderRootDefinition {
+            id: "kind-replacement".to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: "/new/openhands".into(),
+            group: None,
+            kind: Some(ProviderRootKind::OpenHandsLegacyPersistence),
+        },
+        ProviderRootDefinition {
+            id: "compatible-move".to_owned(),
+            provider: CaptureProvider::Claude,
+            path: "/new/path".into(),
+            group: Some("new-group".to_owned()),
+            kind: None,
+        },
+    ];
+
+    assert_eq!(
+        incompatible_configured_provider_root_routes(&retained, &desired),
+        BTreeSet::from([replaced_provider_route, replaced_kind_route])
+    );
+}
+
 fn configured_provider_source_for_path(
     provider: CaptureProvider,
     path: PathBuf,
