@@ -40,7 +40,7 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
     let (configured_sources, automatic_sources): (Vec<_>, Vec<_>) = sources
         .into_iter()
         .partition(|source| configured_provider_root_for_source(discovery, source).is_some());
-    for mut source in configured_sources.into_iter().chain(automatic_sources) {
+    for mut source in configured_sources.iter().cloned().chain(automatic_sources) {
         let configured_root = configured_provider_root_for_source(discovery, &source);
         let configured_source_identity = configured_root.map(|root| {
             provider_root_registrations
@@ -179,6 +179,7 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
                     &registry,
                     discovery,
                     &provider_root_registrations,
+                    &configured_sources,
                     &source,
                 )
                 .is_some()
@@ -406,6 +407,7 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
             &registry,
             discovery,
             &provider_root_registrations,
+            &configured_sources,
             &source,
         );
         if compound_provider

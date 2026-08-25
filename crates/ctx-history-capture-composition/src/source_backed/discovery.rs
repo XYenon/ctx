@@ -702,25 +702,46 @@ fn released_root_automatic_coexistence_lineage(
     registry: &SourceBackedProviderRegistry,
     discovery: &DiscoveryContext,
     provider_root_registrations: &BTreeMap<String, ProviderRootRegistration>,
+    configured_sources: &[ProviderSource],
     automatic: &ProviderSource,
 ) -> Option<[u8; 32]> {
     let ordinary_route = automatic_source_backed_route_identity(automatic).ok()?;
     let adopted = registry.routes.iter().find(|route| {
         route.metadata.route_identity.as_ref() == Some(&ordinary_route)
             && !provider_paths_equivalent(&route.metadata.source.path, &automatic.path)
-    })?;
-    let (root_id, _) = adopted.metadata.source.route_provenance.configured_root()?;
-    if provider_root_registrations
-        .get(root_id)
-        .map(|registration| registration.source_identity)
-        != Some(ProviderRootSourceIdentity::Released)
-    {
-        return None;
+    });
+    if let Some(adopted) = adopted {
+        let (root_id, _) = adopted.metadata.source.route_provenance.configured_root()?;
+        if provider_root_registrations
+            .get(root_id)
+            .map(|registration| registration.source_identity)
+            == Some(ProviderRootSourceIdentity::Released)
+        {
+            let root = discovery
+                .configured_provider_roots()
+                .iter()
+                .find(|root| root.id == root_id && root.provider == automatic.provider)?;
+            return Some(automatic_provider_root_coexistence_source_lineage(root));
+        }
     }
-    let root = discovery
-        .configured_provider_roots()
-        .iter()
-        .find(|root| root.id == root_id && root.provider == automatic.provider)?;
+    // A moved Released root can be unavailable before it reconstructs an
+    // executable route. Its retained connector binding still establishes the
+    // same old automatic lineage, so suppress a stale Missing observation
+    // without treating an Available automatic source as stale.
+    let root = discovery.configured_provider_roots().iter().find(|root| {
+        let Some(registration) = provider_root_registrations.get(&root.id) else {
+            return false;
+        };
+        registration.source_identity == ProviderRootSourceIdentity::Released
+            && registration.retained_authority.is_some()
+            && released_automatic_route_claims(
+                root,
+                configured_sources,
+                std::slice::from_ref(automatic),
+                registration.retained_authority.as_ref(),
+            )
+            .contains(&ordinary_route)
+    })?;
     Some(automatic_provider_root_coexistence_source_lineage(root))
 }
 

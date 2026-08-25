@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use ctx_history_capture_model::{
     ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
 };
+use ctx_history_index::policy::AUTOMATIC_ROUTE_DELETION_GRACE_OBSERVATIONS;
 use rusqlite::Connection;
 
 use super::*;
@@ -638,46 +639,61 @@ fn moved_openhands_current_root_retains_released_authority_through_full_lifecycl
             .path()
             .join("temporarily-missing-current-conversations");
         fs::rename(&moved, &parked).unwrap();
-        let retained = BTreeMap::from([(
-            definition.id.clone(),
-            restarted.retained_authority().unwrap(),
-        )]);
-        let mut missing = discover_provider_registry_with_retained(
-            &moved_context,
-            &temp.path().join("missing-data"),
-            CaptureProvider::OpenHands,
-            &retained,
-        );
-        assert_eq!(missing.executable_route_count(), 0);
-        assert!(missing.issues.iter().any(|issue| matches!(
-            issue,
-            SourceBackedAutomaticRegistryIssue::Unavailable {
-                source,
-                reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
-                    ProviderSourceStatus::Missing
-                ),
-            } if source.path == moved
-        )));
-        missing
-            .registry
-            .retain_unavailable_provider_root_routes(std::slice::from_ref(&restarted))
+        let mut restarted = restarted;
+        // Repeat beyond the index-owned Missing grace. A detached Released
+        // binding must retain the moved route rather than letting the old
+        // automatic path age it out while the replacement is unavailable.
+        for observation in 0..=AUTOMATIC_ROUTE_DELETION_GRACE_OBSERVATIONS {
+            let retained = BTreeMap::from([(
+                definition.id.clone(),
+                restarted.retained_authority().unwrap(),
+            )]);
+            let mut missing = discover_provider_registry_with_retained(
+                &moved_context,
+                &temp.path().join(format!("missing-data-{observation}")),
+                CaptureProvider::OpenHands,
+                &retained,
+            );
+            assert_eq!(missing.executable_route_count(), 0);
+            assert!(missing.issues.iter().any(|issue| matches!(
+                issue,
+                SourceBackedAutomaticRegistryIssue::Unavailable {
+                    source,
+                    reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                        ProviderSourceStatus::Missing
+                    ),
+                } if source.path == moved
+            )));
+            assert!(missing.registry.routes().all(|route| {
+                route.source.path != original
+                    || route.source.status != ProviderSourceStatus::Missing
+            }));
+            missing
+                .registry
+                .retain_unavailable_provider_root_routes(std::slice::from_ref(&restarted))
+                .unwrap();
+            refresh_source_backed_generation(
+                &index_root,
+                &missing.registry,
+                source_backed_refresh_writer_options(),
+            )
             .unwrap();
-        refresh_source_backed_generation(
-            &index_root,
-            &missing.registry,
-            source_backed_refresh_writer_options(),
-        )
-        .unwrap();
-        assert_eq!(
-            serde_json::to_vec(&only_record_matching(&index_root, MOVED_MARKER)).unwrap(),
-            serde_json::to_vec(&automatic_record).unwrap()
-        );
-        let missing_index = VerifiedIndex::open(&index_root).unwrap();
-        let restarted: AppliedProviderRoot = serde_json::from_slice(
-            &serde_json::to_vec(&missing_index.manifest().provider_roots()[0]).unwrap(),
-        )
-        .unwrap();
-        drop(missing_index);
+            assert_eq!(
+                serde_json::to_vec(&only_record_matching(&index_root, MOVED_MARKER)).unwrap(),
+                serde_json::to_vec(&automatic_record).unwrap()
+            );
+            let missing_index = VerifiedIndex::open(&index_root).unwrap();
+            assert!(missing_index
+                .manifest()
+                .source_route(&automatic_route)
+                .unwrap()
+                .missing_state()
+                .is_none());
+            restarted = serde_json::from_slice(
+                &serde_json::to_vec(&missing_index.manifest().provider_roots()[0]).unwrap(),
+            )
+            .unwrap();
+        }
 
         fs::rename(&parked, &moved).unwrap();
         let retained = BTreeMap::from([(
