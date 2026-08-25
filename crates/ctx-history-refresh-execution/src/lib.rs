@@ -338,6 +338,26 @@ fn incompatible_configured_provider_root_routes(
         .collect()
 }
 
+fn removed_configured_provider_root_routes(
+    retained: &[ctx_history_index::AppliedProviderRoot],
+    desired: &[ctx_history_capture::ProviderRootDefinition],
+) -> BTreeSet<SourceRouteIdentity> {
+    retained
+        .iter()
+        .filter(|root| {
+            !desired
+                .iter()
+                .any(|current| root.definition().id == current.id)
+        })
+        .flat_map(|root| {
+            root.routes()
+                .iter()
+                .filter(|route| root.exact_source_tokens_for_route(route).is_none())
+                .cloned()
+        })
+        .collect()
+}
+
 #[doc(hidden)]
 pub fn source_backed_requested_route_observations(
     catalog: &ctx_history_capture::SourceBackedWatchCatalog,

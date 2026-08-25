@@ -480,6 +480,7 @@ pub struct SourceBackedProviderRegistry {
     pub(in super::super) codex_generation: Option<Arc<CodexGenerationNormalizationCoordinatorV0>>,
     pub(in super::super) applied_provider_roots: Option<(bool, String, Vec<AppliedProviderRoot>)>,
     pub(in super::super) provider_root_route_retirements: BTreeSet<SourceRouteIdentity>,
+    pub(in super::super) provider_root_route_withdrawals: BTreeSet<SourceRouteIdentity>,
     pub(in super::super) automatic_split_cohort_barriers: Vec<AutomaticSplitCohortBarrier>,
 }
 
@@ -595,18 +596,16 @@ impl SourceBackedProviderRegistry {
             .collect()
     }
 
-    /// Records exact routes retired by a validated provider-root config
-    /// transition. Unlike discovery absence, removing a configured root is
-    /// direct desired-state authority and does not require missing grace.
-    pub fn set_provider_root_route_retirements(
-        &mut self,
-        routes: impl IntoIterator<Item = SourceRouteIdentity>,
-    ) {
-        self.provider_root_route_retirements = routes.into_iter().collect();
+    /// Records exact routes withdrawn by a validated provider-root config
+    /// transition. Their authenticated history remains retained in Core.
+    pub fn set_root_withdrawals(&mut self, routes: impl IntoIterator<Item = SourceRouteIdentity>) {
+        self.provider_root_route_withdrawals = routes.into_iter().collect();
     }
 
-    pub fn provider_root_route_retirements(&self) -> &BTreeSet<SourceRouteIdentity> {
-        &self.provider_root_route_retirements
+    /// Records exact routes retired by an incompatible provider-root
+    /// replacement after the replacement is validated.
+    pub fn set_root_retirements(&mut self, routes: impl IntoIterator<Item = SourceRouteIdentity>) {
+        self.provider_root_route_retirements = routes.into_iter().collect();
     }
 
     pub(in crate::source_backed) fn register_automatic_split_cohort_barrier(

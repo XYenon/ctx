@@ -91,12 +91,18 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
             .registry
             .retire_routes_after_success(&replacement, retired)?;
     }
-    let previous_provider_root_routes = retained_generation
+    let (previous_provider_root_routes, removed_provider_root_routes) = retained_generation
         .as_ref()
         .map(|generation| {
-            incompatible_configured_provider_root_routes(
-                generation.manifest().provider_roots(),
-                discovery.configured_provider_roots(),
+            (
+                incompatible_configured_provider_root_routes(
+                    generation.manifest().provider_roots(),
+                    discovery.configured_provider_roots(),
+                ),
+                removed_configured_provider_root_routes(
+                    generation.manifest().provider_roots(),
+                    discovery.configured_provider_roots(),
+                ),
             )
         })
         .unwrap_or_default();
@@ -148,13 +154,22 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
         }
     }
     let retired_provider_root_routes = previous_provider_root_routes
+        .difference(&removed_provider_root_routes)
+        .filter(|route| !current_provider_root_routes.contains(*route))
+        .filter(|route| !current_executable_routes.contains(*route))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let withdrawn_provider_root_routes = removed_provider_root_routes
         .difference(&current_provider_root_routes)
         .filter(|route| !current_executable_routes.contains(*route))
         .cloned()
         .collect::<BTreeSet<_>>();
     build
         .registry
-        .set_provider_root_route_retirements(retired_provider_root_routes);
+        .set_root_withdrawals(withdrawn_provider_root_routes);
+    build
+        .registry
+        .set_root_retirements(retired_provider_root_routes);
     Ok(MergedSourceBackedRegistry {
         build,
         reactivated_automatic_routes,

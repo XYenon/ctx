@@ -6,6 +6,7 @@ pub(super) fn successful_route_controls(
     base_route_controls: &BTreeMap<SourceRouteIdentity, Vec<u8>>,
 ) -> SourceBackedCoordinatorResult<BTreeMap<SourceRouteIdentity, Vec<u8>>> {
     let mut route_controls = base_route_controls.clone();
+    route_controls.retain(|route, _| !registry.provider_root_route_withdrawals.contains(route));
     for route in &registry.routes {
         let Some(route_identity) = route.metadata.route_identity.as_ref() else {
             continue;

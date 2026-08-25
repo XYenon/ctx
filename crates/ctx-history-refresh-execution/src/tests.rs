@@ -123,7 +123,7 @@ fn configured_provider_root_identity_matching_rejects_duplicate_stable_ids() {
 }
 
 #[test]
-fn incompatible_provider_or_kind_replacement_retires_only_authenticated_root_routes() {
+fn configured_root_transition_partitions_removals_from_incompatible_replacements() {
     use ctx_history_capture::{ProviderRootDefinition, ProviderRootKind};
     use ctx_history_index::{AppliedProviderRoot, AppliedProviderRootSourceMembership};
 
@@ -132,6 +132,7 @@ fn incompatible_provider_or_kind_replacement_retires_only_authenticated_root_rou
     let replaced_kind_route = route("2");
     let compatible_route = route("3");
     let exact_shared_route = route("4");
+    let removed_route = route("5");
     let applied = |definition, route| {
         AppliedProviderRoot::with_source_identity(
             definition,
@@ -170,6 +171,16 @@ fn incompatible_provider_or_kind_replacement_retires_only_authenticated_root_rou
                 kind: None,
             },
             compatible_route,
+        ),
+        applied(
+            ProviderRootDefinition {
+                id: "removed".to_owned(),
+                provider: CaptureProvider::Codex,
+                path: "/old/codex".into(),
+                group: None,
+                kind: None,
+            },
+            removed_route.clone(),
         ),
         AppliedProviderRoot::with_source_identity(
             ProviderRootDefinition {
@@ -216,7 +227,15 @@ fn incompatible_provider_or_kind_replacement_retires_only_authenticated_root_rou
 
     assert_eq!(
         incompatible_configured_provider_root_routes(&retained, &desired),
-        BTreeSet::from([replaced_provider_route, replaced_kind_route])
+        BTreeSet::from([
+            replaced_provider_route,
+            replaced_kind_route,
+            removed_route.clone(),
+        ])
+    );
+    assert_eq!(
+        removed_configured_provider_root_routes(&retained, &desired),
+        BTreeSet::from([removed_route])
     );
 }
 

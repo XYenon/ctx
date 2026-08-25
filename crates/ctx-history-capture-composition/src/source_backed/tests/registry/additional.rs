@@ -248,7 +248,7 @@ fn automatic_retirement_candidates_activate_only_for_exhaustive_refresh() {
 }
 
 #[test]
-fn logical_all_publication_retires_removed_root_during_exact_physical_execution() {
+fn logical_all_publication_withdraws_removed_root_without_deleting_history() {
     let temp = tempdir().unwrap();
     let personal = explicit_route_at(
         fixture_route_with_body(
@@ -320,9 +320,10 @@ fn logical_all_publication_retires_removed_root_during_exact_physical_execution(
             vec![AppliedProviderRoot::new(personal_definition, vec![personal_id.clone()]).unwrap()],
         )
         .unwrap();
-    current_registry.set_provider_root_route_retirements([work_id.clone()]);
+    current_registry.set_root_withdrawals([work_id.clone()]);
 
-    SourceBackedRefreshExecutor::new(current_registry, WriterOptions::default())
+    let receipt = SourceBackedRefreshExecutor::new(current_registry, WriterOptions::default())
+        .with_base_route_controls(BTreeMap::from([(work_id.clone(), b"work".to_vec())]))
         .refresh_physical_scope_with_detailed_progress_publication_metadata_reconciliation_and_worksets(
             temp.path(),
             SourceBackedRefreshScope::exact([personal_id.clone()]),
@@ -333,11 +334,19 @@ fn logical_all_publication_retires_removed_root_during_exact_physical_execution(
             |_| Ok(Vec::new()),
         )
         .unwrap();
+    assert!(receipt.route_controls.is_empty());
 
     let published = VerifiedIndex::open(temp.path()).unwrap();
-    assert_eq!(published.manifest().sources.len(), 1);
-    assert!(published.manifest().source_route(&work_id).is_none());
+    assert_eq!(published.manifest().sources.len(), 2);
+    assert!(published.manifest().source_route(&work_id).is_some());
     assert!(published.manifest().source_route(&personal_id).is_some());
+    assert_eq!(
+        published
+            .search_event_candidates("workonly", 8)
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(published.manifest().provider_roots().len(), 1);
     assert_eq!(
         published.manifest().provider_roots()[0].definition().id,

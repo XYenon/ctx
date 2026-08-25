@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "configured_root_moves/removal.rs"]
+mod removal;
+
 #[test]
 fn moving_a_named_claude_home_preserves_route_and_source_identity() {
     let temp = tempfile::tempdir().unwrap();
