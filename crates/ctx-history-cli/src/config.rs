@@ -1,5 +1,9 @@
-/// The single immutable configuration snapshot supplied for one history
-/// invocation. Host-specific configuration representations never cross this
+/// Immutable command-local configuration projection.
+///
+/// Discovery preflight uses this snapshot. Daemon admission deliberately
+/// reloads and revalidates live persisted configuration before publication, so
+/// a concurrent root change is applied rather than replaced by stale command
+/// state. Host-specific configuration representations never cross this
 /// boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryCliConfig {

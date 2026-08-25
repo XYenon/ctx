@@ -48,7 +48,6 @@ pub trait ImportApplicationPort {
     fn refresh(
         &mut self,
         data_root: &Path,
-        config: HistoryCliConfig,
         selection: RefreshSelection,
         no_daemon: bool,
         progress: &mut ProgressReporter<'_>,
@@ -215,13 +214,7 @@ impl<P: ImportApplicationPort> IngestRefreshPort for HistoryImportHost<'_, P> {
             .progress
             .as_mut()
             .context("ingest refresh requested before progress initialization")?;
-        self.port.refresh(
-            data_root,
-            self.config.clone(),
-            selection,
-            no_daemon,
-            progress,
-        )
+        self.port.refresh(data_root, selection, no_daemon, progress)
     }
 }
 
