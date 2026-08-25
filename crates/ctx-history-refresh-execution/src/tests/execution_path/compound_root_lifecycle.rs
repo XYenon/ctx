@@ -365,7 +365,7 @@ fn unavailable_only_released_member_is_carried_while_automatic_peer_advances() {
         assert_eq!(retained.exact_source_memberships().len(), 1);
         assert_eq!(
             retained.exact_source_memberships()[0].source_tokens(),
-            &[alpha.source_token.clone()]
+            std::slice::from_ref(&alpha.source_token)
         );
         assert_root_filter(&missing, "alpha", 1);
     }
@@ -548,7 +548,7 @@ fn shared_compound_route_survives_warm_policy_moves_absence_and_alias_removal() 
             let moved_index = VerifiedIndex::open(&index_root).unwrap();
             assert_eq!(
                 moved_index.manifest().provider_roots()[0].routes(),
-                &[route.clone()]
+                std::slice::from_ref(&route)
             );
             assert_eq!(
                 stable_record_bytes(&moved_index, "lifecycleinitial0"),
@@ -581,11 +581,11 @@ fn shared_compound_route_survives_warm_policy_moves_absence_and_alias_removal() 
             .iter()
             .find(|root| root.definition().id == "alpha")
             .unwrap();
-        assert_eq!(alpha.routes(), &[route.clone()]);
+        assert_eq!(alpha.routes(), std::slice::from_ref(&route));
         assert_eq!(alpha.exact_source_memberships().len(), 1);
         assert_eq!(
             alpha.exact_source_memberships()[0].source_tokens(),
-            &[initial_alpha.0.clone()]
+            std::slice::from_ref(&initial_alpha.0)
         );
         assert_eq!(
             stable_record_bytes(&missing, "lifecycleinitial0"),
