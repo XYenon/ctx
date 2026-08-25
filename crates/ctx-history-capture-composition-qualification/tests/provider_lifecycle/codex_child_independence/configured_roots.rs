@@ -1,4 +1,71 @@
 use super::*;
+use ctx_history_capture_model::ProviderRootSourceIdentity;
+
+#[test]
+fn partial_codex_home_adopts_released_identity_without_duplicate_records() {
+    let temp = tempdir().unwrap();
+    let fixture = fs::canonicalize(temp.path()).unwrap();
+    let codex_home = fixture.join("partial-codex-home");
+    let sessions = codex_home.join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let native_session_id = "019fb000-0000-7000-8000-000000000098";
+    write_session(
+        &sessions,
+        native_session_id,
+        ProviderNativeSessionRelationship::Root,
+        None,
+        [message("partial Codex released identity marker")],
+    );
+    let context = DiscoveryContext::new(
+        &fixture,
+        &fixture,
+        DiscoveryPlatform::Linux,
+        DiscoveryPlatformDirs::default(),
+    )
+    .with_env("CODEX_HOME", codex_home.as_os_str());
+
+    let automatic = build_discovered_codex_registry(&context, &fixture.join("automatic-data"));
+    let automatic_index = fixture.join("automatic-index");
+    refresh_source_backed_generation(&automatic_index, &automatic.registry, writer_options())
+        .unwrap();
+    let automatic_records = serde_json::to_vec(&records_for(
+        &VerifiedIndex::open(&automatic_index).unwrap(),
+        native_session_id,
+    ))
+    .unwrap();
+
+    for automatic_enabled in [true, false] {
+        let configured = build_discovered_codex_registry(
+            &context
+                .clone()
+                .with_automatic_provider_discovery(automatic_enabled)
+                .with_configured_provider_roots(vec![ProviderRootDefinition {
+                    id: "personal".to_owned(),
+                    provider: CaptureProvider::Codex,
+                    path: codex_home.clone(),
+                    group: Some("personal".to_owned()),
+                    kind: None,
+                }]),
+            &fixture.join(format!("configured-data-{automatic_enabled}")),
+        );
+        let (_, _, roots) = configured.registry.applied_provider_roots().unwrap();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(
+            roots[0].source_identity(),
+            ProviderRootSourceIdentity::Released
+        );
+
+        let index_root = fixture.join(format!("configured-index-{automatic_enabled}"));
+        refresh_source_backed_generation(&index_root, &configured.registry, writer_options())
+            .unwrap();
+        let index = VerifiedIndex::open(&index_root).unwrap();
+        assert_eq!(index.manifest().sources.len(), 1);
+        assert_eq!(
+            serde_json::to_vec(&records_for(&index, native_session_id)).unwrap(),
+            automatic_records
+        );
+    }
+}
 
 #[test]
 fn configured_codex_homes_with_the_same_native_session_publish_independent_sources() {

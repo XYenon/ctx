@@ -64,6 +64,230 @@ fn exact_history_bytes(index: &VerifiedIndex, marker: &str) -> ExactHistoryBytes
     }
 }
 
+fn write_codex_session(sessions: &Path, session_id: &str, marker: &str) {
+    fs::create_dir_all(sessions).unwrap();
+    fs::write(
+        sessions.join("rollout.jsonl"),
+        format!(
+            "{}\n{}\n",
+            json!({
+                "timestamp": "2026-08-25T00:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": session_id,
+                    "timestamp": "2026-08-25T00:00:00Z",
+                    "cwd": "/repo/partial-released-codex",
+                    "originator": "codex_cli_rs",
+                    "cli_version": "1.0.0",
+                    "source": "cli",
+                    "model_provider": "openai"
+                }
+            }),
+            json!({
+                "timestamp": "2026-08-25T00:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": marker}]
+                }
+            })
+        ),
+    )
+    .unwrap();
+}
+
+fn refresh_discovered_codex(discovery: &DiscoveryContext, data_root: &Path, index_root: &Path) {
+    let report = ctx_history_capture::discover_provider_sources_for_provider_with_context(
+        discovery,
+        CaptureProvider::Codex,
+    );
+    let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
+    refresh_all_provider_sources(
+        discovery,
+        report,
+        StdDuration::ZERO,
+        data_root,
+        index_root,
+        None,
+        SourceBackedRefreshScope::All,
+        &mut progress,
+    )
+    .unwrap();
+}
+
+#[test]
+fn partial_released_codex_overlap_move_remove_readd_preserves_exact_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let fixture = fs::canonicalize(temp.path()).unwrap();
+    let data_root = fixture.join("data");
+    let index_root = source_backed_index_root(&data_root);
+    ctx_history_platform::platform_security::establish_private_data_root(&data_root).unwrap();
+    let (_, _, discovery) = discovery_fixture(&fixture);
+    let first_home = fixture.join("codex-released-first");
+    let first_sessions = first_home.join("sessions");
+    let session_id = "019fb700-0000-7000-8000-000000000721";
+    let marker = "partialreleasedcodexlifecycle";
+    write_codex_session(&first_sessions, session_id, marker);
+    let automatic_discovery = discovery
+        .clone()
+        .with_env("CODEX_HOME", first_home.as_os_str());
+    let automatic_report = ctx_history_capture::discover_provider_sources_for_provider_with_context(
+        &automatic_discovery,
+        CaptureProvider::Codex,
+    );
+    assert_eq!(automatic_report.sources.len(), 3);
+    assert_eq!(
+        automatic_report
+            .sources
+            .iter()
+            .filter(|source| source.status == ProviderSourceStatus::Available)
+            .count(),
+        1
+    );
+    assert_eq!(
+        automatic_report
+            .sources
+            .iter()
+            .filter(|source| source.status == ProviderSourceStatus::Missing)
+            .count(),
+        2
+    );
+    let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
+    refresh_all_provider_sources(
+        &automatic_discovery,
+        automatic_report,
+        StdDuration::ZERO,
+        &data_root,
+        &index_root,
+        None,
+        SourceBackedRefreshScope::All,
+        &mut progress,
+    )
+    .unwrap();
+    let automatic = VerifiedIndex::open(&index_root).unwrap();
+    let baseline = exact_history_bytes(&automatic, marker);
+    assert_eq!(automatic.manifest().sources.len(), 1);
+    drop(automatic);
+
+    let definition = |path| ctx_history_capture::ProviderRootDefinition {
+        id: "work".to_owned(),
+        provider: CaptureProvider::Codex,
+        path,
+        group: Some("work-group".to_owned()),
+        kind: None,
+    };
+    let overlapping_discovery = automatic_discovery
+        .clone()
+        .with_configured_provider_roots(vec![definition(first_home.clone())]);
+    refresh_discovered_codex(&overlapping_discovery, &data_root, &index_root);
+    let overlapping = VerifiedIndex::open(&index_root).unwrap();
+    exact_history_bytes(&overlapping, marker).assert_core_history_eq(&baseline);
+    assert_eq!(overlapping.manifest().sources.len(), 1);
+    let overlapping_routes = overlapping
+        .manifest()
+        .provider_root("work")
+        .unwrap()
+        .routes()
+        .to_vec();
+    assert_eq!(
+        overlapping
+            .manifest()
+            .provider_root("work")
+            .unwrap()
+            .source_identity(),
+        ProviderRootSourceIdentity::Released
+    );
+    drop(overlapping);
+
+    let moved_home = fixture.join("codex-released-moved");
+    fs::rename(&first_home, &moved_home).unwrap();
+    fs::create_dir(&first_home).unwrap();
+    let moved_discovery = discovery
+        .clone()
+        .with_env("CODEX_HOME", first_home.as_os_str())
+        .with_configured_provider_roots(vec![definition(moved_home.clone())]);
+    refresh_discovered_codex(&moved_discovery, &data_root, &index_root);
+    let moved = VerifiedIndex::open(&index_root).unwrap();
+    exact_history_bytes(&moved, marker).assert_core_history_eq(&baseline);
+    assert_eq!(moved.manifest().sources.len(), 1);
+    let moved_routes = moved
+        .manifest()
+        .provider_root("work")
+        .unwrap()
+        .routes()
+        .to_vec();
+    assert!(overlapping_routes
+        .iter()
+        .all(|route| moved_routes.contains(route)));
+    assert_eq!(
+        moved
+            .manifest()
+            .provider_root("work")
+            .unwrap()
+            .source_identity(),
+        ProviderRootSourceIdentity::Released
+    );
+    drop(moved);
+
+    let removed_discovery = discovery
+        .clone()
+        .with_env("CODEX_HOME", first_home.as_os_str());
+    refresh_discovered_codex(&removed_discovery, &data_root, &index_root);
+    let removed = VerifiedIndex::open(&index_root).unwrap();
+    exact_history_bytes(&removed, marker).assert_core_history_eq(&baseline);
+    assert!(removed.manifest().provider_roots().is_empty());
+    assert_eq!(
+        removed.manifest().detached_released_provider_roots().len(),
+        1
+    );
+    assert_eq!(
+        removed.manifest().detached_released_provider_roots()[0].id(),
+        "work"
+    );
+    assert!(matches!(
+        removed
+            .manifest()
+            .provider_root_source_tokens(&["work".to_owned()], &[]),
+        Err(ctx_history_index::IndexError::UnknownProviderRootSelector(id)) if id == "work"
+    ));
+    drop(removed);
+
+    let readded_discovery = discovery
+        .with_env("CODEX_HOME", first_home.as_os_str())
+        .with_configured_provider_roots(vec![definition(moved_home)]);
+    refresh_discovered_codex(&readded_discovery, &data_root, &index_root);
+    let readded = VerifiedIndex::open(&index_root).unwrap();
+    exact_history_bytes(&readded, marker).assert_core_history_eq(&baseline);
+    assert_eq!(readded.manifest().sources.len(), 1);
+    assert!(readded
+        .manifest()
+        .detached_released_provider_roots()
+        .is_empty());
+    let root = readded.manifest().provider_root("work").unwrap();
+    assert_eq!(root.source_identity(), ProviderRootSourceIdentity::Released);
+    assert_eq!(root.routes(), moved_routes);
+    let tokens = readded
+        .manifest()
+        .provider_root_source_tokens(&["work".to_owned()], &["work-group".to_owned()])
+        .unwrap();
+    assert_eq!(tokens, vec![baseline.source_token]);
+    assert_eq!(
+        readded
+            .search_event_candidates_with_filters(
+                marker,
+                &EventSearchFilters {
+                    allowed_source_keys: Some(tokens),
+                    ..EventSearchFilters::default()
+                },
+                8,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn removed_standalone_named_codex_root_retains_exact_history_until_readded() {
     let temp = tempfile::tempdir().unwrap();

@@ -307,13 +307,29 @@ fn configured_root_matches_canonical_automatic_routes(
         .iter()
         .filter(|source| provider_source_belongs_to_configured_root(root, source))
         .collect::<Vec<_>>();
+    // Compound homes commonly materialize routes lazily. A missing sibling is
+    // equivalent only when the independent automatic replay reports that exact
+    // route missing too; at least one readable/empty sibling must still prove
+    // the live root, and Unknown/Unsupported states never grant Released.
     !routes.is_empty()
-        && routes.iter().all(|source| {
+        && routes.iter().any(|source| {
             matches!(
                 source.status,
                 ProviderSourceStatus::Available | ProviderSourceStatus::Empty
-            ) && validate_provider_source_roots_outside_data_root(data_root, [*source]).is_ok()
-                && matched_canonical_automatic_source(source, canonical_automatic_sources).is_some()
+            )
+        })
+        && routes.iter().all(|source| {
+            validate_provider_source_roots_outside_data_root(data_root, [*source]).is_ok()
+                && matched_canonical_automatic_source(source, canonical_automatic_sources)
+                    .is_some_and(|automatic| {
+                        matches!(
+                            (source.status, automatic.status),
+                            (
+                                ProviderSourceStatus::Available | ProviderSourceStatus::Empty,
+                                ProviderSourceStatus::Available | ProviderSourceStatus::Empty
+                            ) | (ProviderSourceStatus::Missing, ProviderSourceStatus::Missing)
+                        )
+                    })
         })
 }
 
@@ -324,10 +340,6 @@ fn matched_canonical_automatic_source<'a>(
     canonical_automatic_sources.iter().find(|automatic| {
         automatic.provider == configured.provider
             && automatic.source_format == configured.source_format
-            && matches!(
-                automatic.status,
-                ProviderSourceStatus::Available | ProviderSourceStatus::Empty
-            )
             && provider_paths_equivalent(&automatic.path, &configured.path)
     })
 }

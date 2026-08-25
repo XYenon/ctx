@@ -632,7 +632,7 @@ fn configured_codex_root_keeps_its_route_alias_for_a_present_session_tree() {
 }
 
 #[test]
-fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_session_route() {
+fn naming_a_partial_released_codex_home_preserves_the_compound_session_route() {
     let temp = tempdir().unwrap();
     let home = temp.path().join("home");
     let cwd = temp.path().join("cwd");
@@ -643,8 +643,6 @@ fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_se
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&cwd).unwrap();
     fs::create_dir_all(&sessions).unwrap();
-    fs::create_dir_all(&archived).unwrap();
-    fs::write(&history, b"").unwrap();
     let definition = ProviderRootDefinition {
         id: "released".to_owned(),
         provider: CaptureProvider::Codex,
@@ -672,7 +670,7 @@ fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_se
         root.clone(),
         "codex-sessions",
     );
-    let archived_source = configured_source(
+    let mut archived_source = configured_source(
         fixture_provider_source_at(
             CaptureProvider::Codex,
             "codex_session_jsonl_tree",
@@ -683,7 +681,8 @@ fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_se
         root.clone(),
         "codex-archived-sessions",
     );
-    let history_source = configured_source(
+    archived_source.status = ProviderSourceStatus::Missing;
+    let mut history_source = configured_source(
         fixture_provider_source_at(
             CaptureProvider::Codex,
             "codex_history_jsonl",
@@ -694,6 +693,7 @@ fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_se
         root,
         "codex-prompt-history",
     );
+    history_source.status = ProviderSourceStatus::Missing;
     let expected_session_route = automatic_source_backed_route_identity(&session_source).unwrap();
 
     let build = build_automatic_source_backed_registry_from_parts(
@@ -703,7 +703,16 @@ fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_se
         Vec::new(),
     );
 
-    assert!(build.issues.is_empty(), "{:?}", build.issues);
+    assert!(!build.issues.is_empty());
+    assert!(build.issues.iter().all(|issue| matches!(
+        issue,
+        SourceBackedAutomaticRegistryIssue::Unavailable {
+            reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                ProviderSourceStatus::Missing
+            ),
+            ..
+        }
+    )));
     assert_eq!(
         build
             .registry
@@ -711,7 +720,7 @@ fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_se
             .catalog_coverage_route_registration_sources(&expected_session_route)
             .unwrap()
             .len(),
-        2
+        1
     );
     let (_, _, roots) = build.registry.applied_provider_roots().unwrap();
     assert_eq!(roots.len(), 1);
