@@ -131,7 +131,7 @@ pub use provider::source_backed::{
     SourceBackedRouteErrorKind, SourceBackedRouteMetadata, SourceBackedRouteResult,
     SourceBackedRouteSelection, SourceBackedSelectorAuthority, SourceBackedSourceFailureClass,
     SourceBackedSourceFailures, SourceBackedSuccessfulRouteOutcome, SourceBackedWatchCatalog,
-    SourceBackedWatchTargetKind, LANDED_SOURCE_BACKED_ROUTES, MAX_RECORDED_SOURCE_BACKED_FAILURES,
-    MAX_SOURCE_BACKED_FAILURE_DETAIL_BYTES, MAX_SOURCE_BACKED_FAILURE_SELECTOR_BYTES,
-    MAX_SOURCE_BACKED_ROUTE_CONTROL_BYTES,
+    SourceBackedWatchTargetKind, SqliteInventoryCoverage, LANDED_SOURCE_BACKED_ROUTES,
+    MAX_RECORDED_SOURCE_BACKED_FAILURES, MAX_SOURCE_BACKED_FAILURE_DETAIL_BYTES,
+    MAX_SOURCE_BACKED_FAILURE_SELECTOR_BYTES, MAX_SOURCE_BACKED_ROUTE_CONTROL_BYTES,
 };

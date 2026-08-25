@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn crush_source_key(project_key: TypedKey) -> CrushSourceBackedResultV0<SourceKey> {
+pub fn crush_source_key(project_key: TypedKey) -> CrushSourceBackedResultV0<SourceKey> {
     crush_source_key_scoped(project_key, SourceAnchorScope::Unqualified)
 }
 

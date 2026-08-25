@@ -25,7 +25,7 @@ use ctx_history_capture::{
     SourceBackedAutomaticRegistryBuild, SourceBackedProviderRegistry,
     SourceBackedProviderRouteMetadata, SourceBackedRouteConstructor, SourceBackedRouteError,
     SourceBackedRouteErrorKind, SourceBackedRouteSelection, SourceBackedSelectorAuthority,
-    SourceBackedWatchCatalog, SourceBackedWatchTargetKind,
+    SourceBackedWatchCatalog, SourceBackedWatchTargetKind, SqliteInventoryCoverage,
 };
 use ctx_history_capture_model::{
     DiscoveryReport, ProviderCatalogSupport, ProviderImportSupport, ProviderSource,
@@ -700,6 +700,7 @@ fn register_enabled_catalog_route(
                     authority,
                     vec![(path, database_lineage)],
                     None,
+                    SqliteInventoryCoverage::Complete,
                 )?;
             }
             CaptureProvider::Crush => bail!(

@@ -565,6 +565,9 @@ impl SourceBackedProviderRegistry {
                 authority,
                 previous.routes().to_vec(),
             )
+            .and_then(|root| {
+                root.with_exact_source_memberships(previous.exact_source_memberships().to_vec())
+            })
             .map_err(SourceBackedCoordinatorError::Index)?;
         }
         Ok(())

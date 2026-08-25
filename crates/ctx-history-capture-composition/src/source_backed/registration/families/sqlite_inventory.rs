@@ -6,7 +6,7 @@ use std::{
 use ctx_history_core::TypedKey;
 use ctx_history_providers_sqlite_inventory::registration::{
     astrbot_registration_scoped, astrbot_released_registration_scoped, crush_registration_scoped,
-    lingma_registration_scoped, shelley_registration,
+    lingma_registration_scoped, shelley_registration, SqliteInventoryCoverage,
 };
 
 use super::*;
@@ -64,6 +64,7 @@ pub fn register_crush_source_backed_route<I>(
     data_root: &Path,
     inventory: Arc<I>,
     source_root_lineage: Option<[u8; 32]>,
+    coverage: SqliteInventoryCoverage,
 ) -> SourceBackedCoordinatorResult<()>
 where
     I: CrushProjectInventorySourceV0 + Send + Sync + 'static,
@@ -79,6 +80,7 @@ where
                 ctx_history_core::SourceAnchorScope::Unqualified,
                 ctx_history_core::SourceAnchorScope::Lineage,
             ),
+            coverage,
         ),
     )
 }
@@ -91,6 +93,7 @@ pub fn register_lingma_source_backed_route(
     authority_key: TypedKey,
     databases: Vec<(PathBuf, TypedKey)>,
     source_root_lineage: Option<[u8; 32]>,
+    coverage: SqliteInventoryCoverage,
 ) -> SourceBackedCoordinatorResult<()> {
     let provider = source.provider;
     let registration =
@@ -104,6 +107,7 @@ pub fn register_lingma_source_backed_route(
                 ctx_history_core::SourceAnchorScope::Unqualified,
                 ctx_history_core::SourceAnchorScope::Lineage,
             ),
+            coverage,
         )
         .map_err(|error| invalid_route(provider, error.to_string()))?;
     install_sqlite_inventory_registration(registry, registration)

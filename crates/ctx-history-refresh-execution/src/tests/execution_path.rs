@@ -1,5 +1,7 @@
 //! Explicit executor-path coverage owned by physical refresh execution.
 
+#[path = "execution_path/compound_root_lifecycle.rs"]
+mod compound_root_lifecycle;
 #[path = "execution_path/configured_root_moves.rs"]
 mod configured_root_moves;
 

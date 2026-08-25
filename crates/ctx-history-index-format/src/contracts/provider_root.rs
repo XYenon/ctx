@@ -4,7 +4,7 @@ use ctx_history_capture_model::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{IndexError, Result};
+use super::{is_sha256_hex, IndexError, Result};
 
 const MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES: usize = 16 * 1024;
 
@@ -47,6 +47,59 @@ pub struct AppliedProviderRoot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     connector_binding: Option<ProviderRootConnectorBinding>,
     pub(super) routes: Vec<SourceRouteIdentity>,
+    exact_source_memberships: Vec<AppliedProviderRootSourceMembership>,
+}
+
+/// Exact query membership for one lifecycle-associated provider-root route.
+/// A route without an entry uses whole-route membership; an entry may be empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppliedProviderRootSourceMembership {
+    route_identity: SourceRouteIdentity,
+    source_tokens: Vec<String>,
+}
+
+impl AppliedProviderRootSourceMembership {
+    pub fn exact(
+        route_identity: SourceRouteIdentity,
+        mut source_tokens: Vec<String>,
+    ) -> Result<Self> {
+        source_tokens.sort();
+        let membership = Self {
+            route_identity,
+            source_tokens,
+        };
+        membership.validate_contract()?;
+        Ok(membership)
+    }
+
+    pub fn route_identity(&self) -> &SourceRouteIdentity {
+        &self.route_identity
+    }
+
+    pub fn source_tokens(&self) -> &[String] {
+        &self.source_tokens
+    }
+
+    fn validate_contract(&self) -> Result<()> {
+        self.route_identity.validate().map_err(IndexError::from)?;
+        if self.source_tokens.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(IndexError::InvalidProviderRoots(format!(
+                "route {} exact source membership is not strictly sorted and unique",
+                self.route_identity.as_str()
+            )));
+        }
+        self.source_tokens.iter().try_for_each(|source| {
+            if is_sha256_hex(source) {
+                Ok(())
+            } else {
+                Err(IndexError::InvalidProviderRoots(format!(
+                    "route {} exact source membership has an invalid source token",
+                    self.route_identity.as_str()
+                )))
+            }
+        })
+    }
 }
 
 impl AppliedProviderRoot {
@@ -90,6 +143,7 @@ impl AppliedProviderRoot {
             source_identity,
             connector_binding,
             routes,
+            exact_source_memberships: Vec::new(),
         };
         root.validate_contract()?;
         Ok(root)
@@ -140,6 +194,29 @@ impl AppliedProviderRoot {
         &self.routes
     }
 
+    pub fn with_exact_source_memberships(
+        mut self,
+        mut exact_source_memberships: Vec<AppliedProviderRootSourceMembership>,
+    ) -> Result<Self> {
+        exact_source_memberships
+            .sort_by(|left, right| left.route_identity.cmp(&right.route_identity));
+        self.exact_source_memberships = exact_source_memberships;
+        self.validate_contract()?;
+        Ok(self)
+    }
+
+    pub fn exact_source_memberships(&self) -> &[AppliedProviderRootSourceMembership] {
+        &self.exact_source_memberships
+    }
+
+    pub fn exact_source_tokens_for_route(&self, route: &SourceRouteIdentity) -> Option<&[String]> {
+        self.exact_source_memberships
+            .binary_search_by(|membership| membership.route_identity.cmp(route))
+            .ok()
+            .and_then(|index| self.exact_source_memberships.get(index))
+            .map(AppliedProviderRootSourceMembership::source_tokens)
+    }
+
     pub(super) fn validate_contract(&self) -> Result<()> {
         validate_provider_root_definition(&self.definition)?;
         match (self.source_identity, &self.connector_binding) {
@@ -176,6 +253,29 @@ impl AppliedProviderRoot {
         }
         for route in &self.routes {
             route.validate().map_err(IndexError::from)?;
+        }
+        if self
+            .exact_source_memberships
+            .windows(2)
+            .any(|pair| pair[0].route_identity >= pair[1].route_identity)
+        {
+            return Err(IndexError::InvalidProviderRoots(format!(
+                "root {} exact source memberships are not strictly sorted and unique",
+                self.definition.id
+            )));
+        }
+        for membership in &self.exact_source_memberships {
+            membership.validate_contract()?;
+            if self
+                .routes
+                .binary_search(&membership.route_identity)
+                .is_err()
+            {
+                return Err(IndexError::InvalidProviderRoots(format!(
+                    "root {} has exact source membership for an unassociated route",
+                    self.definition.id
+                )));
+            }
         }
         Ok(())
     }

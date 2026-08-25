@@ -4,12 +4,9 @@ use std::path::{Path, PathBuf};
 use std::ffi::OsString;
 
 use ctx_history_core::{
-    CaptureProvider, SourceAnchor, SourceAnchorScope, SourceInventoryObservation, SourceKey,
-    TypedKey,
+    CaptureProvider, SourceAnchorScope, SourceInventoryObservation, SourceKey, TypedKey,
 };
 use sha2::{Digest, Sha256};
-
-use crate::LINGMA_SQLITE_SOURCE_FORMAT;
 
 #[cfg(test)]
 use crate::{
@@ -22,9 +19,9 @@ use crate::{
 };
 
 use super::{
-    LingmaSourceBackedErrorV0, LingmaSourceBackedResultV0, INVENTORY_AUTHORITY_NAMESPACE,
-    INVENTORY_REVISION_DOMAIN, INVENTORY_REVISION_KIND, MAX_INVENTORY_DATABASES,
-    SOURCE_ANCHOR_NAMESPACE, SOURCE_SCHEMA_VARIANT,
+    lingma_source_key_scoped, LingmaSourceBackedErrorV0, LingmaSourceBackedResultV0,
+    INVENTORY_AUTHORITY_NAMESPACE, INVENTORY_REVISION_DOMAIN, INVENTORY_REVISION_KIND,
+    MAX_INVENTORY_DATABASES,
 };
 
 #[cfg(test)]
@@ -103,16 +100,7 @@ impl LingmaDatabaseSourceV0 {
     }
 
     pub(crate) fn source_key(&self) -> LingmaSourceBackedResultV0<SourceKey> {
-        let anchor =
-            SourceAnchor::provider_native(SOURCE_ANCHOR_NAMESPACE, self.catalog_lineage.clone())?;
-        Ok(SourceKey::derive_scoped(
-            CaptureProvider::Lingma.as_str(),
-            LINGMA_SQLITE_SOURCE_FORMAT,
-            SOURCE_SCHEMA_VARIANT,
-            1,
-            anchor,
-            self.source_scope,
-        )?)
+        lingma_source_key_scoped(self.catalog_lineage.clone(), self.source_scope)
     }
 
     pub(crate) fn path(&self) -> &Path {

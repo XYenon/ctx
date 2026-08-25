@@ -37,9 +37,9 @@ mod profile_project;
 mod simple;
 
 pub use config_project::{
-    resolve_crush_released_project_inventory, CrushDiscoveredProjectInventory,
-    CrushProjectInventorySelector, CrushProjectInventorySelectorError,
-    CrushReleasedProjectInventory,
+    resolve_crush_released_project_inventories, resolve_crush_released_project_inventory,
+    CrushDiscoveredProjectInventory, CrushProjectInventorySelector,
+    CrushProjectInventorySelectorError, CrushReleasedProjectInventory,
 };
 pub(super) use platform::{resolve_lingma_with_authority, resolve_warp_with_authority};
 pub use profile_project::resolve_openhands_conversations_root;

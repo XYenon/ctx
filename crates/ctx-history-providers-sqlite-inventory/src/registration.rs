@@ -55,6 +55,12 @@ use shared::{
 pub type WatchTargets =
     Box<dyn Fn() -> Option<SourceBackedRouteWatchTargets> + Send + Sync + 'static>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqliteInventoryCoverage {
+    Complete,
+    SelectedSubset,
+}
+
 /// Complete provider-owned registration contract. Capture consumes this
 /// fragment only to bind its concrete lifecycle and install one executable
 /// route; all provider selection and watch authority is fixed here.
@@ -523,6 +529,7 @@ where
         authority_key,
         databases,
         SourceAnchorScope::Unqualified,
+        SqliteInventoryCoverage::Complete,
     )
 }
 
@@ -533,6 +540,7 @@ pub fn lingma_registration_scoped<L, S>(
     authority_key: TypedKey,
     databases: Vec<(PathBuf, TypedKey)>,
     source_scope: SourceAnchorScope,
+    coverage: SqliteInventoryCoverage,
 ) -> Result<
     SqliteInventoryRegistration<
         impl ReplacementDocumentTree<
@@ -558,6 +566,7 @@ where
         selection,
         data_root,
         Arc::new(FixedLingmaInventorySource { inventory }),
+        coverage,
     ))
 }
 
@@ -599,6 +608,7 @@ fn lingma_inventory_registration<L, S>(
     selection: SourceBackedRouteSelection,
     data_root: &Path,
     inventory_source: Arc<dyn LingmaInventorySource>,
+    coverage: SqliteInventoryCoverage,
 ) -> SqliteInventoryRegistration<
     impl ReplacementDocumentTree<
         Lifecycle = L,
@@ -616,7 +626,8 @@ where
         CaptureProvider::Lingma,
         LINGMA_SQLITE_SOURCE_FORMAT,
         LingmaInventoryProvider { inventory_source },
-    );
+    )
+    .with_coverage(coverage);
     SqliteInventoryRegistration::new(
         source,
         selection,
@@ -831,7 +842,11 @@ where
 {
     let inventory = discovered_lingma_inventory_source(&source, observe, source_scope)?;
     Ok(lingma_inventory_registration(
-        source, selection, data_root, inventory,
+        source,
+        selection,
+        data_root,
+        inventory,
+        SqliteInventoryCoverage::Complete,
     ))
 }
 

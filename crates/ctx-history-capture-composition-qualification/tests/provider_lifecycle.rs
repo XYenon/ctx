@@ -13,6 +13,10 @@ use tempfile::tempdir;
 
 #[path = "provider_lifecycle/codex_child_independence.rs"]
 mod codex_child_independence;
+#[path = "provider_lifecycle/compound_root_ownership.rs"]
+mod compound_root_ownership;
+#[path = "provider_lifecycle/registry_roots.rs"]
+mod registry_roots;
 #[path = "provider_lifecycle/released_root_equivalence.rs"]
 mod released_root_equivalence;
 #[path = "provider_lifecycle/sqlite_selected.rs"]

@@ -90,10 +90,10 @@ pub use lingma::{
 pub use resolvers::PathPresence;
 pub use resolvers::{
     path_presence, provider_paths_equivalent, provider_source_belongs_to_configured_root,
-    released_provider_home, resolve_crush_released_project_inventory,
-    resolve_openhands_conversations_root, CrushDiscoveredProjectInventory,
-    CrushProjectInventorySelector, CrushProjectInventorySelectorError,
-    CrushReleasedProjectInventory,
+    released_provider_home, resolve_crush_released_project_inventories,
+    resolve_crush_released_project_inventory, resolve_openhands_conversations_root,
+    CrushDiscoveredProjectInventory, CrushProjectInventorySelector,
+    CrushProjectInventorySelectorError, CrushReleasedProjectInventory,
 };
 pub use specs::{provider_source_spec, provider_source_specs};
 pub use types::{

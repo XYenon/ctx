@@ -49,6 +49,7 @@ use super::super::{
 
 #[path = "source_backed_identity.rs"]
 mod identity;
+pub use identity::crush_source_key;
 use identity::{crush_session_id, crush_source_key_scoped, session_lineage};
 
 #[cfg(test)]

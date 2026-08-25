@@ -21,6 +21,12 @@ fn unavailable_openclaw_root_restores_all_prior_agent_routes() {
         ProviderRootSourceIdentity::Released,
         vec![alpha.clone(), beta.clone()],
     )
+    .unwrap()
+    .with_exact_source_memberships(vec![AppliedProviderRootSourceMembership::exact(
+        alpha.clone(),
+        vec!["11".repeat(32)],
+    )
+    .unwrap()])
     .unwrap();
     let current = AppliedProviderRoot::with_source_identity(
         current_definition.clone(),
@@ -34,7 +40,7 @@ fn unavailable_openclaw_root_restores_all_prior_agent_routes() {
         .unwrap();
 
     registry
-        .retain_unavailable_provider_root_routes(&[prior])
+        .retain_unavailable_provider_root_routes(&[prior.clone()])
         .unwrap();
 
     let restored = &registry.applied_provider_roots().unwrap().2[0];
@@ -44,6 +50,10 @@ fn unavailable_openclaw_root_restores_all_prior_agent_routes() {
         ProviderRootSourceIdentity::Released
     );
     assert_eq!(restored.routes(), &[alpha, beta]);
+    assert_eq!(
+        restored.exact_source_memberships(),
+        prior.exact_source_memberships()
+    );
 }
 
 #[test]
@@ -108,6 +118,9 @@ fn unavailable_root_retention_requires_matching_provider() {
 
     assert!(registry.applied_provider_roots().unwrap().2[0]
         .routes()
+        .is_empty());
+    assert!(registry.applied_provider_roots().unwrap().2[0]
+        .exact_source_memberships()
         .is_empty());
 }
 
@@ -228,7 +241,14 @@ fn unavailable_configured_root_retention_requires_matching_kind() {
     let legacy = definition(ProviderRootKind::OpenHandsLegacyPersistence);
     let current = definition(ProviderRootKind::OpenHandsCurrentConversations);
     let route = SourceRouteIdentity::from_sha256("5a".repeat(32)).unwrap();
-    let retained = AppliedProviderRoot::new(legacy, vec![route]).unwrap();
+    let retained = AppliedProviderRoot::new(legacy, vec![route.clone()])
+        .unwrap()
+        .with_exact_source_memberships(vec![AppliedProviderRootSourceMembership::exact(
+            route,
+            vec!["22".repeat(32)],
+        )
+        .unwrap()])
+        .unwrap();
     let mut registry = SourceBackedProviderRegistry::new();
     registry
         .set_applied_provider_roots(
@@ -244,5 +264,8 @@ fn unavailable_configured_root_retention_requires_matching_kind() {
 
     assert!(registry.applied_provider_roots().unwrap().2[0]
         .routes()
+        .is_empty());
+    assert!(registry.applied_provider_roots().unwrap().2[0]
+        .exact_source_memberships()
         .is_empty());
 }

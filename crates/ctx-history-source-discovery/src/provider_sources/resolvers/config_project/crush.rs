@@ -167,6 +167,7 @@ impl CrushProjectInventorySelector {
 pub struct CrushReleasedProjectInventory {
     authority_key: TypedKey,
     revision: Vec<u8>,
+    released_project_keys: Vec<TypedKey>,
     databases: Vec<(TypedKey, PathBuf)>,
 }
 
@@ -177,6 +178,14 @@ impl CrushReleasedProjectInventory {
 
     pub fn revision(&self) -> &[u8] {
         &self.revision
+    }
+
+    pub fn released_project_key(&self) -> &TypedKey {
+        &self.released_project_keys[0]
+    }
+
+    pub fn released_project_keys(&self) -> &[TypedKey] {
+        &self.released_project_keys
     }
 
     pub fn databases(&self) -> &[(TypedKey, PathBuf)] {
@@ -192,6 +201,24 @@ pub fn resolve_crush_released_project_inventory(
     identity_path: &Path,
     scan_path: &Path,
 ) -> Result<CrushReleasedProjectInventory, CrushProjectInventorySelectorError> {
+    resolve_crush_released_project_inventories(
+        probes,
+        context,
+        &[(identity_path.to_path_buf(), scan_path.to_path_buf())],
+        true,
+    )
+}
+
+/// Rebinds several released roots into one immutable automatic inventory.
+pub fn resolve_crush_released_project_inventories(
+    probes: &StaticProviderProbeCatalog,
+    context: &DiscoveryContext,
+    rebindings: &[(PathBuf, PathBuf)],
+    include_automatic_peers: bool,
+) -> Result<CrushReleasedProjectInventory, CrushProjectInventorySelectorError> {
+    if rebindings.is_empty() {
+        return Err(CrushProjectInventorySelectorError::MissingProjectKey);
+    }
     let spec = super::super::super::specs::provider_source_spec(CaptureProvider::Crush)
         .ok_or(CrushProjectInventorySelectorError::DiscoveryUnavailable)?;
     let report = resolve(probes, context, spec);
@@ -220,43 +247,53 @@ pub fn resolve_crush_released_project_inventory(
         }
     }
 
-    let released_key = if let Some(key) = registered_by_database.get(identity_path) {
-        key.clone()
-    } else if report
-        .sources
+    let released = rebindings
         .iter()
-        .any(|source| source.path == identity_path)
-    {
-        CrushProjectSelectorKey::ActiveWorkingDirectory(
-            context
-                .cwd()
-                .ok_or(CrushProjectInventorySelectorError::MissingProjectKey)?
-                .to_path_buf(),
-        )
+        .map(|(identity_path, scan_path)| {
+            let key = if let Some(key) = registered_by_database.get(identity_path) {
+                key.clone()
+            } else if report
+                .sources
+                .iter()
+                .any(|source| source.path == *identity_path)
+            {
+                CrushProjectSelectorKey::ActiveWorkingDirectory(
+                    context
+                        .cwd()
+                        .ok_or(CrushProjectInventorySelectorError::MissingProjectKey)?
+                        .to_path_buf(),
+                )
+            } else {
+                return Err(CrushProjectInventorySelectorError::MissingProjectKey);
+            };
+            Ok((key, scan_path.clone(), identity_path.clone()))
+        })
+        .collect::<Result<Vec<_>, CrushProjectInventorySelectorError>>()?;
+    let released_project_keys = released
+        .iter()
+        .map(|(key, _, _)| key.typed_key())
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut entries = if include_automatic_peers {
+        discover_project_inventory(probes, context, spec)?
+            .databases
+            .into_iter()
+            .filter(|database| {
+                !rebindings.iter().any(|(identity_path, scan_path)| {
+                    database.database_path == *identity_path || database.database_path == *scan_path
+                })
+            })
+            .map(|database| {
+                (
+                    database.selector_key,
+                    database.database_path.clone(),
+                    database.database_path,
+                )
+            })
+            .collect::<Vec<_>>()
     } else {
-        return Err(CrushProjectInventorySelectorError::MissingProjectKey);
+        Vec::new()
     };
-
-    let opening = discover_project_inventory(probes, context, spec)?;
-    let mut entries = opening
-        .databases
-        .into_iter()
-        .filter(|database| {
-            database.database_path != identity_path && database.database_path != scan_path
-        })
-        .map(|database| {
-            (
-                database.selector_key,
-                database.database_path.clone(),
-                database.database_path,
-            )
-        })
-        .collect::<Vec<_>>();
-    entries.push((
-        released_key,
-        scan_path.to_path_buf(),
-        identity_path.to_path_buf(),
-    ));
+    entries.extend(released);
     entries.sort_by_cached_key(|(selector, _, identity)| {
         let selector = selector.typed_key().ok();
         (
@@ -286,6 +323,7 @@ pub fn resolve_crush_released_project_inventory(
         authority_key: TypedKey::utf8(CRUSH_INVENTORY_AUTHORITY_KEY)
             .map_err(|_| CrushProjectInventorySelectorError::InvalidAuthorityKey)?,
         revision: digest.finalize().to_vec(),
+        released_project_keys,
         databases,
     })
 }

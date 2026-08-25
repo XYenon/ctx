@@ -28,7 +28,10 @@ use ctx_history_core::{
 };
 #[cfg(test)]
 use ctx_history_core::{CertifiedSourceAppend, CertifiedSourceDeletion, SourceAnchor};
-use ctx_history_index::{AppliedProviderRoot, IndexError, PublicationStage, WriterOptions};
+use ctx_history_index::{
+    source_token, AppliedProviderRoot, AppliedProviderRootSourceMembership, IndexError,
+    PublicationStage, WriterOptions,
+};
 use ctx_history_provider_mistral_mux::{
     mistral_vibe_jsonl_adapter_with_source_root_lineage, mux_jsonl_adapter_with_source_root_lineage,
 };
@@ -45,12 +48,14 @@ use ctx_history_provider_docproj::providers::{
     nanoclaw::native_path::source_backed::NanoClawDocumentTreeAdapter,
     openhands::nativepath::OpenHandsEventFileAdapterV2,
 };
+pub use ctx_history_providers_sqlite_inventory::registration::SqliteInventoryCoverage;
 pub use ctx_history_providers_sqlite_inventory::{
-    CrushProjectDatabaseV0, CrushProjectInventoryObservationV0, CrushProjectInventorySourceV0,
+    crush_source_key, lingma_source_key, CrushProjectDatabaseV0,
+    CrushProjectInventoryObservationV0, CrushProjectInventorySourceV0,
 };
 use ctx_history_source_discovery::{
     path_presence, provider_paths_equivalent, provider_source_belongs_to_configured_root,
-    resolve_crush_released_project_inventory, resolve_lingma_released_identity_authority,
+    resolve_crush_released_project_inventories, resolve_lingma_released_identity_authority,
     resolve_openhands_conversations_root, resolve_warp_discovery_authority,
     resolve_warp_released_identity_authority, CrushDiscoveredProjectInventory,
     CrushProjectInventorySelector, CrushProjectInventorySelectorError, LingmaInventorySelector,

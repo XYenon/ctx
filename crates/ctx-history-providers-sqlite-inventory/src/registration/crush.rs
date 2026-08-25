@@ -27,7 +27,7 @@ use super::shared::{
 };
 use super::{
     sqlite_capture_route_error, sqlite_inventory_watch_targets, sqlite_source_route_error,
-    sqlite_source_route_error_kind, SqliteInventoryRegistration,
+    sqlite_source_route_error_kind, SqliteInventoryCoverage, SqliteInventoryRegistration,
 };
 use crate::provider_sources::SqliteSourceReadSnapshot;
 
@@ -184,6 +184,7 @@ where
         data_root,
         inventory,
         SourceAnchorScope::Unqualified,
+        SqliteInventoryCoverage::Complete,
     )
 }
 
@@ -193,6 +194,7 @@ pub fn crush_registration_scoped<I, L, S>(
     data_root: &Path,
     inventory: Arc<I>,
     source_scope: SourceAnchorScope,
+    coverage: SqliteInventoryCoverage,
 ) -> SqliteInventoryRegistration<
     impl ReplacementDocumentTree<
         Lifecycle = L,
@@ -215,7 +217,8 @@ where
             inventory,
             source_scope,
         },
-    );
+    )
+    .with_coverage(coverage);
     SqliteInventoryRegistration::new(
         source,
         selection,

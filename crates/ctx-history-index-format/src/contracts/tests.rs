@@ -3,6 +3,42 @@ use ctx_history_capture_model::{
     ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
 };
 use ctx_history_core::CaptureProvider;
+use ctx_history_core::{
+    CertifiedSource, ScannedSourceCounts, SourceAnchor, SourceKey, SourceObservation, TypedKey,
+};
+
+fn source(name: &str, format: &str) -> SourceKey {
+    SourceKey::derive(
+        "fixture",
+        format,
+        "fixture-v1",
+        1,
+        SourceAnchor::provider_native("fixture.source", TypedKey::utf8(name).unwrap()).unwrap(),
+    )
+    .unwrap()
+}
+
+fn certified(source: SourceKey) -> CertifiedSource {
+    let observation = SourceObservation::new(source, "fixture-revision", vec![1]).unwrap();
+    CertifiedSource::certify(
+        observation.clone(),
+        observation,
+        "fixture-parser",
+        [0; 32],
+        ScannedSourceCounts::default(),
+    )
+    .unwrap()
+}
+
+fn root(temp: &std::path::Path, id: &str) -> ProviderRootDefinition {
+    ProviderRootDefinition {
+        id: id.to_owned(),
+        provider: CaptureProvider::Codex,
+        path: temp.join(id),
+        group: Some(format!("{id}-group")),
+        kind: None,
+    }
+}
 
 #[test]
 fn source_route_snapshot_and_generation_wire_contract_remain_stable() {
@@ -360,4 +396,207 @@ fn malformed_deserialized_route_identity_reaches_complete_manifest_validation() 
         loaded.validate_contract(),
         Err(IndexError::InvalidSourceRouteIdentity)
     ));
+}
+
+#[test]
+fn disjoint_exact_roots_share_one_route_without_claiming_automatic_peers() {
+    let temp = tempfile::tempdir().unwrap();
+    let route = SourceRouteIdentity::from_sha256("61".repeat(32)).unwrap();
+    let alpha = source("alpha", "old-format");
+    let beta = source("beta", "old-format");
+    let automatic = source("automatic", "old-format");
+    let definitions = vec![root(temp.path(), "alpha"), root(temp.path(), "beta")];
+    let applied = definitions
+        .iter()
+        .zip([&alpha, &beta])
+        .map(|(definition, source)| {
+            AppliedProviderRoot::new(definition.clone(), vec![route.clone()])
+                .unwrap()
+                .with_exact_source_memberships(vec![AppliedProviderRootSourceMembership::exact(
+                    route.clone(),
+                    vec![source_token(source)],
+                )
+                .unwrap()])
+                .unwrap()
+        })
+        .collect();
+    let sources = vec![
+        certified(alpha.clone()),
+        certified(beta.clone()),
+        certified(automatic.clone()),
+    ];
+    let aggregates = test_aggregates(&sources).unwrap();
+    let manifest = GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(
+        sources,
+        aggregates,
+        vec![SourceRouteSnapshot::present(
+            route,
+            vec![alpha.clone(), beta.clone(), automatic.clone()],
+        )
+        .unwrap()],
+        true,
+        provider_source_config_digest(true, &definitions),
+        applied,
+    )
+    .unwrap();
+
+    assert_eq!(
+        manifest
+            .provider_root_source_tokens(&["alpha".to_owned()], &[])
+            .unwrap(),
+        vec![source_token(&alpha)]
+    );
+    assert_eq!(
+        manifest
+            .provider_root_source_tokens(&[], &["beta-group".to_owned()])
+            .unwrap(),
+        vec![source_token(&beta)]
+    );
+    assert_eq!(manifest.source_routes()[0].sources().len(), 3);
+    assert!(!manifest
+        .provider_root_source_tokens(&["alpha".to_owned(), "beta".to_owned()], &[])
+        .unwrap()
+        .contains(&source_token(&automatic)));
+}
+
+#[test]
+fn exact_membership_intersects_by_identity_across_descriptor_replacement() {
+    let temp = tempfile::tempdir().unwrap();
+    let route = SourceRouteIdentity::from_sha256("62".repeat(32)).unwrap();
+    let old = source("stable-lineage", "old-format");
+    let replacement = source("stable-lineage", "new-format");
+    let absent = source("absent", "old-format");
+    assert!(old.is_same_lineage_descriptor_replacement(&replacement));
+    let definition = root(temp.path(), "stable");
+    let applied = AppliedProviderRoot::new(definition.clone(), vec![route.clone()])
+        .unwrap()
+        .with_exact_source_memberships(vec![AppliedProviderRootSourceMembership::exact(
+            route.clone(),
+            vec![source_token(&old), source_token(&absent)],
+        )
+        .unwrap()])
+        .unwrap();
+    let sources = vec![certified(replacement.clone())];
+    let aggregates = test_aggregates(&sources).unwrap();
+    let manifest = GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(
+        sources,
+        aggregates,
+        vec![SourceRouteSnapshot::present(route.clone(), vec![replacement.clone()]).unwrap()],
+        true,
+        provider_source_config_digest(true, std::slice::from_ref(&definition)),
+        vec![applied],
+    )
+    .unwrap();
+
+    assert_eq!(
+        manifest.provider_roots()[0].exact_source_memberships()[0].source_tokens(),
+        &[source_token(&replacement)]
+    );
+    assert_eq!(
+        manifest
+            .provider_root_source_tokens(&["stable".to_owned()], &[])
+            .unwrap(),
+        vec![source_token(&replacement)]
+    );
+    manifest.validate_contract().unwrap();
+}
+
+#[test]
+fn persisted_exact_membership_is_strict_and_shared_route_sets_must_be_disjoint() {
+    let temp = tempfile::tempdir().unwrap();
+    let route = SourceRouteIdentity::from_sha256("63".repeat(32)).unwrap();
+    let alpha = source("strict-alpha", "fixture");
+    let beta = source("strict-beta", "fixture");
+    let definitions = vec![root(temp.path(), "first"), root(temp.path(), "second")];
+    let exact_root = |definition: &ProviderRootDefinition, tokens: Vec<String>| {
+        AppliedProviderRoot::new(definition.clone(), vec![route.clone()])
+            .unwrap()
+            .with_exact_source_memberships(vec![AppliedProviderRootSourceMembership::exact(
+                route.clone(),
+                tokens,
+            )
+            .unwrap()])
+            .unwrap()
+    };
+    let build = |roots| {
+        let sources = vec![certified(alpha.clone()), certified(beta.clone())];
+        let aggregates = test_aggregates(&sources).unwrap();
+        GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(
+            sources,
+            aggregates,
+            vec![
+                SourceRouteSnapshot::present(route.clone(), vec![alpha.clone(), beta.clone()])
+                    .unwrap(),
+            ],
+            true,
+            provider_source_config_digest(true, &definitions),
+            roots,
+        )
+    };
+
+    assert!(build(vec![
+        exact_root(&definitions[0], vec![source_token(&alpha)]),
+        exact_root(&definitions[1], vec![source_token(&alpha)]),
+    ])
+    .is_err());
+    assert!(build(vec![
+        AppliedProviderRoot::new(definitions[0].clone(), vec![route.clone()]).unwrap(),
+        exact_root(&definitions[1], vec![source_token(&beta)]),
+    ])
+    .is_err());
+    build(vec![
+        exact_root(&definitions[0], Vec::new()),
+        exact_root(&definitions[1], vec![source_token(&beta)]),
+    ])
+    .unwrap();
+
+    let valid = build(vec![
+        exact_root(&definitions[0], vec![source_token(&alpha)]),
+        exact_root(&definitions[1], vec![source_token(&beta)]),
+    ])
+    .unwrap();
+    let valid_value = serde_json::to_value(&valid).unwrap();
+    let mut cross_route = valid_value.clone();
+    cross_route["provider_roots"][0]["exact_source_memberships"][0]["source_tokens"] =
+        serde_json::json!(["ff".repeat(32)]);
+    let cross_route: GenerationManifest = serde_json::from_value(cross_route).unwrap();
+    assert!(matches!(
+        cross_route.validate_contract(),
+        Err(IndexError::InvalidProviderRoots(_))
+    ));
+
+    let mut duplicate = valid_value.clone();
+    let token = source_token(&alpha);
+    duplicate["provider_roots"][0]["exact_source_memberships"][0]["source_tokens"] =
+        serde_json::json!([token, source_token(&alpha)]);
+    let duplicate: GenerationManifest = serde_json::from_value(duplicate).unwrap();
+    assert!(matches!(
+        duplicate.validate_contract(),
+        Err(IndexError::InvalidProviderRoots(_))
+    ));
+
+    let mut unsorted = valid_value.clone();
+    unsorted["provider_roots"][0]["exact_source_memberships"][0]["source_tokens"] =
+        serde_json::json!(["ff".repeat(32), "00".repeat(32)]);
+    let unsorted: GenerationManifest = serde_json::from_value(unsorted).unwrap();
+    assert!(matches!(
+        unsorted.validate_contract(),
+        Err(IndexError::InvalidProviderRoots(_))
+    ));
+
+    let mut dangling = valid_value.clone();
+    dangling["provider_roots"][0]["exact_source_memberships"][0]["route_identity"] =
+        serde_json::json!("64".repeat(32));
+    let dangling: GenerationManifest = serde_json::from_value(dangling).unwrap();
+    assert!(matches!(
+        dangling.validate_contract(),
+        Err(IndexError::InvalidProviderRoots(_))
+    ));
+
+    let mut transient_v10 = valid_value;
+    transient_v10["provider_roots"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("exact_source_memberships");
+    assert!(serde_json::from_value::<GenerationManifest>(transient_v10).is_err());
 }

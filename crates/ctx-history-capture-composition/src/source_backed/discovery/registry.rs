@@ -20,12 +20,16 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
         data_root,
         retained_provider_roots,
     );
+    let released_compound_sources =
+        released_compound_root_sources(discovery, &sources, &provider_root_registrations);
     let mut registry = SourceBackedProviderRegistry::new();
     let mut issues = discovery_issues
         .into_iter()
         .map(SourceBackedAutomaticRegistryIssue::Discovery)
         .collect::<Vec<_>>();
     let mut compound_provider_registered = HashSet::new();
+    let mut released_provider_root_routes =
+        BTreeMap::<String, Vec<ReleasedProviderRootRoute>>::new();
     let mut codex_session_tree_sources = Vec::new();
     let mut released_configured_codex_session_tree_sources =
         BTreeMap::<String, Vec<ProviderSource>>::new();
@@ -254,12 +258,18 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
                             configured_root,
                             source.clone(),
                             identity_root,
+                            &released_compound_sources,
+                            &provider_root_registrations,
                         )
                         .map_err(automatic_registration_rejected)
                     },
                 );
                 match registration {
-                    Ok(()) => {
+                    Ok(route) => {
+                        released_provider_root_routes
+                            .entry(configured_root.id.clone())
+                            .or_default()
+                            .push(route);
                         if compound_provider {
                             compound_provider_registered.insert(source.provider);
                         }
@@ -374,7 +384,11 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
         );
         if compound_provider
             && compound_provider_registered.contains(&source.provider)
-            && coexistence_lineage.is_none()
+            && (coexistence_lineage.is_none()
+                || matches!(
+                    source.provider,
+                    CaptureProvider::Crush | CaptureProvider::Lingma
+                ))
         {
             continue;
         }
@@ -462,37 +476,12 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
     }
 
     let definitions = discovery.configured_provider_roots().to_vec();
-    let applied_roots = definitions
-        .iter()
-        .map(|definition| {
-            let routes = registry
-                .routes
-                .iter()
-                .filter(|route| {
-                    configured_provider_root_for_source(discovery, &route.metadata.source)
-                        .is_some_and(|root| root.id == definition.id)
-                })
-                .filter_map(|route| route.metadata.route_identity.clone())
-                .collect::<Vec<_>>();
-            let registration = provider_root_registrations.get(&definition.id);
-            let source_identity = registration
-                .map(|registration| registration.source_identity)
-                .unwrap_or_else(|| default_provider_root_source_identity(discovery, definition));
-            match registration.and_then(|registration| registration.retained_authority.as_ref()) {
-                Some(authority) => AppliedProviderRoot::with_retained_authority(
-                    definition.clone(),
-                    authority.clone(),
-                    routes,
-                ),
-                None => AppliedProviderRoot::with_source_identity(
-                    definition.clone(),
-                    source_identity,
-                    routes,
-                ),
-            }
-            .map_err(SourceBackedCoordinatorError::Index)
-        })
-        .collect::<SourceBackedCoordinatorResult<Vec<_>>>();
+    let applied_roots = applied_provider_roots(
+        discovery,
+        &registry,
+        &provider_root_registrations,
+        &released_provider_root_routes,
+    );
     match applied_roots {
         Ok(applied_roots) => {
             if let Err(error) = registry.set_applied_provider_roots(
@@ -697,6 +686,7 @@ fn register_discovered_automatic_route_scoped(
                 data_root,
                 inventory_source,
                 source_root_lineage,
+                ctx_history_providers_sqlite_inventory::registration::SqliteInventoryCoverage::Complete,
             )
         }
         (SourceBackedRouteConstructor::FiniteInventory, CaptureProvider::Lingma) => {

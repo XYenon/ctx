@@ -1,6 +1,11 @@
 use super::*;
 
+mod provider_roots;
 mod registry;
+use provider_roots::{
+    applied_provider_roots, released_compound_root_sources, ReleasedCompoundRootSource,
+    ReleasedProviderRootRoute,
+};
 #[cfg(test)]
 pub(in crate::source_backed) use registry::build_automatic_source_backed_registry_from_parts;
 use registry::{
@@ -210,17 +215,19 @@ fn normalized_provider_root_registrations(
     let mut released_owner = BTreeMap::<String, String>::new();
     let mut identities = BTreeMap::new();
     for root in discovery.configured_provider_roots() {
-        let provider = root.provider.as_str().to_owned();
         let retained_root = retained.get(&root.id);
+        let shared_released = matches!(
+            root.provider,
+            CaptureProvider::Crush | CaptureProvider::Lingma
+        );
+        let provider = root.provider.as_str();
+        let released_available = shared_released || !released_owner.contains_key(provider);
         let identity = match retained_root.map(RetainedProviderRootAuthority::source_identity) {
-            Some(ProviderRootSourceIdentity::Released)
-                if !released_owner.contains_key(&provider) =>
-            {
-                released_owner.insert(provider, root.id.clone());
+            Some(ProviderRootSourceIdentity::Released) if released_available => {
                 ProviderRootSourceIdentity::Released
             }
             Some(_) => ProviderRootSourceIdentity::NamedV1,
-            None if !released_owner.contains_key(&provider)
+            None if released_available
                 && configured_root_matches_canonical_automatic_routes(
                     root,
                     configured_sources,
@@ -228,11 +235,13 @@ fn normalized_provider_root_registrations(
                     data_root,
                 ) =>
             {
-                released_owner.insert(provider, root.id.clone());
                 ProviderRootSourceIdentity::Released
             }
             None => ProviderRootSourceIdentity::NamedV1,
         };
+        if identity == ProviderRootSourceIdentity::Released && !shared_released {
+            released_owner.insert(provider.to_owned(), root.id.clone());
+        }
         let released_identity_root = match identity {
             ProviderRootSourceIdentity::Released => retained_root
                 .and_then(RetainedProviderRootAuthority::connector_binding)
@@ -313,12 +322,38 @@ fn register_released_provider_root_route(
     configured_root: &ProviderRootDefinition,
     configured_source: ProviderSource,
     identity_root: &Path,
-) -> SourceBackedCoordinatorResult<()> {
+    released_compound_sources: &[ReleasedCompoundRootSource],
+    provider_root_registrations: &BTreeMap<String, ProviderRootRegistration>,
+) -> SourceBackedCoordinatorResult<ReleasedProviderRootRoute> {
     let mut identity_source =
         released_identity_source(configured_root, &configured_source, identity_root)?;
     let mut scan_source = configured_source.clone();
     scan_source.route_provenance = identity_source.route_provenance.clone();
     let mut scoped = SourceBackedProviderRegistry::new();
+    let mut exact_source_token = None;
+    let available_released_roots = released_compound_sources
+        .iter()
+        .filter(|root| root.source.provider == configured_source.provider)
+        .count();
+    let configured_released_roots = discovery
+        .configured_provider_roots()
+        .iter()
+        .filter(|root| {
+            root.provider == configured_source.provider
+                && provider_root_registrations
+                    .get(&root.id)
+                    .is_some_and(|registration| {
+                        registration.source_identity == ProviderRootSourceIdentity::Released
+                    })
+        })
+        .count();
+    let inventory_coverage = if discovery.automatic_provider_discovery_enabled()
+        && available_released_roots == configured_released_roots
+    {
+        SqliteInventoryCoverage::Complete
+    } else {
+        SqliteInventoryCoverage::SelectedSubset
+    };
     match configured_source.provider {
         CaptureProvider::OpenClaw => {
             register_landed_source_backed_route_with_data_root_and_lineage(
@@ -383,13 +418,38 @@ fn register_released_provider_root_route(
             )?;
         }
         CaptureProvider::Crush => {
-            let released = resolve_crush_released_project_inventory(
+            let roots = released_compound_sources
+                .iter()
+                .filter(|root| root.source.provider == CaptureProvider::Crush)
+                .collect::<Vec<_>>();
+            let current = roots
+                .iter()
+                .position(|root| root.definition.id == configured_root.id)
+                .ok_or_else(|| {
+                    invalid_route(
+                        configured_source.provider,
+                        "released Crush root is absent from consolidated inventory authority",
+                    )
+                })?;
+            let rebindings = roots
+                .iter()
+                .map(|root| {
+                    released_identity_source(&root.definition, &root.source, &root.identity_root)
+                        .map(|identity| (identity.path, root.source.path.clone()))
+                })
+                .collect::<SourceBackedCoordinatorResult<Vec<_>>>()?;
+            let released = resolve_crush_released_project_inventories(
                 probes,
                 discovery,
-                &identity_source.path,
-                &scan_source.path,
+                &rebindings,
+                discovery.automatic_provider_discovery_enabled(),
             )
             .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
+            exact_source_token = Some(source_token(
+                &crush_source_key(released.released_project_keys()[current].clone()).map_err(
+                    |error| invalid_route(configured_source.provider, error.to_string()),
+                )?,
+            ));
             let databases = released
                 .databases()
                 .iter()
@@ -411,44 +471,80 @@ fn register_released_provider_root_route(
                 data_root,
                 inventory,
                 None,
+                inventory_coverage,
             )?;
         }
         CaptureProvider::Lingma => {
-            let identity = resolve_lingma_released_identity_authority(
-                probes,
-                discovery,
-                &identity_source.path,
-            )
-            .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
+            let roots = released_compound_sources
+                .iter()
+                .filter(|root| root.source.provider == CaptureProvider::Lingma)
+                .map(|root| {
+                    let identity_source = released_identity_source(
+                        &root.definition,
+                        &root.source,
+                        &root.identity_root,
+                    )?;
+                    let lineage = resolve_lingma_released_identity_authority(
+                        probes,
+                        discovery,
+                        &identity_source.path,
+                    )
+                    .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?
+                    .typed_key()
+                    .map_err(|error| {
+                        invalid_route(configured_source.provider, error.to_string())
+                    })?;
+                    Ok((root, identity_source.path, lineage))
+                })
+                .collect::<SourceBackedCoordinatorResult<Vec<_>>>()?;
+            let released_lineage = roots
+                .iter()
+                .find(|(root, _, _)| root.definition.id == configured_root.id)
+                .map(|(_, _, lineage)| lineage.clone())
+                .ok_or_else(|| {
+                    invalid_route(
+                        configured_source.provider,
+                        "released Lingma root is absent from consolidated inventory authority",
+                    )
+                })?;
             let inventory = LingmaInventorySelector::new(discovery.clone(), *probes)
                 .observe()
                 .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
             let authority_key = inventory
                 .authority_key()
                 .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
-            let mut databases = inventory
-                .databases()
-                .iter()
-                .filter(|database| {
-                    database.path() != identity_source.path
-                        && database.path() != configured_source.path
-                })
-                .map(|database| {
-                    database
-                        .catalog_lineage()
-                        .typed_key()
-                        .map(|lineage| (database.path().to_path_buf(), lineage))
-                        .map_err(|error| {
-                            invalid_route(configured_source.provider, error.to_string())
-                        })
-                })
-                .collect::<SourceBackedCoordinatorResult<Vec<_>>>()?;
-            databases.push((
-                configured_source.path.clone(),
-                identity.typed_key().map_err(|error| {
+            exact_source_token = Some(source_token(
+                &lingma_source_key(released_lineage.clone()).map_err(|error| {
                     invalid_route(configured_source.provider, error.to_string())
                 })?,
             ));
+            let mut databases = if discovery.automatic_provider_discovery_enabled() {
+                inventory
+                    .databases()
+                    .iter()
+                    .filter(|database| {
+                        !roots.iter().any(|(root, identity_path, _)| {
+                            database.path() == identity_path || database.path() == root.source.path
+                        })
+                    })
+                    .map(|database| {
+                        database
+                            .catalog_lineage()
+                            .typed_key()
+                            .map(|lineage| (database.path().to_path_buf(), lineage))
+                            .map_err(|error| {
+                                invalid_route(configured_source.provider, error.to_string())
+                            })
+                    })
+                    .collect::<SourceBackedCoordinatorResult<Vec<_>>>()?
+            } else {
+                Vec::new()
+            };
+            databases.extend(
+                roots
+                    .iter()
+                    .map(|(root, _, lineage)| (root.source.path.clone(), lineage.clone())),
+            );
             register_lingma_source_backed_route(
                 &mut scoped,
                 scan_source,
@@ -457,6 +553,7 @@ fn register_released_provider_root_route(
                 authority_key,
                 databases,
                 None,
+                inventory_coverage,
             )?;
         }
         CaptureProvider::AstrBot => register_astrbot_released_source_backed_route(
@@ -498,8 +595,17 @@ fn register_released_provider_root_route(
             .cloned();
     }
     route.apply_released_automatic_identity(&identity_source, configured_source)?;
+    let route_identity = route.metadata.route_identity.clone().ok_or_else(|| {
+        invalid_route(
+            identity_source.provider,
+            "released automatic route has no stable route identity",
+        )
+    })?;
     registry.register(route);
-    Ok(())
+    Ok(ReleasedProviderRootRoute {
+        route_identity,
+        exact_source_token,
+    })
 }
 
 fn released_identity_source(
@@ -695,6 +801,7 @@ fn register_configured_compound_route(
                 data_root,
                 inventory,
                 source_root_lineage,
+                SqliteInventoryCoverage::Complete,
             )?;
         }
         CaptureProvider::AstrBot => {
@@ -720,6 +827,7 @@ fn register_configured_compound_route(
                 configured_key.clone(),
                 vec![(source.path.clone(), configured_key)],
                 source_root_lineage,
+                SqliteInventoryCoverage::Complete,
             )?;
         }
         _ => unreachable!("configured compound route is filtered by its caller"),
