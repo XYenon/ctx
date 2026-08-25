@@ -997,9 +997,19 @@ fn codex_child_kinds_are_checked_independently_without_hiding_valid_peers() {
         vec![root("codex", CaptureProvider::Codex, home.clone())],
         CaptureProvider::Codex,
     );
-    assert_eq!(report.sources.len(), 1);
-    assert_eq!(report.sources[0].path, home.join("archived_sessions"));
-    assert_eq!(report.sources[0].status, ProviderSourceStatus::Empty);
+    assert_eq!(report.sources.len(), 3);
+    assert_eq!(report.sources[0].path, home.join("sessions"));
+    assert_eq!(report.sources[0].status, ProviderSourceStatus::Unknown);
+    assert_eq!(report.sources[1].path, home.join("archived_sessions"));
+    assert_eq!(report.sources[1].status, ProviderSourceStatus::Empty);
+    assert_eq!(report.sources[2].path, home.join("history.jsonl"));
+    assert_eq!(report.sources[2].status, ProviderSourceStatus::Unknown);
+    assert!(report.sources.iter().all(|source| {
+        source
+            .route_provenance
+            .configured_root()
+            .is_some_and(|(id, path)| id == "codex" && path == home)
+    }));
     assert_eq!(report.issues.len(), 2);
 }
 

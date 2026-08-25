@@ -1,5 +1,6 @@
 use super::*;
 use ctx_history_capture_model::ProviderRootSourceIdentity;
+use ctx_history_index::AppliedProviderRootSourceMembership;
 use std::collections::BTreeMap;
 
 fn configured_source(
@@ -189,4 +190,86 @@ fn only_one_noncompound_root_per_provider_owns_the_released_namespace() {
         applied[1].source_identity(),
         ProviderRootSourceIdentity::NamedV1
     );
+}
+
+#[test]
+fn unavailable_static_child_restores_only_its_prior_exact_membership() {
+    let definition = ProviderRootDefinition {
+        id: "codex-work".to_owned(),
+        provider: CaptureProvider::Codex,
+        path: PathBuf::from("/fixture/codex-work"),
+        group: Some("work".to_owned()),
+        kind: None,
+    };
+    let sessions = SourceRouteIdentity::from_sha256("31".repeat(32)).unwrap();
+    let history = SourceRouteIdentity::from_sha256("32".repeat(32)).unwrap();
+    let history_source = "41".repeat(32);
+    let prior =
+        AppliedProviderRoot::new(definition.clone(), vec![sessions.clone(), history.clone()])
+            .unwrap()
+            .with_exact_source_memberships(vec![AppliedProviderRootSourceMembership::exact(
+                history.clone(),
+                vec![history_source.clone()],
+            )
+            .unwrap()])
+            .unwrap();
+    let current =
+        AppliedProviderRoot::new(definition, vec![sessions.clone(), history.clone()]).unwrap();
+    let mut registry = SourceBackedProviderRegistry::new();
+    registry
+        .set_applied_provider_roots(false, "fixture".to_owned(), vec![current])
+        .unwrap();
+
+    registry
+        .retain_unavailable_provider_root_routes(&[prior])
+        .unwrap();
+
+    let retained = &registry.applied_provider_roots().unwrap().2[0];
+    assert_eq!(retained.routes(), &[sessions, history.clone()]);
+    assert_eq!(
+        retained.exact_source_tokens_for_route(&history),
+        Some(std::slice::from_ref(&history_source))
+    );
+}
+
+#[test]
+fn removed_dynamic_child_is_not_restored_from_prior_membership() {
+    let definition = ProviderRootDefinition {
+        id: "openclaw-state".to_owned(),
+        provider: CaptureProvider::OpenClaw,
+        path: PathBuf::from("/fixture/openclaw-state"),
+        group: None,
+        kind: None,
+    };
+    let alpha = SourceRouteIdentity::from_sha256("51".repeat(32)).unwrap();
+    let beta = SourceRouteIdentity::from_sha256("52".repeat(32)).unwrap();
+    let prior = AppliedProviderRoot::new(definition.clone(), vec![alpha.clone(), beta.clone()])
+        .unwrap()
+        .with_exact_source_memberships(
+            [(&alpha, "61"), (&beta, "62")]
+                .into_iter()
+                .map(|(route, token)| {
+                    AppliedProviderRootSourceMembership::exact(
+                        route.clone(),
+                        vec![token.repeat(32)],
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap();
+    let current = AppliedProviderRoot::new(definition, vec![alpha.clone()]).unwrap();
+    let mut registry = SourceBackedProviderRegistry::new();
+    registry
+        .set_applied_provider_roots(false, "fixture".to_owned(), vec![current])
+        .unwrap();
+
+    registry
+        .retain_unavailable_provider_root_routes(&[prior])
+        .unwrap();
+
+    let retained = &registry.applied_provider_roots().unwrap().2[0];
+    assert_eq!(retained.routes(), std::slice::from_ref(&alpha));
+    assert!(retained.exact_source_tokens_for_route(&alpha).is_some());
+    assert!(retained.exact_source_tokens_for_route(&beta).is_none());
 }

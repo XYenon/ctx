@@ -435,6 +435,7 @@ enum ConfiguredRootAvailability {
     Present,
     Missing,
     Unavailable,
+    Unsafe(&'static str),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -552,6 +553,9 @@ pub(super) fn expand_configured_roots_for_provider(
         else {
             continue;
         };
+        if matches!(availability, ConfiguredRootAvailability::Unsafe(_)) {
+            continue;
+        }
         match expander {
             ConfiguredRootExpander::ExactSource {
                 source_format,
@@ -795,8 +799,12 @@ fn expand_openclaw_agent(
         return;
     }
 
-    if inspect_configured_path(report, spec, &sqlite, ConfiguredRootPathKind::File, false).is_none()
-    {
+    let Some(sqlite_availability) =
+        inspect_configured_path(report, spec, &sqlite, ConfiguredRootPathKind::File, false)
+    else {
+        return;
+    };
+    if matches!(sqlite_availability, ConfiguredRootAvailability::Unsafe(_)) {
         return;
     }
 
@@ -817,15 +825,36 @@ fn build_configured_source(
     source_format: &'static str,
     route_role: ProviderRouteRole,
 ) -> Option<ProviderSource> {
-    inspect_configured_path(report, spec, &path, expected_path_kind, path == root.path)?;
-    let mut source = source_from_parts_with_data_root(
-        probes,
-        data_root,
-        spec,
-        path,
-        source_format,
-        ProviderSourceKind::NativeHistory,
-    );
+    let availability =
+        inspect_configured_path(report, spec, &path, expected_path_kind, path == root.path)?;
+    let mut source = match availability {
+        ConfiguredRootAvailability::Unsafe(reason) => ProviderSource {
+            provider: spec.provider,
+            path,
+            exists: true,
+            source_format,
+            source_kind: if spec.import_support.is_importable() {
+                ProviderSourceKind::NativeHistory
+            } else {
+                ProviderSourceKind::DetectionOnly
+            },
+            import_support: spec.import_support,
+            catalog_support: spec.catalog_support,
+            status: ProviderSourceStatus::Unknown,
+            unsupported_reason: Some(reason),
+            route_provenance: Default::default(),
+        },
+        ConfiguredRootAvailability::Present
+        | ConfiguredRootAvailability::Missing
+        | ConfiguredRootAvailability::Unavailable => source_from_parts_with_data_root(
+            probes,
+            data_root,
+            spec,
+            path,
+            source_format,
+            ProviderSourceKind::NativeHistory,
+        ),
+    };
     apply_configured_provenance(&mut source, root, route_role);
     Some(source)
 }
@@ -852,29 +881,31 @@ fn inspect_configured_path(
             Some(ConfiguredRootAvailability::Present)
         }
         Ok(_) => {
+            let reason = configured_path_kind_reason(expected_path_kind, is_root);
             push_issue_once(
                 report,
                 spec,
                 Some(path.to_path_buf()),
                 DiscoveryIssueKind::SelectorUnreconstructible,
-                configured_path_kind_reason(expected_path_kind, is_root),
+                reason,
             );
-            None
+            Some(ConfiguredRootAvailability::Unsafe(reason))
         }
         Err(SourcePathError::Missing) => Some(ConfiguredRootAvailability::Missing),
         Err(SourcePathError::Unsupported) => {
+            let reason = if is_root {
+                CONFIGURED_ROOT_SYMLINK_REASON
+            } else {
+                CONFIGURED_SOURCE_SYMLINK_REASON
+            };
             push_issue_once(
                 report,
                 spec,
                 Some(path.to_path_buf()),
                 DiscoveryIssueKind::SelectorUnreconstructible,
-                if is_root {
-                    CONFIGURED_ROOT_SYMLINK_REASON
-                } else {
-                    CONFIGURED_SOURCE_SYMLINK_REASON
-                },
+                reason,
             );
-            None
+            Some(ConfiguredRootAvailability::Unsafe(reason))
         }
         Err(SourcePathError::Unavailable(kind)) => {
             push_issue_once(

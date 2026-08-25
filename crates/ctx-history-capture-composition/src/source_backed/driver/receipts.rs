@@ -531,10 +531,13 @@ impl SourceBackedProviderRegistry {
         self.applied_provider_roots.as_ref()
     }
 
-    /// Keeps the last generation's route ownership for a provider-compatible
-    /// configured root whose stable id still exists but whose current no-follow
-    /// discovery could not safely reconstruct any route. Mutable path and group
-    /// fields are aliases; desired-state removal is handled by refresh execution.
+    /// Keeps the last generation's route ownership for provider-compatible
+    /// configured roots whose current no-follow discovery could not safely
+    /// reconstruct all still-selected routes. Current route membership is the
+    /// authority for independently removed dynamic children; prior exact-source
+    /// membership is restored only for routes still associated with the root.
+    /// Mutable path and group fields are aliases; desired-state root removal is
+    /// handled by refresh execution.
     pub fn retain_unavailable_provider_root_routes(
         &mut self,
         retained: &[AppliedProviderRoot],
@@ -544,7 +547,7 @@ impl SourceBackedProviderRegistry {
         };
         validate_unique_provider_root_ids(current)?;
         validate_unique_provider_root_ids(retained)?;
-        for root in current.iter_mut().filter(|root| root.routes().is_empty()) {
+        for root in current.iter_mut() {
             let definition = root.definition().clone();
             let Some(previous) = retained.iter().find(|previous| {
                 let previous_definition = previous.definition();
@@ -557,18 +560,29 @@ impl SourceBackedProviderRegistry {
             if previous.routes().is_empty() {
                 continue;
             }
+            let mut routes = root.routes().to_vec();
+            if routes.is_empty() {
+                routes.extend_from_slice(previous.routes());
+            }
+            let mut exact_source_memberships = root.exact_source_memberships().to_vec();
+            exact_source_memberships.extend(
+                previous
+                    .exact_source_memberships()
+                    .iter()
+                    .filter(|membership| {
+                        routes.binary_search(membership.route_identity()).is_ok()
+                            && root
+                                .exact_source_tokens_for_route(membership.route_identity())
+                                .is_none()
+                    })
+                    .cloned(),
+            );
             let authority = previous
                 .retained_authority()
                 .map_err(SourceBackedCoordinatorError::Index)?;
-            *root = AppliedProviderRoot::with_retained_authority(
-                definition,
-                authority,
-                previous.routes().to_vec(),
-            )
-            .and_then(|root| {
-                root.with_exact_source_memberships(previous.exact_source_memberships().to_vec())
-            })
-            .map_err(SourceBackedCoordinatorError::Index)?;
+            *root = AppliedProviderRoot::with_retained_authority(definition, authority, routes)
+                .and_then(|root| root.with_exact_source_memberships(exact_source_memberships))
+                .map_err(SourceBackedCoordinatorError::Index)?;
         }
         Ok(())
     }

@@ -320,6 +320,202 @@ fn stable_source_bytes(index: &VerifiedIndex, marker: &str) -> StableSourceBytes
     }
 }
 
+fn assert_root_marker(index: &VerifiedIndex, id: &str, marker: &str, expected: usize) {
+    let allowed = index
+        .manifest()
+        .provider_root_source_tokens(&[id.to_owned()], &[])
+        .unwrap();
+    let hits = index
+        .search_event_candidates_with_filters(
+            marker,
+            &EventSearchFilters {
+                allowed_source_keys: Some(allowed),
+                ..EventSearchFilters::default()
+            },
+            16,
+        )
+        .unwrap();
+    assert_eq!(hits.len(), expected, "root {id}, marker {marker}");
+}
+
+fn codex_session_bytes(marker: &str, advanced_marker: Option<&str>) -> Vec<u8> {
+    let mut records = vec![
+        json!({
+            "timestamp": "2026-08-25T00:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "019fb700-0000-7000-8000-000000000725",
+                "timestamp": "2026-08-25T00:00:00Z",
+                "cwd": "/repo/partial-static-child",
+                "originator": "codex_cli_rs",
+                "cli_version": "1.0.0",
+                "source": "cli",
+                "model_provider": "openai"
+            }
+        }),
+        json!({
+            "timestamp": "2026-08-25T00:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": marker}]
+            }
+        }),
+    ];
+    if let Some(advanced_marker) = advanced_marker {
+        records.push(json!({
+            "timestamp": "2026-08-25T00:00:02Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": advanced_marker}]
+            }
+        }));
+    }
+    records
+        .into_iter()
+        .flat_map(|record| format!("{record}\n").into_bytes())
+        .collect()
+}
+
+#[test]
+fn configured_codex_root_keeps_unsafe_static_child_membership_while_peer_advances() {
+    const ROOT_ID: &str = "codex-work";
+    const SESSION_MARKER: &str = "codexstaticsessioninitial";
+    const SESSION_ADVANCED: &str = "codexstaticsessionadvanced";
+    const HISTORY_MARKER: &str = "codexstatichistoryretained";
+
+    let temp = tempfile::tempdir().unwrap();
+    let fixture_root = fs::canonicalize(temp.path()).unwrap();
+    let data_root = fixture_root.join("codex-partial-static-data");
+    let index_root = source_backed_index_root(&data_root);
+    ctx_history_platform::platform_security::establish_private_data_root(&data_root).unwrap();
+    let home = fixture_root.join("home");
+    let cwd = fixture_root.join("cwd");
+    let codex_root = fixture_root.join("codex-work");
+    let sessions = codex_root.join("sessions");
+    let session = sessions.join("rollout.jsonl");
+    let history = codex_root.join("history.jsonl");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(&session, codex_session_bytes(SESSION_MARKER, None)).unwrap();
+    fs::write(
+        &history,
+        format!(
+            "{}\n",
+            json!({
+                "session_id": "019fb700-0000-7000-8000-000000000726",
+                "ts": 1787616000,
+                "text": HISTORY_MARKER
+            })
+        ),
+    )
+    .unwrap();
+    let definition = ProviderRootDefinition {
+        id: ROOT_ID.to_owned(),
+        provider: CaptureProvider::Codex,
+        path: codex_root,
+        group: Some("work".to_owned()),
+        kind: None,
+    };
+    let discovery = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        DiscoveryPlatformDirs::default(),
+    );
+
+    refresh(
+        &discovery,
+        CaptureProvider::Codex,
+        std::slice::from_ref(&definition),
+        false,
+        &data_root,
+        &index_root,
+    );
+    let initial = VerifiedIndex::open(&index_root).unwrap();
+    let retained_history = stable_source_bytes(&initial, HISTORY_MARKER);
+    assert_root_marker(&initial, ROOT_ID, HISTORY_MARKER, 1);
+    drop(initial);
+
+    let saved_history = fixture_root.join("saved-history.jsonl");
+    fs::rename(&history, &saved_history).unwrap();
+    fs::create_dir(&history).unwrap();
+    fs::write(
+        &session,
+        codex_session_bytes(SESSION_MARKER, Some(SESSION_ADVANCED)),
+    )
+    .unwrap();
+
+    refresh(
+        &discovery,
+        CaptureProvider::Codex,
+        std::slice::from_ref(&definition),
+        false,
+        &data_root,
+        &index_root,
+    );
+    let unavailable = VerifiedIndex::open(&index_root).unwrap();
+    assert_eq!(
+        unavailable
+            .search_event_candidates(SESSION_ADVANCED, 8)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        stable_source_bytes(&unavailable, HISTORY_MARKER),
+        retained_history
+    );
+    assert_root_marker(&unavailable, ROOT_ID, HISTORY_MARKER, 1);
+    drop(unavailable);
+
+    // A second independently rebuilt registry exercises the persisted
+    // generation/restart path while the static child remains unavailable.
+    refresh(
+        &discovery,
+        CaptureProvider::Codex,
+        std::slice::from_ref(&definition),
+        false,
+        &data_root,
+        &index_root,
+    );
+    let restarted = VerifiedIndex::open(&index_root).unwrap();
+    assert_eq!(
+        stable_source_bytes(&restarted, HISTORY_MARKER),
+        retained_history
+    );
+    assert_root_marker(&restarted, ROOT_ID, HISTORY_MARKER, 1);
+    drop(restarted);
+
+    fs::remove_dir(&history).unwrap();
+    fs::rename(saved_history, &history).unwrap();
+    refresh(
+        &discovery,
+        CaptureProvider::Codex,
+        std::slice::from_ref(&definition),
+        false,
+        &data_root,
+        &index_root,
+    );
+    let restored = VerifiedIndex::open(&index_root).unwrap();
+    assert_eq!(
+        stable_source_bytes(&restored, HISTORY_MARKER),
+        retained_history
+    );
+    assert_root_marker(&restored, ROOT_ID, HISTORY_MARKER, 1);
+    assert_eq!(
+        restored
+            .search_event_candidates(SESSION_ADVANCED, 8)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn unavailable_only_released_member_is_carried_while_automatic_peer_advances() {
     for provider in [CaptureProvider::Crush, CaptureProvider::Lingma] {
