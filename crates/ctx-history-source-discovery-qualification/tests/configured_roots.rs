@@ -1173,6 +1173,54 @@ fn openhands_active_automatic_and_configured_nested_roots_fail_closed() {
 }
 
 #[test]
+fn openhands_equal_automatic_and_configured_paths_reject_opposite_layout_kinds() {
+    for (configured_kind, include_legacy, expected_automatic_format) in [
+        (
+            ProviderRootKind::OpenHandsCurrentConversations,
+            true,
+            "openhands_file_events",
+        ),
+        (
+            ProviderRootKind::OpenHandsLegacyPersistence,
+            false,
+            "openhands_cli_file_events",
+        ),
+    ] {
+        let temp = tempdir();
+        let selected = temp.path().join("shared-openhands-root");
+        if include_legacy {
+            write(&selected.join("v1_conversations/legacy/event.json"), b"{}");
+        }
+        write(&selected.join("current/events/event-00001.json"), b"{}");
+        let report = provider_report(
+            &context(&temp)
+                .with_env("OH_PERSISTENCE_DIR", selected.as_os_str())
+                .with_env("OPENHANDS_CONVERSATIONS_DIR", selected.as_os_str())
+                .with_configured_provider_roots(vec![openhands_root(
+                    "opposite-kind",
+                    selected.clone(),
+                    configured_kind,
+                )]),
+            CaptureProvider::OpenHands,
+        );
+
+        assert_eq!(report.sources.len(), 1, "{configured_kind:?}");
+        assert_eq!(
+            report.sources[0].source_format, expected_automatic_format,
+            "{configured_kind:?}"
+        );
+        assert!(report.sources[0]
+            .route_provenance
+            .configured_root()
+            .is_none());
+        assert!(report.issues.iter().any(|issue| {
+            issue.kind == DiscoveryIssueKind::ConfiguredRootConflict
+                && issue.path.as_deref() == Some(selected.as_path())
+        }));
+    }
+}
+
+#[test]
 fn openhands_automatic_overlap_suppresses_only_conflicting_configured_root_ids() {
     let temp = tempdir();
     let base = context(&temp);

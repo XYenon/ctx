@@ -59,6 +59,78 @@ fn naming_the_automatic_openhands_current_root_adopts_released_identity() {
 }
 
 #[test]
+fn equal_automatic_legacy_and_configured_current_roots_publish_each_event_once() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let selected = temp.path().join("shared-openhands-root");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    write_message(
+        &selected,
+        "legacy-witness",
+        "legacy-event",
+        "legacy witness",
+    );
+    write_current_message_at_root(
+        &selected,
+        "current-session",
+        1,
+        "current-event",
+        "current body",
+        "2026-07-28T12:00:00Z",
+    );
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_env("OH_PERSISTENCE_DIR", selected.as_os_str())
+    .with_env("OPENHANDS_CONVERSATIONS_DIR", selected.as_os_str())
+    .with_configured_provider_roots(vec![ProviderRootDefinition {
+        id: "configured-current".to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path: selected,
+        group: None,
+        kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+    }]);
+    let report = ctx_history_source_discovery::discover_provider_sources_for_provider_with_context(
+        &crate::test_provider_probes(),
+        &context,
+        CaptureProvider::OpenHands,
+    );
+    let data_root = temp.path().join("ctx-data");
+    let build = build_automatic_source_backed_registry_from_report_with_probes(
+        &crate::test_provider_probes(),
+        &context,
+        &data_root,
+        report,
+    );
+
+    assert_eq!(build.executable_route_count(), 1);
+    assert!(matches!(
+        build.issues.as_slice(),
+        [SourceBackedAutomaticRegistryIssue::Discovery(
+            DiscoveryIssue {
+                kind: ctx_history_source_discovery::DiscoveryIssueKind::ConfiguredRootConflict,
+                ..
+            }
+        )]
+    ));
+    let index = temp.path().join("index");
+    let receipt =
+        refresh_source_backed_generation(&index, &build.registry, WriterOptions::default())
+            .unwrap();
+    let bodies = indexed_bodies(&index, &receipt);
+    assert_eq!(
+        bodies.iter().filter(|body| *body == "current body").count(),
+        1
+    );
+    assert_eq!(VerifiedIndex::open(&index).unwrap().document_count(), 2);
+}
+
+#[test]
 fn current_cli_automatic_discovery_covers_append_rewrite_and_conversation_deletion() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     let home = temp.path().join("home");

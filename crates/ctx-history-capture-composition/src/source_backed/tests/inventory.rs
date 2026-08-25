@@ -5,7 +5,19 @@ use ctx_history_capture_model::{
     ProviderRootDefinition, ProviderRootKind, ProviderRouteRole, ProviderSourceRouteProvenance,
 };
 use rusqlite::{params, Connection};
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+static CURSOR_CANONICAL_PROBE_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn counting_cursor_canonical_probe(
+    _path: &Path,
+) -> ctx_history_source_discovery::CursorTranscriptProbeOutcome {
+    CURSOR_CANONICAL_PROBE_CALLS.fetch_add(1, Ordering::Relaxed);
+    ctx_history_source_discovery::CursorTranscriptProbeOutcome::NotFound
+}
 
 fn configured_source(
     mut source: ProviderSource,
@@ -72,6 +84,37 @@ fn configured_goose_accepts_a_shallow_absolute_database_path() {
         metadata.selector_authority,
         SourceBackedSelectorAuthority::SelectedWithRetainedExplicit
     );
+}
+
+#[test]
+fn automatic_false_registry_composition_does_not_probe_unnamed_providers() {
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    fs::create_dir_all(home.join(".cursor/projects")).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_automatic_provider_discovery(false);
+    let probes = StaticProviderProbeCatalog::new(
+        ctx_history_source_discovery::CursorProbeFragment::new(counting_cursor_canonical_probe),
+    );
+
+    CURSOR_CANONICAL_PROBE_CALLS.store(0, Ordering::Relaxed);
+    let build = build_automatic_source_backed_registry_from_report_with_probes(
+        &probes,
+        &context,
+        &temp.path().join("ctx-data"),
+        DiscoveryReport::default(),
+    );
+
+    assert!(build.issues.is_empty());
+    assert_eq!(build.executable_route_count(), 0);
+    assert_eq!(CURSOR_CANONICAL_PROBE_CALLS.load(Ordering::Relaxed), 0);
 }
 
 #[test]
@@ -589,7 +632,7 @@ fn configured_codex_root_keeps_its_route_alias_for_a_present_session_tree() {
 }
 
 #[test]
-fn naming_the_released_codex_home_preserves_the_compound_session_route() {
+fn naming_the_released_codex_home_with_automatic_false_preserves_the_compound_session_route() {
     let temp = tempdir().unwrap();
     let home = temp.path().join("home");
     let cwd = temp.path().join("cwd");
@@ -616,6 +659,7 @@ fn naming_the_released_codex_home_preserves_the_compound_session_route() {
         crate::DiscoveryPlatformDirs::default(),
     )
     .with_env("CODEX_HOME", &root)
+    .with_automatic_provider_discovery(false)
     .with_configured_provider_roots(vec![definition.clone()]);
     let session_source = configured_source(
         fixture_provider_source_at(

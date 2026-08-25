@@ -26,7 +26,7 @@ const MAX_PROJECT_DISCOVERY_LOCATORS: usize = 128;
 const MAX_PROVIDER_DISCOVERY_WORKERS: usize = 16;
 const PROVIDER_DISCOVERY_THREAD_PREFIX: &str = "ctx-src-disc";
 const OPENHANDS_AUTOMATIC_CONFIGURED_OVERLAP_REASON: &str =
-    "configured OpenHands history root is nested with an active automatic OpenHands root";
+    "configured OpenHands history root conflicts with an active automatic OpenHands root";
 
 #[derive(Debug, Error)]
 #[error(
@@ -95,12 +95,14 @@ pub fn discover_provider_sources_with_context(
     dedupe_report(report)
 }
 
-/// Resolves canonical automatic routes without adding configured roots.
+/// Resolves canonical automatic routes only for providers with configured roots.
 ///
 /// Configured roots use this read-only view to retain the released identity
 /// when their complete expansion is the canonical automatic route set. The
 /// comparison deliberately enables automatic inference even when automatic
 /// refresh is disabled, so configuration does not fork released identities.
+/// Providers without named roots are never resolved or content-probed by this
+/// identity-reconstruction path.
 pub fn discover_canonical_automatic_provider_sources_with_context(
     probes: &StaticProviderProbeCatalog,
     context: &DiscoveryContext,
@@ -108,6 +110,13 @@ pub fn discover_canonical_automatic_provider_sources_with_context(
     let automatic_context = context.clone().with_automatic_provider_discovery(true);
     let mut report = DiscoveryReport::default();
     for spec in PROVIDER_SPECS {
+        if !context
+            .configured_provider_roots()
+            .iter()
+            .any(|root| root.provider == spec.provider)
+        {
+            continue;
+        }
         let mut provider_report = resolve(probes, &automatic_context, spec);
         report.sources.append(&mut provider_report.sources);
         report.issues.append(&mut provider_report.issues);
@@ -267,7 +276,9 @@ fn resolve_provider(
 ) -> DiscoveryReport {
     let mut report = resolve(probes, context, spec);
     let mut configured = expand_configured_roots_for_provider(probes, context, spec);
-    let canonical = if context.automatic_provider_inference_enabled() {
+    let canonical = if configured.sources.is_empty() {
+        Vec::new()
+    } else if context.automatic_provider_inference_enabled() {
         report.sources.clone()
     } else {
         resolve(
@@ -295,7 +306,8 @@ fn suppress_openhands_automatic_configured_overlaps(
     for source in &configured.sources {
         if !source.exists
             || !automatic.iter().any(|automatic| {
-                automatic.exists && provider_paths_strictly_nested(&automatic.path, &source.path)
+                automatic.exists
+                    && openhands_automatic_configured_sources_conflict(automatic, source)
             })
         {
             continue;
@@ -326,10 +338,17 @@ fn suppress_openhands_automatic_configured_overlaps(
         }));
 }
 
-fn provider_paths_strictly_nested(left: &Path, right: &Path) -> bool {
-    if super::resolvers::provider_paths_equivalent(left, right) {
-        return false;
+fn openhands_automatic_configured_sources_conflict(
+    automatic: &ProviderSource,
+    configured: &ProviderSource,
+) -> bool {
+    if super::resolvers::provider_paths_equivalent(&automatic.path, &configured.path) {
+        return automatic.source_format != configured.source_format;
     }
+    provider_paths_strictly_nested(&automatic.path, &configured.path)
+}
+
+fn provider_paths_strictly_nested(left: &Path, right: &Path) -> bool {
     let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
     let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
     left.starts_with(&right) || right.starts_with(&left)
@@ -406,6 +425,15 @@ fn discover_with_projects(
 mod boundary_error_tests {
     use super::*;
 
+    static CURSOR_PROBE_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn counting_cursor_probe(
+        _path: &Path,
+    ) -> crate::provider_sources::CursorTranscriptProbeOutcome {
+        CURSOR_PROBE_CALLS.fetch_add(1, Ordering::Relaxed);
+        crate::provider_sources::CursorTranscriptProbeOutcome::NotFound
+    }
+
     fn unknown_configured_claude_source(home: &Path) -> ProviderSource {
         ProviderSource {
             provider: CaptureProvider::Claude,
@@ -456,6 +484,46 @@ mod boundary_error_tests {
             validate_provider_source_roots_outside_data_root(&nested_data, [&source]).is_err(),
             "configured-home fallback must still reject a nested ctx data root"
         );
+    }
+
+    #[test]
+    fn automatic_false_probes_only_providers_with_configured_roots() {
+        let temp = crate::test_support_paths::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let cwd = temp.path().join("cwd");
+        let claude = home.join(".claude");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(claude.join("projects")).unwrap();
+        std::fs::write(claude.join("projects/session.jsonl"), b"{}\n").unwrap();
+        std::fs::create_dir_all(home.join(".cursor/projects")).unwrap();
+        let probes = crate::provider_sources::StaticProviderProbeCatalog::new(
+            crate::provider_sources::CursorProbeFragment::new(counting_cursor_probe),
+        );
+        let context = DiscoveryContext::new(
+            &home,
+            &cwd,
+            crate::provider_sources::DiscoveryPlatform::Linux,
+            crate::provider_sources::DiscoveryPlatformDirs::default(),
+        )
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(vec![
+            ctx_history_capture_model::ProviderRootDefinition {
+                id: "released-claude".to_owned(),
+                provider: CaptureProvider::Claude,
+                path: claude,
+                group: None,
+                kind: None,
+            },
+        ]);
+
+        CURSOR_PROBE_CALLS.store(0, Ordering::Relaxed);
+        super::super::probes::reset_default_location_probe_calls();
+        let report = discover_provider_sources_with_context(&probes, &context);
+
+        assert_eq!(report.sources.len(), 1);
+        assert_eq!(report.sources[0].provider, CaptureProvider::Claude);
+        assert_eq!(CURSOR_PROBE_CALLS.load(Ordering::Relaxed), 0);
+        assert_eq!(super::super::probes::default_location_probe_calls(), 2);
     }
 
     #[test]
