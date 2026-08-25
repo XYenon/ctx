@@ -1,4 +1,3 @@
-mod copilot;
 mod hermes;
 mod inventory;
 mod registry;
