@@ -3,7 +3,9 @@ use std::{collections::BTreeMap, fs, path::Path};
 use ctx_history_capture_model::{
     ProviderRootDefinition, ProviderRootKind, ProviderRootSourceIdentity,
 };
-use ctx_history_index::policy::AUTOMATIC_ROUTE_DELETION_GRACE_OBSERVATIONS;
+use ctx_history_index::{
+    policy::AUTOMATIC_ROUTE_DELETION_GRACE_OBSERVATIONS, source_token, EventSearchFilters,
+};
 use rusqlite::Connection;
 
 use super::*;
@@ -386,6 +388,36 @@ fn only_record_matching(index_root: &Path, marker: &str) -> CoreRecord {
     records.into_iter().next().unwrap()
 }
 
+fn auggie_record_owned_by_root(index_root: &Path, root_id: &str, marker: &str) -> CoreRecord {
+    let index = VerifiedIndex::open(index_root).unwrap();
+    let allowed = index
+        .manifest()
+        .provider_root_source_tokens(&[root_id.to_owned()], &[])
+        .unwrap();
+    assert_eq!(allowed.len(), 1, "{root_id} must own one Auggie source");
+    let matches = index
+        .search_event_candidates_with_filters(
+            marker,
+            &EventSearchFilters {
+                allowed_source_keys: Some(allowed.clone()),
+                ..EventSearchFilters::default()
+            },
+            16,
+        )
+        .unwrap();
+    assert!(
+        !matches.is_empty(),
+        "{root_id} must own matching Auggie events"
+    );
+    assert!(matches
+        .iter()
+        .all(|candidate| source_token(&candidate.event.source) == allowed[0]));
+    index
+        .core_record_by_id(matches[0].event.event_id.as_uuid())
+        .unwrap()
+        .unwrap()
+}
+
 fn openhands_root(id: &str, path: &Path, kind: ProviderRootKind) -> ProviderRootDefinition {
     ProviderRootDefinition {
         id: id.to_owned(),
@@ -470,6 +502,95 @@ fn configured_auggie_parent_root_publishes_its_authentic_sessions_child() {
         MARKER,
     );
     assert!(!publication.records.is_empty());
+}
+
+#[test]
+fn named_auggie_roots_partition_shared_native_sessions_across_move_lifecycle() {
+    const MARKER: &str = "auggie session json oracle prompt";
+    const FIXTURE: &str = "auggie/v0.32.0/sessions/01K0AUGGIESESSION0000000000.json";
+
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let first = temp.path().join("first-auggie");
+    let second = temp.path().join("second-auggie");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    copy_fixture(FIXTURE, &first.join("sessions/session.json"));
+    copy_fixture(FIXTURE, &second.join("sessions/session.json"));
+
+    let definitions = |first: &Path| {
+        vec![
+            ProviderRootDefinition {
+                id: "first-auggie".to_owned(),
+                provider: CaptureProvider::Auggie,
+                path: first.to_path_buf(),
+                group: Some("work".to_owned()),
+                kind: None,
+            },
+            ProviderRootDefinition {
+                id: "second-auggie".to_owned(),
+                provider: CaptureProvider::Auggie,
+                path: second.clone(),
+                group: Some("work".to_owned()),
+                kind: None,
+            },
+        ]
+    };
+    let context = |first: &Path| {
+        DiscoveryContext::new(
+            &home,
+            &cwd,
+            DiscoveryPlatform::Linux,
+            crate::DiscoveryPlatformDirs::default(),
+        )
+        .with_automatic_provider_discovery(false)
+        .with_configured_provider_roots(definitions(first))
+    };
+    let index_root = temp.path().join("index");
+
+    let initial = build_provider_registry(
+        &context(&first),
+        &temp.path().join("initial-data"),
+        CaptureProvider::Auggie,
+    );
+    let initial_roots = &initial.registry.applied_provider_roots().unwrap().2;
+    assert_eq!(initial_roots.len(), 2);
+    assert!(initial_roots
+        .iter()
+        .all(|root| root.source_identity() == ProviderRootSourceIdentity::NamedV1));
+    assert_ne!(initial_roots[0].routes(), initial_roots[1].routes());
+    refresh_source_backed_generation(
+        &index_root,
+        &initial.registry,
+        source_backed_refresh_writer_options(),
+    )
+    .unwrap();
+    let initial_first = auggie_record_owned_by_root(&index_root, "first-auggie", MARKER);
+    let initial_second = auggie_record_owned_by_root(&index_root, "second-auggie", MARKER);
+    assert_ne!(initial_first.source, initial_second.source);
+    assert_ne!(initial_first.session_id, initial_second.session_id);
+    assert_ne!(initial_first.event_id, initial_second.event_id);
+
+    let moved = temp.path().join("moved-first-auggie");
+    fs::rename(&first, &moved).unwrap();
+    let moved_build = build_provider_registry(
+        &context(&moved),
+        &temp.path().join("moved-data"),
+        CaptureProvider::Auggie,
+    );
+    refresh_source_backed_generation(
+        &index_root,
+        &moved_build.registry,
+        source_backed_refresh_writer_options(),
+    )
+    .unwrap();
+    let moved_first = auggie_record_owned_by_root(&index_root, "first-auggie", MARKER);
+    let moved_second = auggie_record_owned_by_root(&index_root, "second-auggie", MARKER);
+    assert_eq!(moved_first.source, initial_first.source);
+    assert_eq!(moved_first.session_id, initial_first.session_id);
+    assert_eq!(moved_first.event_id, initial_first.event_id);
+    assert_eq!(moved_second, initial_second);
 }
 
 #[test]

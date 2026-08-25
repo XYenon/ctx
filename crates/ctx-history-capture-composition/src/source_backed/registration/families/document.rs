@@ -25,7 +25,10 @@ pub(super) fn register_route(
 ) -> SourceBackedCoordinatorResult<()> {
     if source.provider == CaptureProvider::Auggie {
         return crate::provider::providers::auggie::native_path::register_source_backed_route(
-            registry, source, selection,
+            registry,
+            source,
+            selection,
+            source_root_lineage,
         );
     }
     match source.provider {
