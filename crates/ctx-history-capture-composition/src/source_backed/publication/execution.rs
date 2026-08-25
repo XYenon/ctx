@@ -373,6 +373,7 @@ pub(super) fn refresh_source_backed_generation_with_detailed_progress_and_discov
                     applied_removals: &mut applied_removals,
                     route_index,
                     route_identity: route_identity.clone(),
+                    base_route_aliases: route.base_route_aliases.clone(),
                     base_route_control: base_route_controls.get(route_identity).cloned(),
                     resources: plan.route_resources_for(route_identity, work_budget),
                     logical_source_failures: &mut logical_source_failures,
@@ -678,6 +679,19 @@ pub(super) fn refresh_source_backed_generation_with_detailed_progress_and_discov
             lifecycle.finish_route_stage(route_identity)?;
             successful_this_attempt.insert(route_identity.clone());
         }
+        for barrier in &registry.automatic_split_cohort_barriers {
+            if barrier.cohort.iter().any(|route| {
+                !successful_this_attempt.contains(route) || partial_routes.contains(route)
+            }) {
+                return Err(SourceBackedCoordinatorError::InvalidRoute {
+                    provider: CaptureProvider::Unknown,
+                    detail: format!(
+                        "automatic split cohort did not terminally succeed before retiring {}",
+                        barrier.predecessor.as_str()
+                    ),
+                });
+            }
+        }
         lifecycle.set_present_routes(registry.routes.iter().enumerate().filter_map(
             |(route_index, route)| {
                 let route_identity = route.metadata.route_identity.as_ref()?;
@@ -851,6 +865,10 @@ pub(super) fn refresh_source_backed_generation_with_detailed_progress_and_discov
                 continue;
             }
             route_controls.remove(route_identity);
+            if let Some(witness) = route.automatic_split_bridge_control.as_ref() {
+                route_controls.insert(route_identity.clone(), witness.clone());
+                continue;
+            }
             let Some(control) = route
                 .driver
                 .as_ref()

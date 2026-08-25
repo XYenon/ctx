@@ -72,6 +72,12 @@ pub(in super::super) struct ControlledRouteRetirement {
 }
 
 #[derive(Debug, Clone)]
+pub(in super::super) struct AutomaticSplitCohortBarrier {
+    pub(in super::super) predecessor: SourceRouteIdentity,
+    pub(in super::super) cohort: BTreeSet<SourceRouteIdentity>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SourceBackedRoute {
     pub(in super::super) metadata: SourceBackedRouteMetadata,
     /// Exact bounded discovery inputs from which this executable route was
@@ -83,6 +89,8 @@ pub struct SourceBackedRoute {
     pub(in super::super) retire_after_success: Vec<SourceRouteIdentity>,
     pub(in super::super) automatic_retire_after_success: Vec<SourceRouteIdentity>,
     pub(in super::super) controlled_retire_after_success: Vec<ControlledRouteRetirement>,
+    pub(in super::super) base_route_aliases: BTreeSet<SourceRouteIdentity>,
+    pub(in super::super) automatic_split_bridge_control: Option<Vec<u8>>,
     pub(in super::super) codex_generation_participant: Option<usize>,
 }
 
@@ -137,6 +145,8 @@ impl SourceBackedRoute {
             retire_after_success: Vec::new(),
             automatic_retire_after_success: Vec::new(),
             controlled_retire_after_success: Vec::new(),
+            base_route_aliases: BTreeSet::new(),
+            automatic_split_bridge_control: None,
             codex_generation_participant: None,
         })
     }
@@ -156,6 +166,7 @@ impl SourceBackedRoute {
             known.certified_source_format,
             SourceBackedRouteSelection::ExplicitManual,
             selector_authority,
+            false,
         )?;
         Ok(Self {
             metadata: SourceBackedRouteMetadata {
@@ -173,6 +184,8 @@ impl SourceBackedRoute {
             retire_after_success: Vec::new(),
             automatic_retire_after_success: Vec::new(),
             controlled_retire_after_success: Vec::new(),
+            base_route_aliases: BTreeSet::new(),
+            automatic_split_bridge_control: None,
             codex_generation_participant: None,
         })
     }
@@ -204,6 +217,8 @@ impl SourceBackedRoute {
             retire_after_success: Vec::new(),
             automatic_retire_after_success: Vec::new(),
             controlled_retire_after_success: Vec::new(),
+            base_route_aliases: BTreeSet::new(),
+            automatic_split_bridge_control: None,
             codex_generation_participant: None,
         })
     }
@@ -225,6 +240,7 @@ impl SourceBackedRoute {
             known.certified_source_format,
             SourceBackedRouteSelection::ExplicitManual,
             selector_authority,
+            false,
         )?;
         let path = source.path.clone();
         Ok(Self {
@@ -243,6 +259,8 @@ impl SourceBackedRoute {
             retire_after_success: Vec::new(),
             automatic_retire_after_success: Vec::new(),
             controlled_retire_after_success: Vec::new(),
+            base_route_aliases: BTreeSet::new(),
+            automatic_split_bridge_control: None,
             codex_generation_participant: None,
         })
     }
@@ -274,6 +292,7 @@ impl SourceBackedRoute {
             known.certified_source_format,
             SourceBackedRouteSelection::ExplicitManual,
             selector_authority,
+            false,
         )?;
         Ok(Self {
             metadata: SourceBackedRouteMetadata {
@@ -291,6 +310,8 @@ impl SourceBackedRoute {
             retire_after_success: Vec::new(),
             automatic_retire_after_success: Vec::new(),
             controlled_retire_after_success: Vec::new(),
+            base_route_aliases: BTreeSet::new(),
+            automatic_split_bridge_control: None,
             codex_generation_participant: None,
         })
     }
@@ -314,6 +335,8 @@ impl SourceBackedRoute {
             retire_after_success: Vec::new(),
             automatic_retire_after_success: Vec::new(),
             controlled_retire_after_success: Vec::new(),
+            base_route_aliases: BTreeSet::new(),
+            automatic_split_bridge_control: None,
             codex_generation_participant: None,
         }
     }
@@ -385,6 +408,7 @@ pub struct SourceBackedProviderRegistry {
     pub(in super::super) codex_generation: Option<Arc<CodexGenerationNormalizationCoordinatorV0>>,
     pub(in super::super) applied_provider_roots: Option<(bool, String, Vec<AppliedProviderRoot>)>,
     pub(in super::super) provider_root_route_retirements: BTreeSet<SourceRouteIdentity>,
+    pub(in super::super) automatic_split_cohort_barriers: Vec<AutomaticSplitCohortBarrier>,
 }
 
 impl SourceBackedProviderRegistry {
@@ -469,6 +493,21 @@ impl SourceBackedProviderRegistry {
 
     pub fn provider_root_route_retirements(&self) -> &BTreeSet<SourceRouteIdentity> {
         &self.provider_root_route_retirements
+    }
+
+    pub(in crate::source_backed) fn register_automatic_split_cohort_barrier(
+        &mut self,
+        predecessor: SourceRouteIdentity,
+        owner: &SourceRouteIdentity,
+        cohort: BTreeSet<SourceRouteIdentity>,
+    ) -> SourceBackedCoordinatorResult<()> {
+        self.retire_automatic_routes_after_success(owner, [predecessor.clone()])?;
+        self.automatic_split_cohort_barriers
+            .push(AutomaticSplitCohortBarrier {
+                predecessor,
+                cohort,
+            });
+        Ok(())
     }
 
     /// Binds exact carried base routes to an executable replacement route.
@@ -684,6 +723,23 @@ impl
 pub fn automatic_source_backed_route_identity(
     source: &ProviderSource,
 ) -> SourceBackedCoordinatorResult<SourceRouteIdentity> {
+    automatic_source_backed_route_identity_with_role(source, true)
+}
+
+/// Derives the released collapsed identity used before automatic route roles
+/// became part of the route hash.  It exists solely for bounded warm
+/// migrations; new registrations must use
+/// [`automatic_source_backed_route_identity`].
+pub fn legacy_automatic_source_backed_route_identity(
+    source: &ProviderSource,
+) -> SourceBackedCoordinatorResult<SourceRouteIdentity> {
+    automatic_source_backed_route_identity_with_role(source, false)
+}
+
+fn automatic_source_backed_route_identity_with_role(
+    source: &ProviderSource,
+    include_role: bool,
+) -> SourceBackedCoordinatorResult<SourceRouteIdentity> {
     let known = landed_format_route(source.provider, source.source_format)
         .filter(|route| route.automatic)
         .ok_or_else(|| {
@@ -700,6 +756,7 @@ pub fn automatic_source_backed_route_identity(
         known.certified_source_format,
         SourceBackedRouteSelection::Automatic,
         known.selector_authority,
+        include_role,
     )
 }
 
@@ -727,6 +784,7 @@ fn source_backed_route_identity(
     certified_source_format: &str,
     selection: SourceBackedRouteSelection,
     selector_authority: SourceBackedSelectorAuthority,
+    include_automatic_role: bool,
 ) -> SourceBackedCoordinatorResult<SourceRouteIdentity> {
     let mut digest = Sha256::new();
     digest.update(b"ctx.source-route-identity-v1\0");
@@ -772,7 +830,7 @@ fn source_backed_route_identity(
             digest.update(profile.as_bytes());
         }
     }
-    if selection == SourceBackedRouteSelection::Automatic {
+    if include_automatic_role && selection == SourceBackedRouteSelection::Automatic {
         if let Some(route_role) = source.route_provenance.automatic_route_role() {
             digest.update(b"\0provider-route-role\0");
             digest.update((route_role.as_bytes().len() as u64).to_be_bytes());

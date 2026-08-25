@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -9,10 +11,10 @@ pub const MAX_PROVIDER_ROUTE_ROLE_BYTES: usize = 256;
 /// Static roles preserve their exact released bytes. Dynamic roles occupy a
 /// disjoint NUL-prefixed namespace and length-frame every component, so
 /// different component boundaries cannot collide.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ProviderRouteRole(ProviderRouteRoleStorage);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 enum ProviderRouteRoleStorage {
     Static(&'static [u8]),
     Dynamic(Vec<u8>),
@@ -73,6 +75,60 @@ impl ProviderRouteRole {
             ProviderRouteRoleStorage::Static(value) => value,
             ProviderRouteRoleStorage::Dynamic(value) => value,
         }
+    }
+
+    /// Reconstructs one exact role from a persisted bounded encoding.
+    ///
+    /// Static roles are nonempty and contain no NUL. Dynamic roles begin with
+    /// a NUL namespace marker followed by complete big-endian u64 frames.
+    /// The returned owned representation deliberately compares by encoded
+    /// bytes, so it remains equal to the corresponding static role.
+    pub fn try_from_encoded(value: &[u8]) -> Result<Self, ProviderRouteRoleError> {
+        if value.is_empty() || value.len() > MAX_PROVIDER_ROUTE_ROLE_BYTES {
+            return Err(ProviderRouteRoleError);
+        }
+        if value[0] != 0 {
+            if value.contains(&0) {
+                return Err(ProviderRouteRoleError);
+            }
+        } else {
+            let mut offset = 1;
+            while offset < value.len() {
+                let Some(length_end) = offset.checked_add(std::mem::size_of::<u64>()) else {
+                    return Err(ProviderRouteRoleError);
+                };
+                let Some(length_bytes) = value.get(offset..length_end) else {
+                    return Err(ProviderRouteRoleError);
+                };
+                let length = u64::from_be_bytes(
+                    length_bytes
+                        .try_into()
+                        .map_err(|_| ProviderRouteRoleError)?,
+                );
+                let length = usize::try_from(length).map_err(|_| ProviderRouteRoleError)?;
+                offset = length_end
+                    .checked_add(length)
+                    .ok_or(ProviderRouteRoleError)?;
+                if offset > value.len() {
+                    return Err(ProviderRouteRoleError);
+                }
+            }
+        }
+        Ok(Self(ProviderRouteRoleStorage::Dynamic(value.to_vec())))
+    }
+}
+
+impl PartialEq for ProviderRouteRole {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for ProviderRouteRole {}
+
+impl Hash for ProviderRouteRole {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_bytes().hash(state);
     }
 }
 
@@ -180,5 +236,24 @@ mod tests {
             ProviderRouteRole::from_dynamic(std::iter::empty::<&[u8]>()).unwrap(),
             ProviderRouteRole::from_dynamic([b"".as_slice()]).unwrap()
         );
+    }
+
+    #[test]
+    fn encoded_provider_route_roles_are_strict_and_compare_by_exact_bytes() {
+        let static_role = ProviderRouteRole::from_static("released-role");
+        assert_eq!(
+            ProviderRouteRole::try_from_encoded(b"released-role").unwrap(),
+            static_role
+        );
+        let dynamic =
+            ProviderRouteRole::from_dynamic([b"one".as_slice(), b"two".as_slice()]).unwrap();
+        assert_eq!(
+            ProviderRouteRole::try_from_encoded(dynamic.as_bytes()).unwrap(),
+            dynamic
+        );
+        assert!(ProviderRouteRole::try_from_encoded(b"").is_err());
+        assert!(ProviderRouteRole::try_from_encoded(b"static\0role").is_err());
+        assert!(ProviderRouteRole::try_from_encoded(&[0, 0, 0]).is_err());
+        assert!(ProviderRouteRole::try_from_encoded(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).is_err());
     }
 }

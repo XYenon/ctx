@@ -444,7 +444,7 @@ fn refresh_all_provider_sources_route_local_with_reconciliation(
     index_root: &Path,
     explicit_source_catalog: Option<&ExplicitSourceCatalogAuthority>,
     scope: SourceBackedRefreshScope,
-    physical_scope: SourceBackedRefreshScope,
+    mut physical_scope: SourceBackedRefreshScope,
     published_state: &dyn PublishedSourceBackedStatePort,
     attempt_history_progress: ctx_history_capture_model::SharedAttemptHistoryProgress,
     report_progress: &mut dyn FnMut(
@@ -477,13 +477,44 @@ fn refresh_all_provider_sources_route_local_with_reconciliation(
         physical_routes,
         published_state,
     )?;
+    let base_route_ids = retained_generation
+        .as_ref()
+        .map(|generation| {
+            generation
+                .manifest()
+                .source_routes()
+                .iter()
+                .map(|route| route.route_identity().clone())
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let split_plan = ctx_history_capture::prepare_automatic_route_splits(
+        &mut build.registry,
+        &base_route_ids,
+        &previous_route_controls,
+        &scope,
+        reconciliation_demand,
+    )?;
+    if split_plan.requires_exhaustive_publication() {
+        physical_scope =
+            SourceBackedRefreshScope::exact(build.registry.routes().filter_map(|route| {
+                (route.selection == Some(SourceBackedRouteSelection::Automatic)
+                    && (route.source.status != ProviderSourceStatus::Unknown
+                        || route.route_identity.is_some()))
+                .then(|| route.route_identity.clone())
+                .flatten()
+            }));
+    }
     // A newly reactivated automatic identity has no same-route base state
     // from which an incremental member scan could carry the unvisited source
     // family. Promote only those ownership transitions to exhaustive route
     // work; ordinary watcher appends retain their member worksets.
     let route_worksets = route_worksets
         .iter()
-        .filter(|(route, _)| !reactivated_automatic_routes.contains(*route))
+        .filter(|(route, _)| {
+            !reactivated_automatic_routes.contains(*route)
+                && !split_plan.required_routes().contains(*route)
+        })
         .map(|(route, members)| (route.clone(), members.clone()))
         .collect::<BTreeMap<_, _>>();
     if scope == SourceBackedRefreshScope::All

@@ -51,6 +51,7 @@ use ctx_history_source_discovery::{
     WarpDiscoveryUnavailable,
 };
 
+mod automatic_route_split;
 mod discovery;
 mod driver;
 pub(crate) mod family;
@@ -60,6 +61,7 @@ mod registration;
 mod runtime_adapter;
 mod watch;
 
+pub use automatic_route_split::*;
 pub use ctx_history_capture_runtime::{
     CaptureLifecycleOpenOutcome, CaptureRevalidationTarget, PresentCaptureRoute,
 };
