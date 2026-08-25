@@ -806,6 +806,7 @@ fn open_database(
     open_provider_sqlite_readonly(data_root, path)
 }
 
+#[cfg(test)]
 fn source_key(agent_id: &str) -> Result<SourceKey> {
     source_key_scoped(agent_id, SourceAnchorScope::Unqualified)
 }
