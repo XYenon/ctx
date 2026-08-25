@@ -252,16 +252,12 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
                     |identity_root| {
                         register_released_provider_root_route(
                             &mut registry,
-                            configured_root,
-                            source.clone(),
-                            identity_root,
-                            ReleasedProviderRootRegistrationContext {
-                                probes,
-                                discovery,
-                                data_root,
-                                released_compound_sources: &released_compound_sources,
-                                provider_root_registrations: &provider_root_registrations,
-                            },
+                            probes,
+                            discovery,
+                            data_root,
+                            (configured_root, source.clone(), identity_root),
+                            &released_compound_sources,
+                            &provider_root_registrations,
                         )
                         .map_err(automatic_registration_rejected)
                     },
@@ -401,12 +397,14 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
             data_root,
             format_route,
             source.clone(),
-            coexistence_lineage,
-            released_compound_inventory_coverage(
-                source.provider,
-                discovery,
-                &released_compound_sources,
-                &provider_root_registrations,
+            (
+                coexistence_lineage,
+                released_compound_inventory_coverage(
+                    source.provider,
+                    discovery,
+                    &released_compound_sources,
+                    &provider_root_registrations,
+                ),
             ),
         ) {
             Ok(()) => {
@@ -599,9 +597,9 @@ fn register_discovered_automatic_route(
     data_root: &Path,
     format_route: &'static SourceBackedProviderRouteMetadata,
     source: ProviderSource,
-    source_root_lineage: Option<[u8; 32]>,
-    inventory_coverage: SqliteInventoryCoverage,
+    route_authority: SqliteInventoryRouteAuthority,
 ) -> Result<(), SourceBackedAutomaticUnavailableReason> {
+    let (source_root_lineage, inventory_coverage) = route_authority;
     let Some(source_root_lineage) = source_root_lineage else {
         return register_discovered_automatic_route_scoped(
             registry,
@@ -610,8 +608,7 @@ fn register_discovered_automatic_route(
             data_root,
             format_route,
             source,
-            None,
-            inventory_coverage,
+            (None, inventory_coverage),
         );
     };
     let provider = source.provider;
@@ -623,8 +620,7 @@ fn register_discovered_automatic_route(
         data_root,
         format_route,
         source,
-        Some(source_root_lineage),
-        inventory_coverage,
+        (Some(source_root_lineage), inventory_coverage),
     )?;
     if scoped.routes.len() != 1 {
         return Err(
@@ -653,9 +649,9 @@ fn register_discovered_automatic_route_scoped(
     data_root: &Path,
     format_route: &'static SourceBackedProviderRouteMetadata,
     source: ProviderSource,
-    source_root_lineage: Option<[u8; 32]>,
-    inventory_coverage: SqliteInventoryCoverage,
+    route_authority: SqliteInventoryRouteAuthority,
 ) -> Result<(), SourceBackedAutomaticUnavailableReason> {
+    let (source_root_lineage, inventory_coverage) = route_authority;
     let result = match (format_route.constructor, source.provider) {
         (SourceBackedRouteConstructor::NamedSurface, CaptureProvider::Warp) => {
             let selected =

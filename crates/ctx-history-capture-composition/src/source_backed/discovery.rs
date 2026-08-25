@@ -314,28 +314,16 @@ fn matched_canonical_automatic_source<'a>(
     })
 }
 
-struct ReleasedProviderRootRegistrationContext<'a> {
-    probes: &'a StaticProviderProbeCatalog,
-    discovery: &'a DiscoveryContext,
-    data_root: &'a Path,
-    released_compound_sources: &'a [ReleasedCompoundRootSource],
-    provider_root_registrations: &'a BTreeMap<String, ProviderRootRegistration>,
-}
-
 fn register_released_provider_root_route(
     registry: &mut SourceBackedProviderRegistry,
-    configured_root: &ProviderRootDefinition,
-    configured_source: ProviderSource,
-    identity_root: &Path,
-    context: ReleasedProviderRootRegistrationContext<'_>,
+    probes: &StaticProviderProbeCatalog,
+    discovery: &DiscoveryContext,
+    data_root: &Path,
+    configured: (&ProviderRootDefinition, ProviderSource, &Path),
+    released_compound_sources: &[ReleasedCompoundRootSource],
+    provider_root_registrations: &BTreeMap<String, ProviderRootRegistration>,
 ) -> SourceBackedCoordinatorResult<ReleasedProviderRootRoute> {
-    let ReleasedProviderRootRegistrationContext {
-        probes,
-        discovery,
-        data_root,
-        released_compound_sources,
-        provider_root_registrations,
-    } = context;
+    let (configured_root, configured_source, identity_root) = configured;
     let mut identity_source =
         released_identity_source(configured_root, &configured_source, identity_root)?;
     let mut scan_source = configured_source.clone();
@@ -544,12 +532,9 @@ fn register_released_provider_root_route(
                 scan_source,
                 SourceBackedRouteSelection::Automatic,
                 data_root,
-                LingmaSourceBackedRouteInput {
-                    authority_key,
-                    databases,
-                    source_root_lineage: None,
-                    coverage: inventory_coverage,
-                },
+                authority_key,
+                databases,
+                (None, inventory_coverage),
             )?;
         }
         CaptureProvider::AstrBot => register_astrbot_released_source_backed_route(
@@ -820,12 +805,9 @@ fn register_configured_compound_route(
                 source.clone(),
                 SourceBackedRouteSelection::ExplicitManual,
                 data_root,
-                LingmaSourceBackedRouteInput {
-                    authority_key: configured_key.clone(),
-                    databases: vec![(source.path.clone(), configured_key)],
-                    source_root_lineage,
-                    coverage: SqliteInventoryCoverage::Complete,
-                },
+                configured_key.clone(),
+                vec![(source.path.clone(), configured_key)],
+                (source_root_lineage, SqliteInventoryCoverage::Complete),
             )?;
         }
         _ => unreachable!("configured compound route is filtered by its caller"),

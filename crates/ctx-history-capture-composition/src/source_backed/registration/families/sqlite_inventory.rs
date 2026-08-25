@@ -14,6 +14,8 @@ use crate::provider::source_backed::family::document::{
     install_sqlite_inventory_registration, CaptureDocumentLifecycle, CaptureDocumentSpool,
 };
 
+pub type SqliteInventoryRouteAuthority = (Option<[u8; 32]>, SqliteInventoryCoverage);
+
 pub fn register_astrbot_source_backed_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
@@ -85,26 +87,16 @@ where
     )
 }
 
-pub struct LingmaSourceBackedRouteInput {
-    pub authority_key: TypedKey,
-    pub databases: Vec<(PathBuf, TypedKey)>,
-    pub source_root_lineage: Option<[u8; 32]>,
-    pub coverage: SqliteInventoryCoverage,
-}
-
 pub fn register_lingma_source_backed_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
     data_root: &Path,
-    input: LingmaSourceBackedRouteInput,
+    authority_key: TypedKey,
+    databases: Vec<(PathBuf, TypedKey)>,
+    route_authority: SqliteInventoryRouteAuthority,
 ) -> SourceBackedCoordinatorResult<()> {
-    let LingmaSourceBackedRouteInput {
-        authority_key,
-        databases,
-        source_root_lineage,
-        coverage,
-    } = input;
+    let (source_root_lineage, coverage) = route_authority;
     let provider = source.provider;
     let registration =
         lingma_registration_scoped::<CaptureDocumentLifecycle, CaptureDocumentSpool>(
