@@ -820,6 +820,7 @@ pub fn prepare_successor_manifest(
         || base.automatic_provider_discovery() != manifest.automatic_provider_discovery()
         || base.provider_root_config_digest() != manifest.provider_root_config_digest()
         || base.provider_roots() != manifest.provider_roots()
+        || base.detached_released_provider_roots() != manifest.detached_released_provider_roots()
     {
         return full();
     }

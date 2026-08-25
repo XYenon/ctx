@@ -1,5 +1,8 @@
 use super::*;
-use crate::{source_token, AppliedProviderRoot, AppliedProviderRootSourceMembership};
+use crate::{
+    source_token, AppliedProviderRoot, AppliedProviderRootSourceMembership,
+    DetachedReleasedProviderRootAuthority,
+};
 use ctx_history_core::{
     CaptureProvider, CertifiedSource, ScannedSourceCounts, SourceAnchor, SourceKey,
     SourceObservation, TypedKey,
@@ -276,6 +279,71 @@ fn membership_only_successor_uses_a_full_v10_manifest() {
     assert!(!prepared.bytes.starts_with(MANIFEST_FLAT_DELTA_PREFIX));
     let persisted: GenerationManifest = serde_json::from_slice(&prepared.bytes).unwrap();
     persisted.validate_contract().unwrap();
+}
+
+#[test]
+fn detached_authority_change_survives_a_cold_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = fixture_source("detached-authority-delta");
+    let source_route = route("5");
+    let released = AppliedProviderRoot::with_source_identity(
+        ProviderRootDefinition {
+            id: "codex".to_owned(),
+            provider: CaptureProvider::Codex,
+            path: temp.path().join("codex"),
+            group: None,
+            kind: None,
+        },
+        ProviderRootSourceIdentity::Released,
+        Vec::new(),
+    )
+    .unwrap();
+    let authority = DetachedReleasedProviderRootAuthority::from_applied(&released)
+        .unwrap()
+        .unwrap();
+    let build = |certified_source, authorities| {
+        GenerationManifest::from_parts_with_record_aggregates_and_provider_roots_and_detached_authorities(
+            vec![certified_source],
+            vec![
+                SourceCoreRecordAggregate::new(source_token(&source), 0, "00".repeat(32)).unwrap(),
+            ],
+            vec![SourceRouteSnapshot::present(source_route.clone(), vec![source.clone()]).unwrap()],
+            true,
+            provider_source_config_digest(true, &[]),
+            Vec::new(),
+            authorities,
+        )
+        .unwrap()
+    };
+    let base = build(certified(source.clone()), Vec::new());
+    let base_id = base.generation_id().unwrap();
+    write_manifest(temp.path(), &base_id, &base).unwrap();
+    let successor_observation =
+        SourceObservation::new(source.clone(), "fixture-revision", vec![2]).unwrap();
+    let successor_source = CertifiedSource::certify(
+        successor_observation.clone(),
+        successor_observation,
+        "fixture-parser",
+        [1; 32],
+        ScannedSourceCounts::default(),
+    )
+    .unwrap();
+    let successor = build(successor_source, vec![authority]);
+    let prepared = prepare_successor_manifest(
+        temp.path(),
+        Arc::new(successor.clone()),
+        Some((&base_id, &base)),
+    )
+    .unwrap();
+
+    assert!(!prepared.bytes.starts_with(MANIFEST_FLAT_DELTA_PREFIX));
+    write_prepared_manifest(temp.path(), &prepared).unwrap();
+    clear_manifest_cache_for_root(temp.path()).unwrap();
+    let reopened = load_materialized_manifest(temp.path(), prepared.generation_id(), 0).unwrap();
+    assert_eq!(
+        reopened.manifest.detached_released_provider_roots(),
+        successor.detached_released_provider_roots()
+    );
 }
 
 #[test]
