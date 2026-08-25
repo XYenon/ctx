@@ -363,7 +363,7 @@ fn exact_and_compound_capability_metadata_is_exhaustive() {
 }
 
 #[test]
-fn all_enabled_roots_emit_missing_candidates_with_provenance_when_automatic_is_false() {
+fn configured_root_missing_route_inventory_is_exhaustive_when_automatic_is_false() {
     let temp = tempdir();
     let mut roots = Vec::new();
     let mut root_paths = HashMap::new();
@@ -378,7 +378,7 @@ fn all_enabled_roots_emit_missing_candidates_with_provenance_when_automatic_is_f
         .with_configured_provider_roots(roots);
     let report = discover_provider_sources_with_context(&TEST_PROVIDER_PROBES, &context);
 
-    assert_eq!(report.sources.len(), 35);
+    assert_eq!(report.sources.len(), 34);
     assert!(report.issues.is_empty());
     assert!(report
         .sources
@@ -405,6 +405,10 @@ fn all_enabled_roots_emit_missing_candidates_with_provenance_when_automatic_is_f
                 expander: ConfiguredRootExpander::CodexHomeV1,
                 ..
             } => 3,
+            ConfiguredRootCapabilityState::Enabled {
+                expander: ConfiguredRootExpander::OpenClawStateRootV1,
+                ..
+            } => 0,
             ConfiguredRootCapabilityState::Enabled {
                 expander: ConfiguredRootExpander::ClineCommonDataRootV1,
                 ..
@@ -613,6 +617,94 @@ fn openclaw_state_roots_expand_bounded_agents_with_precedence_and_stable_dynamic
     assert_ne!(roles["beta"][0], roles["gamma"][0]);
     assert_eq!(roles["alpha"].len(), 2);
     assert_eq!(roles["beta"].len(), 2);
+}
+
+#[test]
+fn openclaw_compound_root_is_route_less_while_missing_and_restores_exact_agents() {
+    let temp = tempdir();
+    let state = temp.path().join("openclaw-state");
+    write(
+        &state.join("openclaw.json"),
+        b"{agents:{list:[{id:'Beta'},{id:'Alpha'}]}}",
+    );
+    write(&state.join("agents/alpha/sessions/alpha.jsonl"), b"{}\n");
+    write(&state.join("agents/beta/sessions/beta.jsonl"), b"{}\n");
+    let base = context(&temp);
+    let discover = || {
+        configured_report(
+            base.clone(),
+            vec![root(
+                "configured-state",
+                CaptureProvider::OpenClaw,
+                state.clone(),
+            )],
+            CaptureProvider::OpenClaw,
+        )
+    };
+
+    let initial = discover();
+    assert!(initial.issues.is_empty());
+    assert_eq!(initial.sources.len(), 2);
+    assert!(initial
+        .sources
+        .iter()
+        .all(|source| source.status == ProviderSourceStatus::Available));
+    let initial_routes = initial
+        .sources
+        .iter()
+        .map(|source| {
+            assert_configured(source, "configured-state", &state);
+            (
+                source.path.clone(),
+                source.source_format,
+                route_role(source).to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        initial
+            .sources
+            .iter()
+            .map(|source| openclaw_agent_id(&source.path))
+            .collect::<Vec<_>>(),
+        ["alpha", "beta"]
+    );
+
+    let displaced = temp.path().join("openclaw-state-displaced");
+    fs::rename(&state, &displaced).unwrap();
+    let missing = discover();
+    assert!(missing.sources.is_empty());
+    assert!(missing.issues.is_empty());
+
+    let cold_missing_path = temp.path().join("cold-missing-openclaw-state");
+    let cold_missing = configured_report(
+        base.clone(),
+        vec![root(
+            "cold-missing",
+            CaptureProvider::OpenClaw,
+            cold_missing_path,
+        )],
+        CaptureProvider::OpenClaw,
+    );
+    assert!(cold_missing.sources.is_empty());
+    assert!(cold_missing.issues.is_empty());
+
+    fs::rename(&displaced, &state).unwrap();
+    let restored = discover();
+    assert!(restored.issues.is_empty());
+    assert_eq!(restored.sources.len(), 2);
+    assert_eq!(
+        restored
+            .sources
+            .iter()
+            .map(|source| (
+                source.path.clone(),
+                source.source_format,
+                route_role(source).to_vec(),
+            ))
+            .collect::<Vec<_>>(),
+        initial_routes
+    );
 }
 
 #[test]
@@ -1078,4 +1170,68 @@ fn openhands_active_automatic_and_configured_nested_roots_fail_closed() {
         .sources
         .iter()
         .all(|source| source.route_provenance.configured_root().is_none()));
+}
+
+#[test]
+fn openhands_automatic_overlap_suppresses_only_conflicting_configured_root_ids() {
+    let temp = tempdir();
+    let base = context(&temp);
+    let automatic_legacy = base.home().join(".openhands");
+    write(
+        &automatic_legacy.join("v1_conversations/legacy/event.json"),
+        b"{}",
+    );
+    let conflicting_a = automatic_legacy.join("configured-current-a");
+    let conflicting_b = automatic_legacy.join("configured-current-b");
+    let healthy = temp.path().join("healthy-disjoint-current");
+    for path in [&conflicting_a, &conflicting_b, &healthy] {
+        write(&path.join("conversation/events/event-00001.json"), b"{}");
+    }
+
+    let report = provider_report(
+        &base.with_configured_provider_roots(vec![
+            openhands_root(
+                "conflicting-a",
+                conflicting_a.clone(),
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
+            openhands_root(
+                "healthy",
+                healthy.clone(),
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
+            openhands_root(
+                "conflicting-b",
+                conflicting_b.clone(),
+                ProviderRootKind::OpenHandsCurrentConversations,
+            ),
+        ]),
+        CaptureProvider::OpenHands,
+    );
+
+    let configured = report
+        .sources
+        .iter()
+        .filter_map(|source| {
+            source
+                .route_provenance
+                .configured_root()
+                .map(|(id, root)| (id, root, source.path.as_path()))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        configured,
+        [("healthy", healthy.as_path(), healthy.as_path())]
+    );
+
+    let mut conflict_paths = report
+        .issues
+        .iter()
+        .filter(|issue| issue.kind == DiscoveryIssueKind::ConfiguredRootConflict)
+        .map(|issue| issue.path.clone().expect("conflict path"))
+        .collect::<Vec<_>>();
+    conflict_paths.sort();
+    let mut expected_conflict_paths = vec![conflicting_a, conflicting_b];
+    expected_conflict_paths.sort();
+    assert_eq!(conflict_paths, expected_conflict_paths);
 }

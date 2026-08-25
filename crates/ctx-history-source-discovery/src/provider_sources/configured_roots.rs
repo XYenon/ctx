@@ -685,38 +685,34 @@ fn expand_openclaw_state_root(
     root: &ProviderRootDefinition,
     availability: ConfiguredRootAvailability,
 ) {
-    if availability == ConfiguredRootAvailability::Unavailable {
-        // A root-level no-follow failure cannot safely enumerate agent
-        // membership. Leave the configured root route-less so refresh can
-        // retain its exact prior membership rather than inventing `main`.
+    if availability != ConfiguredRootAvailability::Present {
+        // A non-present root cannot safely enumerate agent membership. Leave
+        // it route-less so refresh can retain exact prior membership instead
+        // of inventing `main`; cold missing roots remain empty.
         return;
     }
-    let (agent_ids, truncated) = if availability == ConfiguredRootAvailability::Present {
-        match openclaw_agent_ids_for_state_root(&root.path) {
-            Ok(inventory) => inventory,
-            Err(OpenClawConfigError::Invalid) => {
-                push_issue_once(
-                    report,
-                    spec,
-                    Some(root.path.clone()),
-                    DiscoveryIssueKind::SelectorUnreconstructible,
-                    OPENCLAW_CONFIG_INVALID_REASON,
-                );
-                return;
-            }
-            Err(OpenClawConfigError::Limit) => {
-                push_issue_once(
-                    report,
-                    spec,
-                    Some(root.path.clone()),
-                    DiscoveryIssueKind::SelectorUnreconstructible,
-                    OPENCLAW_CONFIG_LIMIT_REASON,
-                );
-                return;
-            }
+    let (agent_ids, truncated) = match openclaw_agent_ids_for_state_root(&root.path) {
+        Ok(inventory) => inventory,
+        Err(OpenClawConfigError::Invalid) => {
+            push_issue_once(
+                report,
+                spec,
+                Some(root.path.clone()),
+                DiscoveryIssueKind::SelectorUnreconstructible,
+                OPENCLAW_CONFIG_INVALID_REASON,
+            );
+            return;
         }
-    } else {
-        (vec!["main".to_owned()], false)
+        Err(OpenClawConfigError::Limit) => {
+            push_issue_once(
+                report,
+                spec,
+                Some(root.path.clone()),
+                DiscoveryIssueKind::SelectorUnreconstructible,
+                OPENCLAW_CONFIG_LIMIT_REASON,
+            );
+            return;
+        }
     };
     if truncated {
         push_issue_once(
@@ -741,16 +737,7 @@ fn expand_openclaw_state_root(
             );
             continue;
         };
-        expand_openclaw_agent(
-            probes,
-            data_root,
-            report,
-            spec,
-            root,
-            &agent_id,
-            route_role,
-            availability,
-        );
+        expand_openclaw_agent(probes, data_root, report, spec, root, &agent_id, route_role);
     }
 }
 
@@ -763,15 +750,12 @@ fn expand_openclaw_agent(
     root: &ProviderRootDefinition,
     agent_id: &str,
     route_role: ProviderRouteRole,
-    root_availability: ConfiguredRootAvailability,
 ) {
     let agent_root = root.path.join("agents").join(agent_id);
     let sqlite = agent_root.join("agent/openclaw-agent.sqlite");
     let sessions = agent_root.join("sessions");
 
-    if root_availability == ConfiguredRootAvailability::Present
-        && has_openclaw_agent_sqlite_v17(data_root, &sqlite) == BoundedProbe::Found
-    {
+    if has_openclaw_agent_sqlite_v17(data_root, &sqlite) == BoundedProbe::Found {
         if let Some(source) = build_configured_source(
             probes,
             data_root,
@@ -800,8 +784,7 @@ fn expand_openclaw_agent(
         route_role.clone(),
     );
     let sqlite_suppresses_fallback = path_presence(&sqlite).suppresses_fallback();
-    if root_availability != ConfiguredRootAvailability::Present
-        || !sqlite_suppresses_fallback
+    if !sqlite_suppresses_fallback
         || jsonl
             .as_ref()
             .is_some_and(|source| source.status == ProviderSourceStatus::Available)

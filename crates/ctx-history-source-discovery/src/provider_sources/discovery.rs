@@ -278,31 +278,52 @@ fn resolve_provider(
         .sources
     };
     if spec.provider == CaptureProvider::OpenHands {
-        if let Some(conflicting_path) = configured
-            .sources
-            .iter()
-            .find(|configured| {
-                configured.exists
-                    && report.sources.iter().any(|automatic| {
-                        automatic.exists
-                            && provider_paths_strictly_nested(&automatic.path, &configured.path)
-                    })
-            })
-            .map(|source| source.path.clone())
-        {
-            configured.sources.clear();
-            configured.issues.push(super::resolvers::issue(
-                spec.provider,
-                Some(conflicting_path),
-                super::types::DiscoveryIssueKind::ConfiguredRootConflict,
-                OPENHANDS_AUTOMATIC_CONFIGURED_OVERLAP_REASON,
-            ));
-        }
+        suppress_openhands_automatic_configured_overlaps(&report.sources, &mut configured);
     }
     preserve_matching_automatic_route_roles(&mut configured.sources, &canonical);
     report.sources.append(&mut configured.sources);
     report.issues.append(&mut configured.issues);
     report
+}
+
+fn suppress_openhands_automatic_configured_overlaps(
+    automatic: &[ProviderSource],
+    configured: &mut DiscoveryReport,
+) {
+    let mut conflicting_root_ids = HashSet::new();
+    let mut conflicting_paths = Vec::new();
+    for source in &configured.sources {
+        if !source.exists
+            || !automatic.iter().any(|automatic| {
+                automatic.exists && provider_paths_strictly_nested(&automatic.path, &source.path)
+            })
+        {
+            continue;
+        }
+        let Some((root_id, _)) = source.route_provenance.configured_root() else {
+            continue;
+        };
+        if conflicting_root_ids.insert(root_id.to_owned()) {
+            conflicting_paths.push(source.path.clone());
+        }
+    }
+
+    configured.sources.retain(|source| {
+        source
+            .route_provenance
+            .configured_root()
+            .is_none_or(|(root_id, _)| !conflicting_root_ids.contains(root_id))
+    });
+    configured
+        .issues
+        .extend(conflicting_paths.into_iter().map(|path| {
+            super::resolvers::issue(
+                CaptureProvider::OpenHands,
+                Some(path),
+                super::types::DiscoveryIssueKind::ConfiguredRootConflict,
+                OPENHANDS_AUTOMATIC_CONFIGURED_OVERLAP_REASON,
+            )
+        }));
 }
 
 fn provider_paths_strictly_nested(left: &Path, right: &Path) -> bool {
