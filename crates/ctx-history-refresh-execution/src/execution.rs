@@ -495,15 +495,13 @@ fn refresh_all_provider_sources_route_local_with_reconciliation(
         &scope,
         reconciliation_demand,
     )?;
-    if split_plan.requires_exhaustive_publication() {
-        physical_scope =
-            SourceBackedRefreshScope::exact(build.registry.routes().filter_map(|route| {
-                (route.selection == Some(SourceBackedRouteSelection::Automatic)
-                    && (route.source.status != ProviderSourceStatus::Unknown
-                        || route.route_identity.is_some()))
-                .then(|| route.route_identity.clone())
-                .flatten()
-            }));
+    let automatic_split_active = split_plan.requires_exhaustive_publication();
+    if automatic_split_active {
+        // A split is one topology-wide transaction. Keeping the admitted
+        // route IDs as an Exact physical scope would make capture treat the
+        // predecessor as carried state and would let unchanged provider-root
+        // metadata downgrade publication back to Exact.
+        physical_scope = SourceBackedRefreshScope::All;
     }
     // A newly reactivated automatic identity has no same-route base state
     // from which an incremental member scan could carry the unvisited source
@@ -570,9 +568,21 @@ fn refresh_all_provider_sources_route_local_with_reconciliation(
                     .map(|failure| failure.route_identity.as_str().to_owned()),
             )
             .collect::<BTreeSet<_>>(),
-        SourceBackedRefreshScope::All => {
-            bail!("capture-owned physical refresh scope was not bounded to exact routes")
-        }
+        SourceBackedRefreshScope::All => build
+            .registry
+            .routes()
+            .filter_map(|route| {
+                route
+                    .route_identity
+                    .as_ref()
+                    .map(|identity| identity.as_str().to_owned())
+            })
+            .chain(
+                registry_failures
+                    .iter()
+                    .map(|failure| failure.route_identity.as_str().to_owned()),
+            )
+            .collect::<BTreeSet<_>>(),
     };
     if retained_generation.is_none()
         && !registry_failures.is_empty()
@@ -602,12 +612,16 @@ fn refresh_all_provider_sources_route_local_with_reconciliation(
     } else {
         WriterOptions::default()
     };
-    let publication_scope = provider_root_publication_scope(
-        &scope,
-        &physical_scope,
-        &build.registry,
-        retained_generation.as_ref(),
-    );
+    let publication_scope = if automatic_split_active {
+        SourceBackedRefreshScope::All
+    } else {
+        provider_root_publication_scope(
+            &scope,
+            &physical_scope,
+            &build.registry,
+            retained_generation.as_ref(),
+        )
+    };
     let (executor, _issues) = build.into_refresh_executor(writer_options);
     let executor = executor
         .with_base_route_controls(previous_route_controls.clone())

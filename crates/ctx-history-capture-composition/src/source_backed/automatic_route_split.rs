@@ -80,16 +80,19 @@ pub fn prepare_automatic_route_splits(
         ) else {
             continue;
         };
-        if route.metadata.selection != Some(SourceBackedRouteSelection::Automatic) {
+        // Unsupported, unavailable, and registration-failed candidates retain
+        // their resolver provenance even though normal registry construction
+        // deliberately withholds executable selection and route identity.
+        // Derive their current identity here so a witnessed cohort cannot
+        // retire its predecessor while one known role is unaccounted for.
+        let route_identity = route.metadata.route_identity.clone().map_or_else(
+            || automatic_source_backed_route_identity(&route.metadata.source),
+            Ok,
+        )?;
+        let legacy = legacy_automatic_source_backed_route_identity(&route.metadata.source)?;
+        if !base_routes.contains(&legacy) {
             continue;
         }
-        let route_identity = route.metadata.route_identity.clone().ok_or_else(|| {
-            split_error(
-                route.metadata.source.provider,
-                "roled automatic route has no identity",
-            )
-        })?;
-        let legacy = legacy_automatic_source_backed_route_identity(&route.metadata.source)?;
         let members = cohorts
             .entry(legacy)
             .or_insert_with(|| CohortMembers::new(cohort));
@@ -120,9 +123,6 @@ pub fn prepare_automatic_route_splits(
     let mut bridge_keep = BTreeSet::new();
     let mut bridge_members = BTreeSet::new();
     for (legacy, mut members) in cohorts {
-        if !base_routes.contains(&legacy) {
-            continue;
-        }
         members.members.sort_by_key(|member| member.index);
         let role_routes = members
             .members
@@ -141,13 +141,18 @@ pub fn prepare_automatic_route_splits(
             _ => None,
         };
         let Some(witness) = witness else {
-            let winner = members.members.first().ok_or_else(|| {
-                split_error(
-                    CaptureProvider::Unknown,
-                    "collapsed automatic route has no successor",
-                )
-            })?;
-            let route = registry.routes.get_mut(winner.index).ok_or_else(|| {
+            let winner_index = select_released_bridge_winner(registry, &members.members)?;
+            let winner = members
+                .members
+                .iter()
+                .find(|member| member.index == winner_index)
+                .ok_or_else(|| {
+                    split_error(
+                        CaptureProvider::Unknown,
+                        "collapsed automatic route has no successor",
+                    )
+                })?;
+            let route = registry.routes.get_mut(winner_index).ok_or_else(|| {
                 split_error(
                     CaptureProvider::Unknown,
                     "automatic split winner was not registered",
@@ -200,6 +205,68 @@ pub fn prepare_automatic_route_splits(
         });
     }
     Ok(plan)
+}
+
+/// Replays the released collapsed-identity registry conflict rule over the
+/// role-specific candidates without changing their current identities.
+/// Executable authority replaces an earlier non-executable candidate; the
+/// first executable then remains the winner. If none is executable, the first
+/// candidate retains the exact sorted/deduplicated missing-path union.
+fn select_released_bridge_winner(
+    registry: &mut SourceBackedProviderRegistry,
+    members: &[CohortMember],
+) -> SourceBackedCoordinatorResult<usize> {
+    // A released unsupported observation had no route identity and therefore
+    // did not participate in collapsed-identity conflict resolution. It is
+    // still a cohort member for witnessed retirement validation, but cannot
+    // become the bridge owner.
+    let candidates = members
+        .iter()
+        .filter(|member| {
+            registry
+                .routes
+                .get(member.index)
+                .is_some_and(|route| route.metadata.route_identity.is_some())
+        })
+        .map(|member| member.index)
+        .collect::<Vec<_>>();
+    let Some(first) = candidates.first().copied() else {
+        return Err(split_error(
+            CaptureProvider::Unknown,
+            "collapsed automatic route has no successor",
+        ));
+    };
+    let mut winner_index = first;
+    for candidate_index in candidates.into_iter().skip(1) {
+        let winner_executable = registry
+            .routes
+            .get(winner_index)
+            .is_some_and(|route| route.driver.is_some());
+        if winner_executable {
+            continue;
+        }
+        let candidate_route = registry.routes.get(candidate_index).ok_or_else(|| {
+            split_error(
+                CaptureProvider::Unknown,
+                "automatic split candidate was not registered",
+            )
+        })?;
+        if candidate_route.driver.is_some() {
+            winner_index = candidate_index;
+            continue;
+        }
+        let mut missing = candidate_route.certified_missing_paths.clone();
+        let winner = registry.routes.get_mut(winner_index).ok_or_else(|| {
+            split_error(
+                CaptureProvider::Unknown,
+                "automatic split winner was not registered",
+            )
+        })?;
+        winner.certified_missing_paths.append(&mut missing);
+        winner.certified_missing_paths.sort();
+        winner.certified_missing_paths.dedup();
+    }
+    Ok(winner_index)
 }
 
 #[derive(Debug, Clone)]
@@ -402,28 +469,54 @@ mod tests {
     use super::*;
     use crate::ProviderCatalogSupport;
 
-    fn source(role: &'static str) -> ProviderSource {
+    fn source_with_role(
+        provider: CaptureProvider,
+        source_format: &'static str,
+        path: impl Into<PathBuf>,
+        role: ProviderRouteRole,
+        status: ProviderSourceStatus,
+    ) -> ProviderSource {
         ProviderSource {
-            provider: CaptureProvider::Antigravity,
-            path: PathBuf::from(format!("/fixture/{role}")),
-            exists: true,
-            source_format: "antigravity_cli_transcript_jsonl_tree",
+            provider,
+            path: path.into(),
+            exists: status != ProviderSourceStatus::Missing,
+            source_format,
             source_kind: ProviderSourceKind::NativeHistory,
             import_support: ProviderImportSupport::Native,
             catalog_support: ProviderCatalogSupport::None,
-            status: ProviderSourceStatus::Available,
+            status,
             unsupported_reason: None,
-            route_provenance: ProviderSourceRouteProvenance::Automatic {
-                route_role: ProviderRouteRole::from_static(role),
-            },
+            route_provenance: ProviderSourceRouteProvenance::Automatic { route_role: role },
         }
     }
 
-    fn route(role: &'static str) -> SourceBackedRoute {
+    fn source(role: &'static str) -> ProviderSource {
+        source_with_role(
+            CaptureProvider::Antigravity,
+            "antigravity_cli_transcript_jsonl_tree",
+            format!("/fixture/{role}"),
+            ProviderRouteRole::from_static(role),
+            ProviderSourceStatus::Available,
+        )
+    }
+
+    fn executable_route(source: ProviderSource) -> SourceBackedRoute {
         SourceBackedRoute::automatic(
-            source(role),
+            source,
             SourceBackedSelectorAuthority::DiscoveredWinner,
             SourceBackedRouteDriver::new(|_| Ok(()), |_| true, |_| true),
+        )
+        .unwrap()
+    }
+
+    fn route(role: &'static str) -> SourceBackedRoute {
+        executable_route(source(role))
+    }
+
+    fn missing_route(source: ProviderSource) -> SourceBackedRoute {
+        SourceBackedRoute::certified_missing(
+            source,
+            SourceBackedSelectorAuthority::DiscoveredWinner,
         )
         .unwrap()
     }
@@ -497,6 +590,105 @@ mod tests {
     }
 
     #[test]
+    fn bridge_conflicts_replace_missing_with_first_executable_for_fixed_and_dynamic_roles() {
+        let cases = [
+            (
+                CaptureProvider::Antigravity,
+                "antigravity_cli_transcript_jsonl_tree",
+                ProviderRouteRole::from_dynamic([b"surface".as_slice(), b"cli".as_slice()])
+                    .unwrap(),
+                ProviderRouteRole::from_dynamic([b"surface".as_slice(), b"ide".as_slice()])
+                    .unwrap(),
+            ),
+            (
+                CaptureProvider::OpenClaw,
+                "openclaw_session_jsonl_tree",
+                ProviderRouteRole::from_dynamic([b"agent".as_slice(), b"missing".as_slice()])
+                    .unwrap(),
+                ProviderRouteRole::from_dynamic([b"agent".as_slice(), b"available".as_slice()])
+                    .unwrap(),
+            ),
+        ];
+        for (provider, format, missing_role, available_role) in cases {
+            let missing_source = source_with_role(
+                provider,
+                format,
+                format!("/fixture/{}/missing", provider.as_str()),
+                missing_role,
+                ProviderSourceStatus::Missing,
+            );
+            let available_path = PathBuf::from(format!("/fixture/{}/available", provider.as_str()));
+            let available_source = source_with_role(
+                provider,
+                format,
+                available_path.clone(),
+                available_role.clone(),
+                ProviderSourceStatus::Available,
+            );
+            let legacy = legacy_automatic_source_backed_route_identity(&available_source).unwrap();
+            let mut registry = SourceBackedProviderRegistry::new();
+            registry.register(missing_route(missing_source));
+            registry.register(executable_route(available_source));
+            prepare_automatic_route_splits(
+                &mut registry,
+                &BTreeSet::from([legacy.clone()]),
+                &BTreeMap::new(),
+                &SourceBackedRefreshScope::All,
+                SourceBackedReconciliationDemand::Exhaustive,
+            )
+            .unwrap();
+            let [bridge] = registry.routes.as_ref() else {
+                panic!("one released bridge route expected");
+            };
+            assert!(bridge.driver.is_some());
+            assert_eq!(bridge.metadata.source.path, available_path);
+            assert!(bridge.certified_missing_paths.is_empty());
+            let witness =
+                decode_witness(bridge.automatic_split_bridge_control.as_deref().unwrap()).unwrap();
+            assert_eq!(witness.role, available_role);
+        }
+    }
+
+    #[test]
+    fn all_missing_bridge_candidates_merge_paths_like_the_released_registry() {
+        let first_path = PathBuf::from("/fixture/missing-z");
+        let second_path = PathBuf::from("/fixture/missing-a");
+        let first = source_with_role(
+            CaptureProvider::Antigravity,
+            "antigravity_cli_transcript_jsonl_tree",
+            first_path.clone(),
+            ProviderRouteRole::from_static("missing-z"),
+            ProviderSourceStatus::Missing,
+        );
+        let second = source_with_role(
+            CaptureProvider::Antigravity,
+            "antigravity_cli_transcript_jsonl_tree",
+            second_path.clone(),
+            ProviderRouteRole::from_static("missing-a"),
+            ProviderSourceStatus::Missing,
+        );
+        let legacy = legacy_automatic_source_backed_route_identity(&first).unwrap();
+        let mut registry = SourceBackedProviderRegistry::new();
+        registry.register(missing_route(first));
+        registry.register(missing_route(second));
+        prepare_automatic_route_splits(
+            &mut registry,
+            &BTreeSet::from([legacy]),
+            &BTreeMap::new(),
+            &SourceBackedRefreshScope::All,
+            SourceBackedReconciliationDemand::Exhaustive,
+        )
+        .unwrap();
+        let [bridge] = registry.routes.as_ref() else {
+            panic!("one merged missing bridge expected");
+        };
+        assert_eq!(
+            bridge.certified_missing_paths,
+            vec![second_path, first_path]
+        );
+    }
+
+    #[test]
     fn witnessed_successor_alone_receives_the_legacy_alias_and_retirement_barrier() {
         let first = route("surface-cli");
         let second = route("surface-ide");
@@ -541,6 +733,81 @@ mod tests {
             registry.automatic_split_cohort_barriers[0].cohort,
             BTreeSet::from([first_id, second_id])
         );
+    }
+
+    #[test]
+    fn every_roled_nonowner_blocks_retirement_except_certified_missing() {
+        let owner_role = ProviderRouteRole::from_static("surface-cli");
+        let owner_source = source_with_role(
+            CaptureProvider::Antigravity,
+            "antigravity_cli_transcript_jsonl_tree",
+            "/fixture/owner",
+            owner_role.clone(),
+            ProviderSourceStatus::Available,
+        );
+        let legacy = legacy_automatic_source_backed_route_identity(&owner_source).unwrap();
+        let witness = encode_witness(&SplitWitness {
+            cohort: split_cohort(
+                CaptureProvider::Antigravity,
+                "antigravity_cli_transcript_jsonl_tree",
+            )
+            .unwrap(),
+            role: owner_role,
+        })
+        .unwrap();
+
+        for (name, status) in [
+            ("unavailable", ProviderSourceStatus::Unknown),
+            ("unsupported", ProviderSourceStatus::Unsupported),
+            ("registration-failed", ProviderSourceStatus::Available),
+        ] {
+            let blocked = source_with_role(
+                CaptureProvider::Antigravity,
+                "antigravity_cli_transcript_jsonl_tree",
+                format!("/fixture/{name}"),
+                ProviderRouteRole::from_static(name),
+                status,
+            );
+            let mut registry = SourceBackedProviderRegistry::new();
+            registry.register(executable_route(owner_source.clone()));
+            registry.register(SourceBackedRoute::unsupported(
+                blocked,
+                format!("injected {name} candidate"),
+            ));
+            let error = prepare_automatic_route_splits(
+                &mut registry,
+                &BTreeSet::from([legacy.clone()]),
+                &BTreeMap::from([(legacy.clone(), witness.clone())]),
+                &SourceBackedRefreshScope::All,
+                SourceBackedReconciliationDemand::Exhaustive,
+            )
+            .expect_err("known unusable nonowner must block retirement");
+            assert!(error.to_string().contains("unavailable or unsupported"));
+        }
+
+        let missing = source_with_role(
+            CaptureProvider::Antigravity,
+            "antigravity_cli_transcript_jsonl_tree",
+            "/fixture/certified-missing",
+            ProviderRouteRole::from_static("certified-missing"),
+            ProviderSourceStatus::Missing,
+        );
+        let missing_id = automatic_source_backed_route_identity(&missing).unwrap();
+        let mut registry = SourceBackedProviderRegistry::new();
+        registry.register(executable_route(owner_source));
+        registry.register(missing_route(missing));
+        prepare_automatic_route_splits(
+            &mut registry,
+            &BTreeSet::from([legacy.clone()]),
+            &BTreeMap::from([(legacy, witness)]),
+            &SourceBackedRefreshScope::All,
+            SourceBackedReconciliationDemand::Exhaustive,
+        )
+        .unwrap();
+        assert_eq!(registry.automatic_split_cohort_barriers.len(), 1);
+        assert!(registry.automatic_split_cohort_barriers[0]
+            .cohort
+            .contains(&missing_id));
     }
 
     #[test]
