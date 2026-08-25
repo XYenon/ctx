@@ -17,6 +17,7 @@ pub use ctx_history_source_discovery::{
     ConfiguredRootPathKind, CrushDiscoveredProjectInventory, CrushProjectInventorySelectorError,
 };
 pub use ctx_history_source_discovery::{
+    discover_canonical_automatic_provider_sources_with_context,
     validate_provider_source_roots_outside_data_root, DiscoveredLingmaDatabase,
     DiscoveredWarpSource, DiscoveryContext, DiscoveryIssue, DiscoveryIssueKind, DiscoveryPlatform,
     DiscoveryPlatformDirs, DiscoveryReport, LingmaDatabaseCatalogLineage,

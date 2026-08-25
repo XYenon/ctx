@@ -56,6 +56,7 @@ fn goose_v15_literal_parent_and_native_identities_publish_consistently() {
         &temp.path().join("data-root"),
         temp.path(),
         Vec::new(),
+        None,
     )
     .unwrap();
     let index = temp.path().join("index");

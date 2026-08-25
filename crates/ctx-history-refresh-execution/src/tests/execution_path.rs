@@ -970,7 +970,6 @@ fn naming_a_failing_automatic_home_carries_it_while_named_peer_advances() {
         .with_configured_provider_roots(vec![peer_definition.clone()]);
     let automatic_source =
         provider_source_for_path(CaptureProvider::Claude, automatic_projects.clone());
-    let automatic_route = automatic_source_backed_route_identity(&automatic_source).unwrap();
     let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
     refresh_all_provider_sources(
         &initial_discovery,
@@ -1060,9 +1059,9 @@ fn naming_a_failing_automatic_home_carries_it_while_named_peer_advances() {
         .unwrap();
     assert_eq!(
         automatic_root.source_identity(),
-        ProviderRootSourceIdentity::Released
+        ProviderRootSourceIdentity::NamedV1
     );
-    assert_eq!(automatic_root.routes(), &[automatic_route]);
+    assert!(automatic_root.routes().is_empty());
     assert_eq!(
         published
             .search_event_candidates("retainedautomaticfixture", 10)

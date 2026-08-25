@@ -594,6 +594,38 @@ fn openclaw_state_roots_expand_bounded_agents_with_precedence_and_stable_dynamic
 }
 
 #[test]
+fn configured_openclaw_route_matching_automatic_keeps_automatic_role_bytes() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let state = temp.path().join("openclaw-state");
+    write(
+        &state.join("openclaw.json"),
+        b"{agents:{list:[{id:'alpha'}]}}",
+    );
+    write(&state.join("agents/alpha/sessions/session.jsonl"), b"{}\n");
+    let context = context(&temp)
+        .with_env("OPENCLAW_STATE_DIR", state.as_os_str())
+        .with_configured_provider_roots(vec![root(
+            "configured-state",
+            CaptureProvider::OpenClaw,
+            state,
+        )]);
+
+    let report = provider_report(&context, CaptureProvider::OpenClaw);
+    let configured = report
+        .sources
+        .iter()
+        .filter(|source| source.route_provenance.configured_root().is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(configured.len(), 1);
+    assert_eq!(
+        route_role(configured[0]),
+        ProviderRouteRole::from_dynamic([b"agent".as_slice(), b"alpha".as_slice()])
+            .unwrap()
+            .as_bytes()
+    );
+}
+
+#[test]
 fn cline_common_data_root_emits_distinct_task_and_sdk_roles() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     let data = temp.path().join("cline-data");
@@ -692,7 +724,10 @@ fn every_expander_family_preserves_unavailable_candidates_with_provenance() {
         (CaptureProvider::OpenCode, 1),
         (CaptureProvider::Claude, 1),
         (CaptureProvider::Codex, 3),
-        (CaptureProvider::OpenClaw, 1),
+        // Root-level OpenClaw unavailability has no safe agent-membership
+        // witness. It remains route-less so capture can retain the exact
+        // prior alpha/beta membership rather than inventing `main`.
+        (CaptureProvider::OpenClaw, 0),
         (CaptureProvider::Cline, 2),
     ] {
         let temp = crate::test_support_paths::tempdir().unwrap();

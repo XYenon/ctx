@@ -19,6 +19,165 @@ fn configured_source(
 }
 
 #[test]
+fn configured_compound_roots_register_from_arbitrary_paths_without_automatic_authority() {
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+
+    let cases = [
+        (
+            CaptureProvider::Crush,
+            "crush_sqlite",
+            "crush-project-database",
+        ),
+        (
+            CaptureProvider::Goose,
+            "goose_sessions_sqlite",
+            "goose-sessions-database",
+        ),
+        (
+            CaptureProvider::AstrBot,
+            "astrbot_data_v4_sqlite",
+            "astrbot-instance-database",
+        ),
+        (
+            CaptureProvider::Lingma,
+            "lingma_sqlite",
+            "lingma-client-profile-database",
+        ),
+        (
+            CaptureProvider::Warp,
+            "warp_sqlite",
+            "warp-surface-database",
+        ),
+    ];
+    let roots = cases
+        .iter()
+        .map(|(provider, _, _)| ProviderRootDefinition {
+            id: format!("configured-{}", provider.as_str()),
+            provider: *provider,
+            path: temp.path().join(format!("arbitrary-{}", provider.as_str())),
+            group: None,
+        })
+        .collect::<Vec<_>>();
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_automatic_provider_discovery(false)
+    .with_configured_provider_roots(roots.clone());
+    let sources = cases
+        .iter()
+        .zip(&roots)
+        .map(|((provider, format, role), root)| {
+            configured_source(
+                fixture_provider_source_at(
+                    *provider,
+                    format,
+                    ProviderImportSupport::Native,
+                    root.path.join("not-selected-by-automatic.sqlite"),
+                ),
+                &root.id,
+                root.path.clone(),
+                role,
+            )
+        })
+        .collect();
+
+    let build = build_automatic_source_backed_registry_from_parts(
+        &context,
+        &temp.path().join("ctx-data"),
+        sources,
+        Vec::new(),
+    );
+
+    assert!(build.issues.is_empty(), "{:?}", build.issues);
+    assert_eq!(build.executable_route_count(), cases.len());
+    let (_, _, applied) = build.registry.applied_provider_roots().unwrap();
+    assert!(applied
+        .iter()
+        .all(|root| root.source_identity() == ProviderRootSourceIdentity::NamedV1));
+}
+
+#[test]
+fn canonical_equivalence_replay_fails_closed_after_path_changes_and_retains_prior_owner() {
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let goose_root = temp.path().join("goose-root");
+    let database = goose_root.join("data/sessions/sessions.db");
+    fs::create_dir_all(database.parent().unwrap()).unwrap();
+    fs::write(&database, b"sqlite fixture marker").unwrap();
+    let definition = ProviderRootDefinition {
+        id: "goose-default".to_owned(),
+        provider: CaptureProvider::Goose,
+        path: database.clone(),
+        group: None,
+    };
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_automatic_provider_discovery(false)
+    .with_env("GOOSE_PATH_ROOT", goose_root.as_os_str())
+    .with_configured_provider_roots(vec![definition.clone()]);
+    let source = configured_source(
+        fixture_provider_source_at(
+            CaptureProvider::Goose,
+            "goose_sessions_sqlite",
+            ProviderImportSupport::Native,
+            &database,
+        ),
+        &definition.id,
+        &definition.path,
+        "goose-sessions-database",
+    );
+
+    // The supplied report describes the readable first pass. Deleting the
+    // source before composition makes the canonical automatic replay fail the
+    // available/empty equivalence gate rather than minting a Released owner.
+    fs::remove_file(&database).unwrap();
+    let no_retained =
+        build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+            &crate::test_provider_probes(),
+            &context,
+            &temp.path().join("ctx-data"),
+            DiscoveryReport {
+                sources: vec![source.clone()],
+                issues: Vec::new(),
+            },
+            &BTreeMap::new(),
+        );
+    assert_eq!(
+        no_retained.registry.applied_provider_roots().unwrap().2[0].source_identity(),
+        ProviderRootSourceIdentity::NamedV1
+    );
+
+    let retained = BTreeMap::from([(definition.id.clone(), ProviderRootSourceIdentity::Released)]);
+    let with_retained =
+        build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+            &crate::test_provider_probes(),
+            &context,
+            &temp.path().join("ctx-data-retained"),
+            DiscoveryReport {
+                sources: vec![source],
+                issues: Vec::new(),
+            },
+            &retained,
+        );
+    assert_eq!(
+        with_retained.registry.applied_provider_roots().unwrap().2[0].source_identity(),
+        ProviderRootSourceIdentity::Released
+    );
+}
+
+#[test]
 fn only_one_configured_root_per_provider_can_own_the_released_namespace() {
     let temp = tempdir().unwrap();
     let home = temp.path().join("home");

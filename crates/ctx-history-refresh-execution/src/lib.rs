@@ -24,8 +24,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use ctx_history_capture::{
     automatic_source_backed_route_identity,
     build_automatic_source_backed_registry_from_report_with_root_identities,
-    discover_provider_sources_with_context_and_work_budget, provider_paths_equivalent,
-    released_provider_home, source_backed_refresh_work_budget,
+    discover_provider_sources_with_context_and_work_budget, source_backed_refresh_work_budget,
     source_backed_refresh_writer_options, validate_provider_source_roots_outside_data_root,
     DiscoveryContext, SourceBackedAutomaticRegistryIssue, SourceBackedAutomaticUnavailableReason,
     SourceBackedCoordinatorError,
@@ -284,7 +283,7 @@ fn configured_provider_root_identities(
     discovery
         .configured_provider_roots()
         .iter()
-        .map(|root| {
+        .filter_map(|root| {
             let retained = retained_generation.and_then(|generation| {
                 generation
                     .manifest()
@@ -296,17 +295,7 @@ fn configured_provider_root_identities(
                     })
                     .map(|applied| applied.source_identity())
             });
-            let identity = retained.unwrap_or_else(|| {
-                if released_provider_home(discovery, root.provider)
-                    .as_deref()
-                    .is_some_and(|home| provider_paths_equivalent(home, &root.path))
-                {
-                    ProviderRootSourceIdentity::Released
-                } else {
-                    ProviderRootSourceIdentity::NamedV1
-                }
-            });
-            (root.id.clone(), identity)
+            retained.map(|identity| (root.id.clone(), identity))
         })
         .collect()
 }

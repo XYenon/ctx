@@ -71,8 +71,8 @@ pub(crate) use ctx_history_source_sqlite::{
     SqliteSourceAccessError, SqliteSourceReadSnapshot, SqliteSourceSnapshotLimits,
 };
 pub use discovery::{
-    discover_provider_sources, discover_provider_sources_for_provider,
-    discover_provider_sources_for_provider_report,
+    discover_canonical_automatic_provider_sources_with_context, discover_provider_sources,
+    discover_provider_sources_for_provider, discover_provider_sources_for_provider_report,
     discover_provider_sources_for_provider_with_context,
     discover_provider_sources_for_provider_with_projects, discover_provider_sources_report,
     discover_provider_sources_with_context, discover_provider_sources_with_context_and_work_budget,

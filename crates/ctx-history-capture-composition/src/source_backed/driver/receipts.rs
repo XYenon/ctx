@@ -848,6 +848,43 @@ fn source_backed_route_identity(
 mod tests {
     use super::*;
 
+    #[test]
+    fn unavailable_openclaw_root_restores_all_prior_agent_routes() {
+        let definition = ProviderRootDefinition {
+            id: "openclaw-state".to_owned(),
+            provider: CaptureProvider::OpenClaw,
+            path: PathBuf::from("/fixture/openclaw-state"),
+            group: None,
+        };
+        let alpha = SourceRouteIdentity::from_sha256("a".repeat(64)).unwrap();
+        let beta = SourceRouteIdentity::from_sha256("b".repeat(64)).unwrap();
+        let prior = AppliedProviderRoot::with_source_identity(
+            definition.clone(),
+            ProviderRootSourceIdentity::NamedV1,
+            vec![alpha.clone(), beta.clone()],
+        )
+        .unwrap();
+        let current = AppliedProviderRoot::with_source_identity(
+            definition,
+            ProviderRootSourceIdentity::NamedV1,
+            Vec::new(),
+        )
+        .unwrap();
+        let mut registry = SourceBackedProviderRegistry::new();
+        registry
+            .set_applied_provider_roots(true, "fixture".to_owned(), vec![current])
+            .unwrap();
+
+        registry
+            .retain_unavailable_provider_root_routes(&[prior])
+            .unwrap();
+
+        assert_eq!(
+            registry.applied_provider_roots().unwrap().2[0].routes(),
+            &[alpha, beta]
+        );
+    }
+
     fn route_identity_source(
         provider: CaptureProvider,
         source_format: &'static str,

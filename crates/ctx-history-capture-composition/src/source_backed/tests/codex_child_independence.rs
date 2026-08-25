@@ -492,7 +492,7 @@ fn unavailable_configured_codex_home_carries_only_itself_while_peer_refreshes() 
     let displaced_work_home = fixture.join("work-codex-displaced");
     fs::rename(&work_home, &displaced_work_home).unwrap();
     fs::write(&work_home, b"temporarily not a directory").unwrap();
-    let current = build_discovered_codex_registry(&context, &data_root);
+    let mut current = build_discovered_codex_registry(&context, &data_root);
     assert_eq!(
         current
             .issues
@@ -502,15 +502,20 @@ fn unavailable_configured_codex_home_carries_only_itself_while_peer_refreshes() 
         1,
         "equivalent physical selector issues are deduplicated while all routes are retained"
     );
+    let retained = VerifiedIndex::open(&index_root).unwrap();
+    current
+        .registry
+        .retain_unavailable_provider_root_routes(retained.manifest().provider_roots())
+        .unwrap();
     fs::remove_file(&work_home).unwrap();
     fs::rename(&displaced_work_home, &work_home).unwrap();
 
     let receipt =
         refresh_source_backed_generation(&index_root, &current.registry, writer_options()).unwrap();
-    assert_eq!(receipt.failed_routes.len(), 3);
-    assert!(receipt.failed_routes.iter().all(|failure| {
-        failure.class == SourceBackedSourceFailureClass::Unavailable && failure.carried_forward
-    }));
+    // A root-level wrong-kind discovery failure is route-less; the retained
+    // manifest restores the exact prior Codex membership instead of inventing
+    // child failures for a root that cannot be safely expanded.
+    assert!(receipt.failed_routes.is_empty());
     let index = VerifiedIndex::open(&index_root).unwrap();
     assert!(source_records_contain(
         &index,
@@ -569,13 +574,19 @@ fn cold_unavailable_configured_codex_home_does_not_block_healthy_peer() {
         },
     ]);
     let build = build_discovered_codex_registry(&context, &fixture.join("data"));
+    assert_eq!(
+        build
+            .issues
+            .iter()
+            .filter(|issue| matches!(issue, SourceBackedAutomaticRegistryIssue::Discovery(_)))
+            .count(),
+        1,
+        "wrong-kind configured roots surface one root-level discovery issue"
+    );
     let index_root = fixture.join("index");
     let receipt =
         refresh_source_backed_generation(&index_root, &build.registry, writer_options()).unwrap();
-    assert_eq!(receipt.failed_routes.len(), 3);
-    assert!(receipt.failed_routes.iter().all(|failure| {
-        failure.class == SourceBackedSourceFailureClass::Unavailable && !failure.carried_forward
-    }));
+    assert!(receipt.failed_routes.is_empty());
     let index = VerifiedIndex::open(&index_root).unwrap();
     assert!(source_records_contain(
         &index,

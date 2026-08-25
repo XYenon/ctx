@@ -616,6 +616,12 @@ fn expand_openclaw_state_root(
     root: &ProviderRootDefinition,
     availability: ConfiguredRootAvailability,
 ) {
+    if availability == ConfiguredRootAvailability::Unavailable {
+        // A root-level no-follow failure cannot safely enumerate agent
+        // membership. Leave the configured root route-less so refresh can
+        // retain its exact prior membership rather than inventing `main`.
+        return;
+    }
     let (agent_ids, truncated) = if availability == ConfiguredRootAvailability::Present {
         match openclaw_agent_ids_for_state_root(&root.path) {
             Ok(inventory) => inventory,

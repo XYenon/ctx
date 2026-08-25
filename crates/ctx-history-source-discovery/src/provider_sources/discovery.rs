@@ -92,6 +92,26 @@ pub fn discover_provider_sources_with_context(
     dedupe_report(report)
 }
 
+/// Resolves canonical automatic routes without adding configured roots.
+///
+/// Configured roots use this read-only view to retain the released identity
+/// when their complete expansion is the canonical automatic route set. The
+/// comparison deliberately enables automatic inference even when automatic
+/// refresh is disabled, so configuration does not fork released identities.
+pub fn discover_canonical_automatic_provider_sources_with_context(
+    probes: &StaticProviderProbeCatalog,
+    context: &DiscoveryContext,
+) -> DiscoveryReport {
+    let automatic_context = context.clone().with_automatic_provider_discovery(true);
+    let mut report = DiscoveryReport::default();
+    for spec in PROVIDER_SPECS {
+        let mut provider_report = resolve(probes, &automatic_context, spec);
+        report.sources.append(&mut provider_report.sources);
+        report.issues.append(&mut provider_report.issues);
+    }
+    dedupe_report(report)
+}
+
 /// Resolves independent provider specifications concurrently under the
 /// caller's refresh-wide worker limit, then merges reports in specification
 /// order so scheduling cannot affect discovery or publication identity.
@@ -244,9 +264,44 @@ fn resolve_provider(
 ) -> DiscoveryReport {
     let mut report = resolve(probes, context, spec);
     let mut configured = expand_configured_roots_for_provider(probes, context, spec);
+    let canonical = if context.automatic_provider_inference_enabled() {
+        report.sources.clone()
+    } else {
+        resolve(
+            probes,
+            &context.clone().with_automatic_provider_discovery(true),
+            spec,
+        )
+        .sources
+    };
+    preserve_matching_automatic_route_roles(&mut configured.sources, &canonical);
     report.sources.append(&mut configured.sources);
     report.issues.append(&mut configured.issues);
     report
+}
+
+fn preserve_matching_automatic_route_roles(
+    configured: &mut [ProviderSource],
+    canonical: &[ProviderSource],
+) {
+    for source in configured {
+        let Some(route_role) = canonical.iter().find_map(|automatic| {
+            (automatic.provider == source.provider
+                && automatic.source_format == source.source_format
+                && super::resolvers::provider_paths_equivalent(&automatic.path, &source.path))
+            .then(|| automatic.route_provenance.automatic_route_role().cloned())
+            .flatten()
+        }) else {
+            continue;
+        };
+        if let ctx_history_capture_model::ProviderSourceRouteProvenance::ConfiguredRoot {
+            route_role: configured_role,
+            ..
+        } = &mut source.route_provenance
+        {
+            *configured_role = route_role;
+        }
+    }
 }
 
 /// Provider-scoped counterpart to discover_provider_sources_with_projects.

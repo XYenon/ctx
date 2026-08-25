@@ -699,6 +699,7 @@ fn register_enabled_catalog_route(
                     data_root,
                     authority,
                     vec![(path, database_lineage)],
+                    None,
                 )?;
             }
             CaptureProvider::Crush => bail!(
@@ -741,6 +742,7 @@ fn register_enabled_catalog_route(
                 SourceBackedRouteSelection::ExplicitManual,
                 data_root,
                 format!("ctx-catalog:{}", encode_hex(&lineage)),
+                None,
             )?;
         }
         SourceBackedRouteConstructor::SelectedWithRetainedRoutes => {
@@ -752,6 +754,7 @@ fn register_enabled_catalog_route(
                 data_root,
                 platform_root,
                 Vec::new(),
+                None,
             )?;
         }
     }

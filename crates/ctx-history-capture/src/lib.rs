@@ -24,6 +24,7 @@ pub fn provider_regular_file_len(path: &std::path::Path) -> Result<u64> {
 }
 pub use provider_sources::{
     configured_root_capabilities, configured_root_capability,
+    discover_canonical_automatic_provider_sources_with_context,
     discover_lingma_inventory_with_authority, discover_provider_sources,
     discover_provider_sources_for_provider, discover_provider_sources_for_provider_report,
     discover_provider_sources_for_provider_with_context,

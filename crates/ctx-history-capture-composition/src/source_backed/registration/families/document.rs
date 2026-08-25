@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::provider::source_backed::family::document::register_replacement_document_tree_route;
+use ctx_history_core::SourceAnchorScope;
 use ctx_history_providers_task_docs::{
     providers::{
         cline_sdk::ClineSdkDocumentTreeAdapter,
@@ -8,25 +9,24 @@ use ctx_history_providers_task_docs::{
         continue_cli::native_path::ContinueSourceBackedReader,
         rovodev::native_path::RovoDevDocumentTreeAdapter,
         task_json::cline_nativepath::{
-            cline_task_json_source_backed_adapter, roo_task_json_source_backed_adapter,
+            cline_task_json_source_backed_adapter_scoped,
+            roo_task_json_source_backed_adapter_scoped,
         },
     },
     ProviderAdapterContext, CLINE_SDK_SOURCE_FORMAT,
 };
-
-const DIRECT_ROUTES: &[RouteEntry] = &[RouteEntry::new(
-    CaptureProvider::Auggie,
-    crate::provider::providers::auggie::native_path::register_source_backed_route,
-)];
 
 pub(super) fn register_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
     data_root: Option<&Path>,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
-    if let Some(register) = direct_route_registration(DIRECT_ROUTES, source.provider) {
-        return register(registry, source, selection);
+    if source.provider == CaptureProvider::Auggie {
+        return crate::provider::providers::auggie::native_path::register_source_backed_route(
+            registry, source, selection,
+        );
     }
     match source.provider {
         CaptureProvider::Cline if source.source_format == CLINE_SDK_SOURCE_FORMAT => {
@@ -36,14 +36,20 @@ pub(super) fn register_route(
                     "Cline SDK registration requires the selected ctx data root",
                 )
             })?;
-            register_cline_sdk_route(registry, source, selection, data_root)
+            register_cline_sdk_route(registry, source, selection, data_root, source_root_lineage)
         }
         CaptureProvider::Cline | CaptureProvider::RooCode => {
-            register_task_json_route(registry, source, selection)
+            register_task_json_route(registry, source, selection, source_root_lineage)
         }
-        CaptureProvider::CodeBuddy => register_codebuddy_route(registry, source, selection),
-        CaptureProvider::RovoDev => register_rovodev_route(registry, source, selection),
-        CaptureProvider::Continue => register_continue_route(registry, source, selection),
+        CaptureProvider::CodeBuddy => {
+            register_codebuddy_route(registry, source, selection, source_root_lineage)
+        }
+        CaptureProvider::RovoDev => {
+            register_rovodev_route(registry, source, selection, source_root_lineage)
+        }
+        CaptureProvider::Continue => {
+            register_continue_route(registry, source, selection, source_root_lineage)
+        }
         provider => Err(invalid_route(
             provider,
             "this provider is not registered by the document route family",
@@ -56,8 +62,13 @@ fn register_cline_sdk_route(
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
     data_root: &Path,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
-    let adapter = ClineSdkDocumentTreeAdapter::new(source.path.clone(), data_root.to_path_buf());
+    let adapter = ClineSdkDocumentTreeAdapter::new_scoped(
+        source.path.clone(),
+        data_root.to_path_buf(),
+        source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+    );
     register_replacement_document_tree_route(registry, source, selection, adapter)
 }
 
@@ -65,12 +76,19 @@ pub(super) fn register_task_json_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
     let selected = vec![source.clone()];
     let provider = source.provider;
     let adapter = match provider {
-        CaptureProvider::Cline => cline_task_json_source_backed_adapter(&selected),
-        CaptureProvider::RooCode => roo_task_json_source_backed_adapter(&selected),
+        CaptureProvider::Cline => cline_task_json_source_backed_adapter_scoped(
+            &selected,
+            source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+        ),
+        CaptureProvider::RooCode => roo_task_json_source_backed_adapter_scoped(
+            &selected,
+            source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+        ),
         _ => {
             return Err(invalid_route(
                 provider,
@@ -85,6 +103,7 @@ pub(super) fn register_codebuddy_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
     let context = ProviderAdapterContext {
         machine_id: "source-backed-codebuddy".to_owned(),
@@ -92,7 +111,11 @@ pub(super) fn register_codebuddy_route(
         source_root: Some(source.path.clone()),
         imported_at: DateTime::<Utc>::UNIX_EPOCH,
     };
-    let adapter = CodeBuddyDocumentAdapter::new(source.path.clone(), context);
+    let adapter = CodeBuddyDocumentAdapter::new_scoped(
+        source.path.clone(),
+        context,
+        source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+    );
     register_replacement_document_tree_route(registry, source, selection, adapter)
 }
 
@@ -158,6 +181,7 @@ pub(super) fn register_rovodev_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
     let context = ProviderAdapterContext {
         machine_id: "source-backed-rovodev".to_owned(),
@@ -165,15 +189,23 @@ pub(super) fn register_rovodev_route(
         source_root: Some(source.path.clone()),
         imported_at: DateTime::<Utc>::UNIX_EPOCH,
     };
-    let adapter = RovoDevDocumentTreeAdapter::new(source.path.clone(), context);
+    let adapter = RovoDevDocumentTreeAdapter::new_scoped(
+        source.path.clone(),
+        context,
+        source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+    );
     register_replacement_document_tree_route(registry, source, selection, adapter)
 }
 pub(super) fn register_continue_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
+    source_root_lineage: Option<[u8; 32]>,
 ) -> SourceBackedCoordinatorResult<()> {
-    let adapter = ContinueSourceBackedReader::new(source.path.clone());
+    let adapter = ContinueSourceBackedReader::new_scoped(
+        source.path.clone(),
+        source_root_lineage.map_or(SourceAnchorScope::Unqualified, SourceAnchorScope::Lineage),
+    );
     register_replacement_document_tree_route(registry, source, selection, adapter)
 }
 
@@ -646,6 +678,7 @@ mod tests {
                 route_provenance: Default::default(),
             },
             SourceBackedRouteSelection::Automatic,
+            None,
         )
         .unwrap();
         registry
@@ -669,6 +702,7 @@ mod tests {
             },
             SourceBackedRouteSelection::Automatic,
             data_root,
+            None,
         )
         .unwrap();
         registry

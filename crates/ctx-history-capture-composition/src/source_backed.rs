@@ -22,11 +22,15 @@ use ctx_history_capture_runtime::{
     CaptureLifecycleSink, CapturePublicationContext, CapturePublicationDisposition,
     CaptureSourceAggregateRef, ImmutableCaptureSnapshot,
 };
-use ctx_history_core::{CaptureProvider, CertifiedSource, CertifiedSourceInventory, SourceKey};
+use ctx_history_core::{
+    CaptureProvider, CertifiedSource, CertifiedSourceInventory, SourceKey, TypedKey,
+};
 #[cfg(test)]
-use ctx_history_core::{CertifiedSourceAppend, CertifiedSourceDeletion, SourceAnchor, TypedKey};
+use ctx_history_core::{CertifiedSourceAppend, CertifiedSourceDeletion, SourceAnchor};
 use ctx_history_index::{AppliedProviderRoot, IndexError, PublicationStage, WriterOptions};
-use ctx_history_provider_mistral_mux::{mistral_vibe_jsonl_adapter, mux_jsonl_adapter};
+use ctx_history_provider_mistral_mux::{
+    mistral_vibe_jsonl_adapter_with_source_root_lineage, mux_jsonl_adapter_with_source_root_lineage,
+};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -45,7 +49,7 @@ pub use ctx_history_providers_sqlite_inventory::{
 };
 use ctx_history_source_discovery::{
     path_presence, provider_paths_equivalent, provider_source_belongs_to_configured_root,
-    released_provider_home, resolve_openhands_conversations_root, resolve_warp_discovery_authority,
+    resolve_openhands_conversations_root, resolve_warp_discovery_authority,
     CrushDiscoveredProjectInventory, CrushProjectInventorySelector,
     CrushProjectInventorySelectorError, LingmaInventorySelector, PathPresence,
     WarpDiscoveryUnavailable,
