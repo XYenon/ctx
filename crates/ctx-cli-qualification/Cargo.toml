@@ -1,5 +1,7 @@
 [package]
 name = "ctx-cli-qualification"
+# Stateful, cross-component final-binary scenarios live here. Portable public
+# CLI contracts and the shared harness remain in ctx-cli-contract-tests.
 version.workspace = true
 description = "Final-binary runtime qualification for the ctx CLI"
 edition.workspace = true
