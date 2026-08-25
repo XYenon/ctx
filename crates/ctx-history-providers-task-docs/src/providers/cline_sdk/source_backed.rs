@@ -147,6 +147,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn bind_tree(
     selected_root: &std::path::Path,
     data_root: &std::path::Path,

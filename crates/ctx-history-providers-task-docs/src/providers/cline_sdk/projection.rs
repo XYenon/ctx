@@ -52,6 +52,7 @@ pub(super) struct ProjectedDocument {
     pub(super) ignored: u64,
 }
 
+#[cfg(test)]
 pub(super) fn cline_source_key(provider_session_id: &str) -> Result<SourceKey> {
     cline_source_key_scoped(provider_session_id, SourceAnchorScope::Unqualified)
 }

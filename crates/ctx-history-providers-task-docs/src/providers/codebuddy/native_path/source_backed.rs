@@ -273,6 +273,7 @@ fn codebuddy_source_key(
     )
 }
 
+#[cfg(test)]
 fn codebuddy_source_key_for_identity(
     shape: CodeBuddySourceShape,
     project_hash: &str,

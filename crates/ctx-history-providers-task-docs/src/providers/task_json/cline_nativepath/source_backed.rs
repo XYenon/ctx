@@ -5,13 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(test)]
+use ctx_history_core::SourceAnchor;
 use ctx_history_core::{
     derive_event_id, derive_session_id, ActivityInvocation, ActivityJsonCapture, ActivityResult,
     ActivityTextCapture, AgentScope, CaptureProvider, CoreActivity, CoreRecord, CoreRecordError,
     EventIdentityInput, LiteralFactKind, NativeItemKey, NativeSessionKey, ProjectionContractError,
-    ProviderDeclaredFact, ScannedSourceCounts, SessionIdentityInput, SourceAnchor,
-    SourceAnchorScope, SourceKey, SourceObservation, StableEntityId, SubrecordSelector, TypedKey,
-    CORE_ACTIVITY_REVISION,
+    ProviderDeclaredFact, ScannedSourceCounts, SessionIdentityInput, SourceAnchorScope, SourceKey,
+    SourceObservation, StableEntityId, SubrecordSelector, TypedKey, CORE_ACTIVITY_REVISION,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;

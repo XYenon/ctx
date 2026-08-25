@@ -557,6 +557,7 @@ enum RovoDevSourceBackedDisposition {
     Unavailable,
 }
 
+#[cfg(test)]
 fn discover_rovodev_source_backed(
     sessions_root: &Path,
 ) -> RovoDevSourceBackedResult<RovoDevSourceBackedDisposition> {
@@ -688,6 +689,7 @@ fn relative_to_rovodev_authority(
         .map_err(|_| RovoDevSourceBackedError::NonAuthoritativeRoot)
 }
 
+#[cfg(test)]
 fn rovodev_source_key(provider_session_id: &str) -> RovoDevSourceBackedResult<SourceKey> {
     rovodev_source_key_scoped(provider_session_id, SourceAnchorScope::Unqualified)
 }
@@ -720,6 +722,7 @@ fn rovodev_session_identity(
     })?)
 }
 
+#[cfg(test)]
 fn provider_thread_session_identity(
     provider_session_id: &str,
 ) -> RovoDevSourceBackedResult<StableEntityId> {

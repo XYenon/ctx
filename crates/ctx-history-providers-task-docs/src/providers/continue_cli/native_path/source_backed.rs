@@ -561,6 +561,7 @@ fn owns_continue_source(source: &SourceKey) -> bool {
         && source.provider_identity_version() == 1
 }
 
+#[cfg(test)]
 fn continue_source_key(native_session_id: &str) -> ContinueSourceBackedResult<SourceKey> {
     continue_source_key_scoped(native_session_id, SourceAnchorScope::Unqualified)
 }
