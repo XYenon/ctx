@@ -442,9 +442,10 @@ ordinary inferred root. If both select the same physical root, the configured
 name and group annotate that one route instead of creating a duplicate. A
 malformed edit is rejected as one config and does not publish a partial source
 change; the previous verified generation remains the query authority. Removing
-a valid entry retires history owned only by that entry at the next full refresh.
-Exact-path imports and plugin manifests remain one-shot authorities and are not
-promoted into named roots.
+a valid entry withdraws its name, group, and future refresh ownership, but does
+not delete history already retained in the verified generation. The removed
+name and group stop matching that history. Exact-path imports and plugin
+manifests remain one-shot authorities and are not promoted into named roots.
 
 For an independently configured history root, `provider` plus the stable root
 name is its logical source namespace. Replacing only `path` therefore preserves
@@ -648,8 +649,12 @@ You can make the same change in `config.toml`. If the root is the last member
 of a group, that group simply stops matching it. Default provider locations are
 still discovered alongside any remaining named roots, and explicit `--path`,
 custom JSONL, and plugin imports are not remembered as future defaults. The next
-full refresh atomically removes history owned only by a removed named root; a
-failed or malformed refresh leaves the previous verified generation active.
+full refresh atomically withdraws the removed root's name, group, and active
+ownership while preserving its already indexed history under the stable source
+identity. To purge that retained history, remove the root, reset local search
+storage as described below, and rebuild; the records can still return if the
+same provider history is selected through another available route. A failed or
+malformed refresh leaves the previous verified generation active.
 
 ## Reset And Inspect Local Search Storage
 
