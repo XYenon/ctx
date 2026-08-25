@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn goose_platform_root(
+pub(in crate::source_backed::discovery) fn goose_platform_root(
     discovery: &DiscoveryContext,
     database: &Path,
 ) -> Option<PathBuf> {
