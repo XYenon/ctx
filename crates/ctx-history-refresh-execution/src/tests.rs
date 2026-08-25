@@ -6,7 +6,8 @@ use ctx_history_capture::{
     ProviderSourceRouteProvenance, SourceBackedSelectorAuthority,
 };
 use ctx_history_capture_model::{
-    ProviderCatalogSupport, ProviderImportSupport, ProviderSource, ProviderSourceKind,
+    ProviderCatalogSupport, ProviderImportSupport, ProviderRootKind, ProviderSource,
+    ProviderSourceKind,
 };
 use ctx_history_core::{
     derive_event_id, derive_session_id, CaptureProvider, CoreRecord, EventIdentityInput,

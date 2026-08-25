@@ -238,6 +238,7 @@ impl GenerationWriter {
                 changed_session_registry_memory_bytes,
                 source_route_plan: None,
                 active_source_route_stage: None,
+                active_source_route_cohort_stage: None,
                 reusable_base_rebuild_detail: None,
                 #[cfg(test)]
                 index_writer_constructions: std::sync::Arc::new(

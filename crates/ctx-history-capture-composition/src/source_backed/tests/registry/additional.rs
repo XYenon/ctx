@@ -1,5 +1,190 @@
 use super::*;
 
+fn mark_fixture_route_as_configured_root(
+    mut route: SourceBackedRoute,
+    root_path: &Path,
+    role: &'static str,
+) -> SourceBackedRoute {
+    let provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
+        root_id: "work".to_owned(),
+        root_path: root_path.to_path_buf(),
+        route_role: ProviderRouteRole::from_static(role),
+        automatic_route_role: None,
+    };
+    route.metadata.source.route_provenance = provenance.clone();
+    for source in &mut route.registration_sources {
+        source.route_provenance = provenance.clone();
+    }
+    route
+}
+
+#[test]
+fn terminal_failure_on_either_side_of_success_keeps_replacement_atomic() {
+    for fail_first in [true, false] {
+        let temp = tempdir().unwrap();
+        let predecessor_definition = ProviderRootDefinition {
+            id: "work".to_owned(),
+            provider: CaptureProvider::Claude,
+            path: temp.path().join("claude-predecessor"),
+            group: Some("work".to_owned()),
+            kind: None,
+        };
+        let predecessor = explicit_route_at(
+            fixture_route_with_body(
+                CaptureProvider::Claude,
+                "claude_projects_jsonl_tree",
+                90,
+                "atomicterminalpredecessor".to_owned(),
+            ),
+            predecessor_definition.path.join("projects"),
+        );
+        let predecessor_id = predecessor.metadata.route_identity.clone().unwrap();
+        let mut initial_registry = SourceBackedProviderRegistry::new();
+        initial_registry.register(predecessor);
+        initial_registry
+            .set_applied_provider_roots(
+                false,
+                provider_source_config_digest(false, std::slice::from_ref(&predecessor_definition)),
+                vec![AppliedProviderRoot::new(
+                    predecessor_definition.clone(),
+                    vec![predecessor_id.clone()],
+                )
+                .unwrap()],
+            )
+            .unwrap();
+        refresh_source_backed_generation(temp.path(), &initial_registry, WriterOptions::default())
+            .unwrap();
+
+        let successor_definition = ProviderRootDefinition {
+            id: "work".to_owned(),
+            provider: CaptureProvider::Codex,
+            path: temp.path().join("codex-successor"),
+            group: Some("work".to_owned()),
+            kind: None,
+        };
+        let first = mark_fixture_route_as_configured_root(
+            fixture_route_with_body(
+                CaptureProvider::Codex,
+                "codex_session_jsonl_tree",
+                91,
+                "atomicterminalfirst".to_owned(),
+            ),
+            &successor_definition.path,
+            "codex-sessions",
+        );
+        let second = mark_fixture_route_as_configured_root(
+            fixture_route_with_body(
+                CaptureProvider::Codex,
+                "codex_history_jsonl",
+                92,
+                "atomicterminalsecond".to_owned(),
+            ),
+            &successor_definition.path,
+            "codex-history",
+        );
+        let first_id = first.metadata.route_identity.clone().unwrap();
+        let second_id = second.metadata.route_identity.clone().unwrap();
+        let mut failed_registry = SourceBackedProviderRegistry::new();
+        failed_registry.register(if fail_first {
+            fail_route_at_final_revalidation(first.clone())
+        } else {
+            first.clone()
+        });
+        failed_registry.register(if fail_first {
+            second.clone()
+        } else {
+            fail_route_at_final_revalidation(second.clone())
+        });
+        failed_registry
+            .set_applied_provider_roots(
+                false,
+                provider_source_config_digest(false, std::slice::from_ref(&successor_definition)),
+                vec![AppliedProviderRoot::new(
+                    successor_definition.clone(),
+                    vec![first_id.clone(), second_id.clone()],
+                )
+                .unwrap()],
+            )
+            .unwrap();
+        failed_registry
+            .retire_routes_after_success(&second_id, [predecessor_id.clone()])
+            .unwrap();
+
+        let failed = refresh_source_backed_generation(
+            temp.path(),
+            &failed_registry,
+            WriterOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(failed.failed_routes.len(), 2);
+        assert_eq!(
+            failed
+                .commit
+                .manifest()
+                .provider_root("work")
+                .unwrap()
+                .definition(),
+            &predecessor_definition
+        );
+        assert!(failed
+            .commit
+            .manifest()
+            .source_route(&predecessor_id)
+            .is_some());
+        assert!(failed.commit.manifest().source_route(&first_id).is_none());
+        assert!(failed.commit.manifest().source_route(&second_id).is_none());
+        let failed_index = ctx_history_index::VerifiedIndex::open(temp.path()).unwrap();
+        assert!(failed_index
+            .search_event_candidates("atomicterminalfirst", 8)
+            .unwrap()
+            .is_empty());
+        assert!(failed_index
+            .search_event_candidates("atomicterminalsecond", 8)
+            .unwrap()
+            .is_empty());
+        drop(failed_index);
+
+        let mut succeeded_registry = SourceBackedProviderRegistry::new();
+        succeeded_registry.register(first);
+        succeeded_registry.register(second);
+        succeeded_registry
+            .set_applied_provider_roots(
+                false,
+                provider_source_config_digest(false, std::slice::from_ref(&successor_definition)),
+                vec![AppliedProviderRoot::new(
+                    successor_definition.clone(),
+                    vec![first_id, second_id.clone()],
+                )
+                .unwrap()],
+            )
+            .unwrap();
+        succeeded_registry
+            .retire_routes_after_success(&second_id, [predecessor_id.clone()])
+            .unwrap();
+        let succeeded = refresh_source_backed_generation(
+            temp.path(),
+            &succeeded_registry,
+            WriterOptions::default(),
+        )
+        .unwrap();
+        assert!(succeeded.failed_routes.is_empty());
+        assert_eq!(
+            succeeded
+                .commit
+                .manifest()
+                .provider_root("work")
+                .unwrap()
+                .definition(),
+            &successor_definition
+        );
+        assert!(succeeded
+            .commit
+            .manifest()
+            .source_route(&predecessor_id)
+            .is_none());
+    }
+}
+
 #[test]
 fn certified_missing_route_certifies_a_complete_empty_inventory() {
     let temp = tempdir().unwrap();

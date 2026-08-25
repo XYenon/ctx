@@ -392,6 +392,7 @@ pub struct GenerationWriter {
     changed_session_registry_memory_bytes: usize,
     source_route_plan: Option<SourceRoutePlan>,
     active_source_route_stage: Option<SourceRouteStageCheckpoint>,
+    active_source_route_cohort_stage: Option<SourceRouteStageCheckpoint>,
     reusable_base_rebuild_detail: Option<String>,
     #[cfg(test)]
     index_writer_constructions: std::sync::Arc<std::sync::atomic::AtomicUsize>,
