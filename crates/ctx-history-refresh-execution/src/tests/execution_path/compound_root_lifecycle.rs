@@ -161,6 +161,23 @@ fn fixture(
     )
 }
 
+fn retain_exactly_two_compound_sources(root: &Path, provider: CaptureProvider) {
+    match provider {
+        CaptureProvider::Crush => {
+            let path = root.join("home/.local/share/crush/projects.json");
+            let mut registry: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            registry["projects"].as_array_mut().unwrap().truncate(2);
+            fs::write(path, serde_json::to_vec(&registry).unwrap()).unwrap();
+        }
+        CaptureProvider::Lingma => {
+            fs::remove_file(root.join("config/Code/User/profiles/profile-2/settings.json"))
+                .unwrap();
+        }
+        _ => unreachable!(),
+    }
+}
+
 fn refresh(
     base: &DiscoveryContext,
     provider: CaptureProvider,
@@ -245,6 +262,211 @@ fn certificate_bytes(index: &VerifiedIndex, token: &str) -> Vec<u8> {
         .find(|source| ctx_history_index::source_token(source.observation().source()) == token)
         .unwrap();
     serde_json::to_vec(source).unwrap()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct StableSourceBytes {
+    route_identity: Vec<u8>,
+    source_token: String,
+    source: Vec<u8>,
+    sessions: Vec<Vec<u8>>,
+    events: Vec<Vec<u8>>,
+    records: Vec<Vec<u8>>,
+    certificate: Vec<u8>,
+}
+
+fn stable_source_bytes(index: &VerifiedIndex, marker: &str) -> StableSourceBytes {
+    let hits = index.search_event_candidates(marker, 8).unwrap();
+    assert_eq!(hits.len(), 1, "{marker}");
+    let source = &hits[0].event.source;
+    let route = index
+        .manifest()
+        .source_routes()
+        .iter()
+        .find(|route| route.sources().iter().any(|member| member == source))
+        .unwrap();
+    let mut sessions = hits
+        .iter()
+        .map(|hit| serde_json::to_vec(&hit.event.session_id).unwrap())
+        .collect::<Vec<_>>();
+    sessions.sort();
+    let mut events = hits
+        .iter()
+        .map(|hit| serde_json::to_vec(&hit.event.event_id).unwrap())
+        .collect::<Vec<_>>();
+    events.sort();
+    let mut records = hits
+        .iter()
+        .map(|hit| {
+            serde_json::to_vec(
+                &index
+                    .core_record_by_id(hit.event.event_id.as_uuid())
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    records.sort();
+    let token = ctx_history_index::source_token(source);
+    StableSourceBytes {
+        route_identity: serde_json::to_vec(route.route_identity()).unwrap(),
+        source_token: token.clone(),
+        source: serde_json::to_vec(source).unwrap(),
+        sessions,
+        events,
+        records,
+        certificate: certificate_bytes(index, &token),
+    }
+}
+
+#[test]
+fn unavailable_only_released_member_is_carried_while_automatic_peer_advances() {
+    for provider in [CaptureProvider::Crush, CaptureProvider::Lingma] {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture_root = fs::canonicalize(temp.path()).unwrap();
+        let data_root = fixture_root.join("single-missing-data");
+        let index_root = source_backed_index_root(&data_root);
+        ctx_history_platform::platform_security::establish_private_data_root(&data_root).unwrap();
+        let (base, roots, paths) = fixture(&fixture_root, provider);
+        retain_exactly_two_compound_sources(&fixture_root, provider);
+        let roots = &roots[..1];
+
+        refresh(&base, provider, roots, true, &data_root, &index_root);
+        let initial = VerifiedIndex::open(&index_root).unwrap();
+        assert_eq!(initial.manifest().source_routes()[0].sources().len(), 2);
+        let alpha = stable_source_bytes(&initial, "lifecycleinitial0");
+        let route = initial.manifest().provider_roots()[0].routes()[0].clone();
+        assert_root_filter(&initial, "alpha", 1);
+        drop(initial);
+
+        let absent = fixture_root.join("single-released-root-absent.db");
+        fs::rename(&paths[0], &absent).unwrap();
+        match provider {
+            CaptureProvider::Crush => insert_crush(&paths[1], 70, "automaticpeeradvanced"),
+            CaptureProvider::Lingma => insert_lingma(&paths[1], 70, "automaticpeeradvanced"),
+            _ => unreachable!(),
+        }
+
+        refresh(&base, provider, roots, true, &data_root, &index_root);
+        let missing = VerifiedIndex::open(&index_root).unwrap();
+        assert_eq!(
+            missing
+                .search_event_candidates("automaticpeeradvanced", 8)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(stable_source_bytes(&missing, "lifecycleinitial0"), alpha);
+        assert_eq!(missing.manifest().source_routes()[0].sources().len(), 2);
+        let retained = &missing.manifest().provider_roots()[0];
+        assert_eq!(retained.definition().id, "alpha");
+        assert_eq!(retained.routes(), &[route]);
+        assert_eq!(retained.exact_source_memberships().len(), 1);
+        assert_eq!(
+            retained.exact_source_memberships()[0].source_tokens(),
+            &[alpha.source_token.clone()]
+        );
+        assert_root_filter(&missing, "alpha", 1);
+    }
+}
+
+#[test]
+fn removing_final_released_alias_preserves_shared_route_history_without_refreshing_it() {
+    for provider in [CaptureProvider::Crush, CaptureProvider::Lingma] {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture_root = fs::canonicalize(temp.path()).unwrap();
+        let data_root = fixture_root.join("final-alias-data");
+        let index_root = source_backed_index_root(&data_root);
+        ctx_history_platform::platform_security::establish_private_data_root(&data_root).unwrap();
+        let (base, roots, paths) = fixture(&fixture_root, provider);
+        retain_exactly_two_compound_sources(&fixture_root, provider);
+        let roots = &roots[..1];
+
+        refresh(&base, provider, roots, true, &data_root, &index_root);
+        let initial = VerifiedIndex::open(&index_root).unwrap();
+        assert_eq!(initial.manifest().source_routes()[0].sources().len(), 2);
+        let alpha = stable_source_bytes(&initial, "lifecycleinitial0");
+        let automatic = stable_source_bytes(&initial, "lifecycleinitial1");
+        let route = initial.manifest().provider_roots()[0].routes()[0].clone();
+        drop(initial);
+
+        match provider {
+            CaptureProvider::Crush => {
+                insert_crush(&paths[0], 80, "removedfinalaliasmutation");
+                insert_crush(&paths[1], 90, "disabledautomaticmutation");
+            }
+            CaptureProvider::Lingma => {
+                insert_lingma(&paths[0], 80, "removedfinalaliasmutation");
+                insert_lingma(&paths[1], 90, "disabledautomaticmutation");
+            }
+            _ => unreachable!(),
+        }
+
+        refresh(&base, provider, &[], false, &data_root, &index_root);
+        let removed = VerifiedIndex::open(&index_root).unwrap();
+        assert!(removed.manifest().provider_roots().is_empty());
+        assert_eq!(removed.manifest().source_routes()[0].sources().len(), 2);
+        assert!(matches!(
+            removed
+                .manifest()
+                .provider_root_source_tokens(&["alpha".to_owned()], &[]),
+            Err(ctx_history_index::IndexError::UnknownProviderRootSelector(id)) if id == "alpha"
+        ));
+        assert_eq!(stable_source_bytes(&removed, "lifecycleinitial0"), alpha);
+        assert_eq!(
+            stable_source_bytes(&removed, "lifecycleinitial1"),
+            automatic
+        );
+        assert_eq!(
+            serde_json::to_vec(removed.manifest().source_routes()[0].route_identity()).unwrap(),
+            serde_json::to_vec(&route).unwrap()
+        );
+        assert!(removed
+            .search_event_candidates("removedfinalaliasmutation", 8)
+            .unwrap()
+            .is_empty());
+        assert!(removed
+            .search_event_candidates("disabledautomaticmutation", 8)
+            .unwrap()
+            .is_empty());
+        drop(removed);
+
+        refresh(&base, provider, &[], true, &data_root, &index_root);
+        let resumed = VerifiedIndex::open(&index_root).unwrap();
+        assert!(resumed.manifest().provider_roots().is_empty());
+        assert!(matches!(
+            resumed
+                .manifest()
+                .provider_root_source_tokens(&["alpha".to_owned()], &[]),
+            Err(ctx_history_index::IndexError::UnknownProviderRootSelector(id)) if id == "alpha"
+        ));
+        assert_eq!(
+            resumed
+                .search_event_candidates("disabledautomaticmutation", 8)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            resumed
+                .search_event_candidates("lifecycleinitial0", 8)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            resumed
+                .search_event_candidates("lifecycleinitial1", 8)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            resumed.manifest().source_routes()[0].route_identity(),
+            &route
+        );
+    }
 }
 
 #[test]

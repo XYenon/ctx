@@ -813,6 +813,7 @@ where
         data_root,
         observe,
         SourceAnchorScope::Unqualified,
+        SqliteInventoryCoverage::Complete,
     )
 }
 
@@ -822,6 +823,7 @@ pub fn discovered_lingma_registration_scoped<L, S, F>(
     data_root: &Path,
     observe: F,
     source_scope: SourceAnchorScope,
+    coverage: SqliteInventoryCoverage,
 ) -> std::result::Result<
     SqliteInventoryRegistration<
         impl ReplacementDocumentTree<
@@ -842,11 +844,7 @@ where
 {
     let inventory = discovered_lingma_inventory_source(&source, observe, source_scope)?;
     Ok(lingma_inventory_registration(
-        source,
-        selection,
-        data_root,
-        inventory,
-        SqliteInventoryCoverage::Complete,
+        source, selection, data_root, inventory, coverage,
     ))
 }
 

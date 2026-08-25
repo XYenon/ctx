@@ -125,12 +125,13 @@ fn configured_provider_root_identity_matching_rejects_duplicate_stable_ids() {
 #[test]
 fn incompatible_provider_or_kind_replacement_retires_only_authenticated_root_routes() {
     use ctx_history_capture::{ProviderRootDefinition, ProviderRootKind};
-    use ctx_history_index::AppliedProviderRoot;
+    use ctx_history_index::{AppliedProviderRoot, AppliedProviderRootSourceMembership};
 
     let route = |byte: &str| SourceRouteIdentity::from_sha256(byte.repeat(64)).unwrap();
     let replaced_provider_route = route("1");
     let replaced_kind_route = route("2");
     let compatible_route = route("3");
+    let exact_shared_route = route("4");
     let applied = |definition, route| {
         AppliedProviderRoot::with_source_identity(
             definition,
@@ -170,6 +171,24 @@ fn incompatible_provider_or_kind_replacement_retires_only_authenticated_root_rou
             },
             compatible_route,
         ),
+        AppliedProviderRoot::with_source_identity(
+            ProviderRootDefinition {
+                id: "removed-exact-subset".to_owned(),
+                provider: CaptureProvider::Crush,
+                path: "/old/crush.db".into(),
+                group: None,
+                kind: None,
+            },
+            ProviderRootSourceIdentity::Released,
+            vec![exact_shared_route.clone()],
+        )
+        .unwrap()
+        .with_exact_source_memberships(vec![AppliedProviderRootSourceMembership::exact(
+            exact_shared_route,
+            vec!["ab".repeat(32)],
+        )
+        .unwrap()])
+        .unwrap(),
     ];
     let desired = vec![
         ProviderRootDefinition {

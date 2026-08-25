@@ -13,6 +13,37 @@ pub(super) struct ReleasedCompoundRootSource {
     pub(super) identity_root: PathBuf,
 }
 
+pub(super) fn released_compound_inventory_coverage(
+    provider: CaptureProvider,
+    discovery: &DiscoveryContext,
+    available: &[ReleasedCompoundRootSource],
+    registrations: &BTreeMap<String, ProviderRootRegistration>,
+) -> SqliteInventoryCoverage {
+    if !matches!(provider, CaptureProvider::Crush | CaptureProvider::Lingma) {
+        return SqliteInventoryCoverage::Complete;
+    }
+    let configured_released = discovery
+        .configured_provider_roots()
+        .iter()
+        .filter(|root| {
+            root.provider == provider
+                && registrations.get(&root.id).is_some_and(|registration| {
+                    registration.source_identity == ProviderRootSourceIdentity::Released
+                })
+        })
+        .count();
+    let available_released = available
+        .iter()
+        .filter(|root| root.source.provider == provider)
+        .count();
+    if discovery.automatic_provider_discovery_enabled() && available_released == configured_released
+    {
+        SqliteInventoryCoverage::Complete
+    } else {
+        SqliteInventoryCoverage::SelectedSubset
+    }
+}
+
 pub(super) fn released_compound_root_sources(
     discovery: &DiscoveryContext,
     sources: &[ProviderSource],

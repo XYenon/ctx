@@ -402,6 +402,12 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
             format_route,
             source.clone(),
             coexistence_lineage,
+            released_compound_inventory_coverage(
+                source.provider,
+                discovery,
+                &released_compound_sources,
+                &provider_root_registrations,
+            ),
         ) {
             Ok(()) => {
                 if compound_provider {
@@ -594,6 +600,7 @@ fn register_discovered_automatic_route(
     format_route: &'static SourceBackedProviderRouteMetadata,
     source: ProviderSource,
     source_root_lineage: Option<[u8; 32]>,
+    inventory_coverage: SqliteInventoryCoverage,
 ) -> Result<(), SourceBackedAutomaticUnavailableReason> {
     let Some(source_root_lineage) = source_root_lineage else {
         return register_discovered_automatic_route_scoped(
@@ -604,6 +611,7 @@ fn register_discovered_automatic_route(
             format_route,
             source,
             None,
+            inventory_coverage,
         );
     };
     let provider = source.provider;
@@ -616,6 +624,7 @@ fn register_discovered_automatic_route(
         format_route,
         source,
         Some(source_root_lineage),
+        inventory_coverage,
     )?;
     if scoped.routes.len() != 1 {
         return Err(
@@ -645,6 +654,7 @@ fn register_discovered_automatic_route_scoped(
     format_route: &'static SourceBackedProviderRouteMetadata,
     source: ProviderSource,
     source_root_lineage: Option<[u8; 32]>,
+    inventory_coverage: SqliteInventoryCoverage,
 ) -> Result<(), SourceBackedAutomaticUnavailableReason> {
     let result = match (format_route.constructor, source.provider) {
         (SourceBackedRouteConstructor::NamedSurface, CaptureProvider::Warp) => {
@@ -688,7 +698,7 @@ fn register_discovered_automatic_route_scoped(
                 data_root,
                 inventory_source,
                 source_root_lineage,
-                ctx_history_providers_sqlite_inventory::registration::SqliteInventoryCoverage::Complete,
+                inventory_coverage,
             )
         }
         (SourceBackedRouteConstructor::FiniteInventory, CaptureProvider::Lingma) => {
@@ -707,6 +717,7 @@ fn register_discovered_automatic_route_scoped(
                         ctx_history_core::SourceAnchorScope::Unqualified,
                         ctx_history_core::SourceAnchorScope::Lineage,
                     ),
+                    inventory_coverage,
                 )
                 .map_err(|error| match error {
                     ctx_history_providers_sqlite_inventory::registration::LingmaRegistrationError::SelectorAuthorityUnavailable(detail) => {

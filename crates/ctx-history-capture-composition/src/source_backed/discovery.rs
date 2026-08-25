@@ -3,8 +3,8 @@ use super::*;
 mod provider_roots;
 mod registry;
 use provider_roots::{
-    applied_provider_roots, released_compound_root_sources, ReleasedCompoundRootSource,
-    ReleasedProviderRootRoute,
+    applied_provider_roots, released_compound_inventory_coverage, released_compound_root_sources,
+    ReleasedCompoundRootSource, ReleasedProviderRootRoute,
 };
 #[cfg(test)]
 pub(in crate::source_backed) use registry::build_automatic_source_backed_registry_from_parts;
@@ -342,29 +342,12 @@ fn register_released_provider_root_route(
     scan_source.route_provenance = identity_source.route_provenance.clone();
     let mut scoped = SourceBackedProviderRegistry::new();
     let mut exact_source_token = None;
-    let available_released_roots = released_compound_sources
-        .iter()
-        .filter(|root| root.source.provider == configured_source.provider)
-        .count();
-    let configured_released_roots = discovery
-        .configured_provider_roots()
-        .iter()
-        .filter(|root| {
-            root.provider == configured_source.provider
-                && provider_root_registrations
-                    .get(&root.id)
-                    .is_some_and(|registration| {
-                        registration.source_identity == ProviderRootSourceIdentity::Released
-                    })
-        })
-        .count();
-    let inventory_coverage = if discovery.automatic_provider_discovery_enabled()
-        && available_released_roots == configured_released_roots
-    {
-        SqliteInventoryCoverage::Complete
-    } else {
-        SqliteInventoryCoverage::SelectedSubset
-    };
+    let inventory_coverage = released_compound_inventory_coverage(
+        configured_source.provider,
+        discovery,
+        released_compound_sources,
+        provider_root_registrations,
+    );
     match configured_source.provider {
         CaptureProvider::OpenClaw => {
             register_landed_source_backed_route_with_data_root_and_lineage(

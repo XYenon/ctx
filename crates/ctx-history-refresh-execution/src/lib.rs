@@ -329,7 +329,12 @@ fn incompatible_configured_provider_root_routes(
                 .iter()
                 .any(|current| provider_root_retention_compatible(root.definition(), current))
         })
-        .flat_map(|root| root.routes().iter().cloned())
+        .flat_map(|root| {
+            root.routes()
+                .iter()
+                .filter(|route| root.exact_source_tokens_for_route(route).is_none())
+                .cloned()
+        })
         .collect()
 }
 
