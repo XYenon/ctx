@@ -412,7 +412,12 @@ fn configured_root_missing_route_inventory_is_exhaustive_when_automatic_is_false
     let report = discover_provider_sources_with_context(&TEST_PROVIDER_PROBES, &context);
 
     assert_eq!(report.sources.len(), 41);
-    assert!(report.issues.is_empty());
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(report.issues[0].provider, CaptureProvider::OpenClaw);
+    assert_eq!(
+        report.issues[0].kind,
+        DiscoveryIssueKind::ConfiguredRootMissing
+    );
     assert!(report
         .sources
         .iter()

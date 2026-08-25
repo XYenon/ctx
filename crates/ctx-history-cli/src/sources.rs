@@ -145,7 +145,7 @@ where
 }
 
 #[cfg(test)]
-use ctx_history_ingest_application::{merge_sources, source_identity, source_is_visible};
+use ctx_history_ingest_application::{merge_sources, source_is_visible};
 
 #[derive(Clone, Copy)]
 struct SourcesHumanRenderInput<'a> {
@@ -648,7 +648,14 @@ mod ui_tests {
     fn source_merge_is_stable_and_keeps_configured_missing_sources_visible() {
         let automatic = source(ProviderSourceStatus::Available, "/tmp/shared-history");
         let configured_duplicate = automatic.clone();
-        let configured_missing = source(ProviderSourceStatus::Missing, "/tmp/configured-missing");
+        let mut configured_missing =
+            source(ProviderSourceStatus::Missing, "/tmp/configured-missing");
+        configured_missing.route_provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
+            root_id: "configured".to_owned(),
+            root_path: configured_missing.path.clone(),
+            route_role: ProviderRouteRole::from_static("codex-sessions"),
+            automatic_route_role: None,
+        };
         let mut merged = vec![automatic];
         merge_sources(
             &mut merged,
@@ -665,21 +672,10 @@ mod ui_tests {
             ]
         );
 
-        let configured = [source_identity(&configured_missing)].into_iter().collect();
-        assert!(source_is_visible(
-            &configured_missing,
-            false,
-            &configured,
-            &[]
-        ));
+        assert!(source_is_visible(&configured_missing, false, &[], &[]));
         let mut unknown_missing = source(ProviderSourceStatus::Missing, "/tmp/unknown-missing");
         unknown_missing.provider = CaptureProvider::Goose;
-        assert!(!source_is_visible(
-            &unknown_missing,
-            false,
-            &configured,
-            &[]
-        ));
+        assert!(!source_is_visible(&unknown_missing, false, &[], &[]));
     }
 
     #[test]
