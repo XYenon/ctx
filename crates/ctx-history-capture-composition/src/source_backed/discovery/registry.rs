@@ -1,5 +1,8 @@
 use super::*;
 
+mod platform_roots;
+pub(super) use platform_roots::goose_platform_root;
+
 pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
     probes: &StaticProviderProbeCatalog,
     discovery: &DiscoveryContext,
@@ -855,43 +858,6 @@ fn automatic_registration_rejected(
         kind,
         detail: error.to_string(),
     }
-}
-
-pub(super) fn goose_platform_root(
-    discovery: &DiscoveryContext,
-    database: &Path,
-) -> Option<PathBuf> {
-    if let Some(root) = discovery
-        .env("GOOSE_PATH_ROOT")
-        .filter(|value| !value.is_empty())
-    {
-        let root = PathBuf::from(root);
-        if root.is_absolute() && database == root.join("data/sessions/sessions.db") {
-            return Some(root);
-        }
-    }
-    let root = match discovery.platform() {
-        DiscoveryPlatform::Linux | DiscoveryPlatform::MacOS => {
-            match discovery.env("XDG_DATA_HOME") {
-                Some(value) if !value.is_empty() && Path::new(value).is_absolute() => {
-                    PathBuf::from(value).join("goose")
-                }
-                _ => discovery.home().join(".local/share/goose"),
-            }
-        }
-        DiscoveryPlatform::Windows => discovery
-            .platform_dirs()
-            .data
-            .as_ref()?
-            .join("Block/goose/data"),
-        DiscoveryPlatform::OtherUnix => {
-            let value = discovery
-                .env("XDG_DATA_HOME")
-                .filter(|value| !value.is_empty() && Path::new(value).is_absolute())?;
-            PathBuf::from(value).join("goose")
-        }
-    };
-    (database == root.join("sessions/sessions.db")).then_some(root)
 }
 
 const fn warp_discovery_unavailable_detail(error: WarpDiscoveryUnavailable) -> &'static str {
