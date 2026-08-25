@@ -3,7 +3,7 @@ use std::path::Path;
 use ctx_history_core::{SourceAnchor, SourceAnchorScope, TypedKey};
 use ctx_history_provider_hermes::registration::{
     hermes_automatic_registration_scoped, hermes_explicit_registration,
-    hermes_explicit_registration_scoped,
+    hermes_explicit_registration_scoped, hermes_released_registration_scoped,
 };
 
 use super::*;
@@ -44,6 +44,24 @@ pub(super) fn register_hermes_source_backed_route(
         )
     }
     .map_err(|error| invalid_route(provider, error.to_string()))?;
+    install_hermes_registration(registry, registration)
+}
+
+pub(super) fn register_hermes_released_source_backed_route(
+    registry: &mut SourceBackedProviderRegistry,
+    source: ProviderSource,
+    data_root: &Path,
+    identity_path: &Path,
+) -> SourceBackedCoordinatorResult<()> {
+    let provider = source.provider;
+    let registration =
+        hermes_released_registration_scoped::<CaptureDocumentLifecycle, CaptureDocumentSpool>(
+            source,
+            data_root,
+            identity_path,
+            SourceAnchorScope::Unqualified,
+        )
+        .map_err(|error| invalid_route(provider, error.to_string()))?;
     install_hermes_registration(registry, registration)
 }
 

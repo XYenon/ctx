@@ -141,6 +141,24 @@ impl SourceBackedRoute {
         Ok(())
     }
 
+    pub(in crate::source_backed) fn apply_released_automatic_identity(
+        &mut self,
+        identity_source: &ProviderSource,
+        configured_source: ProviderSource,
+    ) -> SourceBackedCoordinatorResult<()> {
+        if self.metadata.selection != Some(SourceBackedRouteSelection::Automatic) {
+            return Err(invalid_route(
+                self.metadata.source.provider,
+                "released identity requires an automatic route",
+            ));
+        }
+        self.metadata.route_identity =
+            Some(automatic_source_backed_route_identity(identity_source)?);
+        self.metadata.source = configured_source.clone();
+        self.registration_sources = vec![configured_source];
+        Ok(())
+    }
+
     pub fn automatic(
         source: ProviderSource,
         selector_authority: SourceBackedSelectorAuthority,
@@ -539,9 +557,10 @@ impl SourceBackedProviderRegistry {
             if previous.routes().is_empty() {
                 continue;
             }
-            *root = AppliedProviderRoot::with_source_identity(
+            *root = AppliedProviderRoot::with_source_identity_and_released_identity_root(
                 definition,
                 previous.source_identity(),
+                previous.released_identity_root().map(Path::to_path_buf),
                 previous.routes().to_vec(),
             )
             .map_err(SourceBackedCoordinatorError::Index)?;

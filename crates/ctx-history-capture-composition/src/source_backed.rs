@@ -49,10 +49,11 @@ pub use ctx_history_providers_sqlite_inventory::{
 };
 use ctx_history_source_discovery::{
     path_presence, provider_paths_equivalent, provider_source_belongs_to_configured_root,
+    resolve_crush_released_project_inventory, resolve_lingma_released_identity_authority,
     resolve_openhands_conversations_root, resolve_warp_discovery_authority,
-    CrushDiscoveredProjectInventory, CrushProjectInventorySelector,
-    CrushProjectInventorySelectorError, LingmaInventorySelector, PathPresence,
-    WarpDiscoveryUnavailable,
+    resolve_warp_released_identity_authority, CrushDiscoveredProjectInventory,
+    CrushProjectInventorySelector, CrushProjectInventorySelectorError, LingmaInventorySelector,
+    PathPresence, WarpDiscoveryUnavailable,
 };
 
 mod automatic_route_split;

@@ -5,8 +5,8 @@ use std::{
 
 use ctx_history_core::TypedKey;
 use ctx_history_providers_sqlite_inventory::registration::{
-    astrbot_registration_scoped, crush_registration_scoped, lingma_registration_scoped,
-    shelley_registration,
+    astrbot_registration_scoped, astrbot_released_registration_scoped, crush_registration_scoped,
+    lingma_registration_scoped, shelley_registration,
 };
 
 use super::*;
@@ -35,6 +35,26 @@ pub fn register_astrbot_source_backed_route(
             ),
         ),
     )
+}
+
+pub fn register_astrbot_released_source_backed_route(
+    registry: &mut SourceBackedProviderRegistry,
+    source: ProviderSource,
+    identity_source: ProviderSource,
+    identity_home: &Path,
+    data_root: &Path,
+) -> SourceBackedCoordinatorResult<()> {
+    let provider = source.provider;
+    let registration =
+        astrbot_released_registration_scoped::<CaptureDocumentLifecycle, CaptureDocumentSpool>(
+            source,
+            identity_source,
+            identity_home,
+            data_root,
+            ctx_history_core::SourceAnchorScope::Unqualified,
+        )
+        .map_err(|error| invalid_route(provider, error.to_string()))?;
+    install_sqlite_inventory_registration(registry, registration)
 }
 
 pub fn register_crush_source_backed_route<I>(

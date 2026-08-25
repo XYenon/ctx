@@ -236,6 +236,21 @@ pub fn resolve_warp_discovery_authority(
         .ok_or(WarpDiscoveryUnavailable::SourceNotSelected)
 }
 
+/// Reconstructs the installed-surface selector for a previously certified
+/// automatic path without requiring that immutable identity path to remain
+/// present. The returned path is identity-only; callers must keep filesystem
+/// access bound to their current configured root.
+pub fn resolve_warp_released_identity_authority(
+    probes: &StaticProviderProbeCatalog,
+    context: &DiscoveryContext,
+    identity_path: &std::path::Path,
+) -> Result<DiscoveredWarpSource, WarpDiscoveryUnavailable> {
+    discover_warp_sources_with_authority(probes, context)?
+        .into_iter()
+        .find(|candidate| candidate.source().path == identity_path)
+        .ok_or(WarpDiscoveryUnavailable::SourceNotSelected)
+}
+
 pub(crate) fn installed_platform(
     platform: DiscoveryPlatform,
 ) -> Result<WarpInstalledPlatform, WarpDiscoveryUnavailable> {

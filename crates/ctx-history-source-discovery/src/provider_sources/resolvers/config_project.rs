@@ -32,8 +32,9 @@ mod vibe;
 #[cfg(test)]
 use crush::CrushProjectSelectorKey;
 pub use crush::{
-    CrushDiscoveredProjectInventory, CrushProjectInventorySelector,
-    CrushProjectInventorySelectorError,
+    resolve_crush_released_project_inventory, CrushDiscoveredProjectInventory,
+    CrushProjectInventorySelector, CrushProjectInventorySelectorError,
+    CrushReleasedProjectInventory,
 };
 
 const PI_FORMAT: &str = "pi_session_jsonl";

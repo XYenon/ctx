@@ -34,13 +34,13 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
         catalog_route_bindings: previous_catalog_route_bindings,
         route_controls: previous_route_controls,
     } = published_state.open_published_state(data_root)?;
-    let provider_root_identities =
-        configured_provider_root_identities(discovery, retained_generation.as_ref())?;
-    let mut build = build_automatic_source_backed_registry_from_report_with_root_identities(
+    let retained_provider_roots =
+        configured_retained_provider_roots(discovery, retained_generation.as_ref())?;
+    let mut build = build_automatic_source_backed_registry_from_report_with_retained_roots(
         discovery,
         data_root,
         report,
-        &provider_root_identities,
+        &retained_provider_roots,
     );
     build.discovery_duration = discovery_duration;
     let requested_catalog_route_bindings = explicit_source_catalog
@@ -94,16 +94,15 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
     let previous_provider_root_routes = retained_generation
         .as_ref()
         .map(|generation| {
-            let desired_root_ids = discovery
-                .configured_provider_roots()
-                .iter()
-                .map(|root| root.id.as_str())
-                .collect::<BTreeSet<_>>();
             generation
                 .manifest()
                 .provider_roots()
                 .iter()
-                .filter(|root| !desired_root_ids.contains(root.definition().id.as_str()))
+                .filter(|root| {
+                    !discovery.configured_provider_roots().iter().any(|desired| {
+                        provider_root_retention_compatible(root.definition(), desired)
+                    })
+                })
                 .flat_map(|root| root.routes().iter().cloned())
                 .collect::<BTreeSet<_>>()
         })
@@ -129,14 +128,12 @@ pub(super) fn build_merged_source_backed_registry_with_automatic_routes(
         .into_iter()
         .collect::<BTreeSet<_>>();
     if let Some(retained) = retained_generation.as_ref() {
-        let desired_root_ids = discovery
-            .configured_provider_roots()
-            .iter()
-            .map(|root| root.id.as_str())
-            .collect::<BTreeSet<_>>();
         for root in retained.manifest().provider_roots().iter().filter(|root| {
             root.source_identity() == ProviderRootSourceIdentity::Released
-                && !desired_root_ids.contains(root.definition().id.as_str())
+                && !discovery
+                    .configured_provider_roots()
+                    .iter()
+                    .any(|desired| provider_root_retention_compatible(root.definition(), desired))
         }) {
             let coexistence_lineage =
                 automatic_provider_root_coexistence_source_lineage(root.definition());

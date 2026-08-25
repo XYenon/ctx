@@ -114,6 +114,42 @@ where
     ))
 }
 
+/// Reconstructs a Released automatic profile identity while scanning only the
+/// current configured database path.
+pub fn hermes_released_registration_scoped<L, S>(
+    source: ProviderSource,
+    data_root: &Path,
+    identity_path: &Path,
+    source_scope: SourceAnchorScope,
+) -> Result<
+    HermesRegistration<
+        impl ReplacementDocumentTree<
+            Lifecycle = L,
+            Spool = S,
+            RouteControl = crate::ProviderRouteControlExpectation,
+        >,
+    >,
+>
+where
+    L: CaptureLifecycleSink + 'static,
+    L::PinnedAppendBase: Clone + Send + Sync + 'static,
+    S: DocumentRecordSpool,
+{
+    let candidate = crate::provider::source_backed::HermesSourceCandidate::released_scoped(
+        data_root,
+        source.clone(),
+        identity_path,
+        source_scope,
+    )
+    .map_err(|error| CaptureError::InvalidPayload(error.to_string()))?;
+    Ok(HermesRegistration::new(
+        source,
+        SourceBackedRouteSelection::Automatic,
+        SourceBackedSelectorAuthority::DiscoveredWinner,
+        crate::provider::source_backed::replacement::HermesDocumentAdapter::new(candidate),
+    ))
+}
+
 pub fn hermes_explicit_registration<L, S>(
     source: ProviderSource,
     data_root: &Path,

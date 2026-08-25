@@ -97,7 +97,7 @@ pub use provider::source_backed::{
     automatic_provider_root_coexistence_route_identity,
     automatic_provider_root_coexistence_source_lineage, automatic_source_backed_route_identity,
     build_automatic_source_backed_registry, build_automatic_source_backed_registry_from_report,
-    build_automatic_source_backed_registry_from_report_with_root_identities,
+    build_automatic_source_backed_registry_from_report_with_retained_roots,
     explicit_source_catalog_lineage, legacy_automatic_source_backed_route_identity,
     prepare_automatic_route_splits, refresh_source_backed_generation,
     refresh_source_backed_generation_for_routes,

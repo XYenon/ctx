@@ -118,7 +118,7 @@ fn configured_provider_root_identity_matching_rejects_duplicate_stable_ids() {
         .to_vec();
     let discovery = discovery.with_configured_provider_roots(roots);
 
-    let error = configured_provider_root_identities(&discovery, None).unwrap_err();
+    let error = configured_retained_provider_roots(&discovery, None).unwrap_err();
     assert!(error.to_string().contains("not unique"), "{error:#}");
 }
 

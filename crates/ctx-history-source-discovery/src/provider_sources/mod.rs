@@ -82,15 +82,18 @@ pub use discovery::{
 };
 pub use lingma::{
     discover_lingma_inventory_with_authority, resolve_lingma_discovery_authority,
-    DiscoveredLingmaDatabase, LingmaDatabaseCatalogLineage, LingmaDiscoveredInventory,
-    LingmaDiscoveryUnavailable, LingmaInventorySelector, LingmaVscodeClient, LingmaVscodeProfile,
+    resolve_lingma_released_identity_authority, DiscoveredLingmaDatabase,
+    LingmaDatabaseCatalogLineage, LingmaDiscoveredInventory, LingmaDiscoveryUnavailable,
+    LingmaInventorySelector, LingmaVscodeClient, LingmaVscodeProfile,
 };
 
 pub use resolvers::PathPresence;
 pub use resolvers::{
     path_presence, provider_paths_equivalent, provider_source_belongs_to_configured_root,
-    released_provider_home, resolve_openhands_conversations_root, CrushDiscoveredProjectInventory,
+    released_provider_home, resolve_crush_released_project_inventory,
+    resolve_openhands_conversations_root, CrushDiscoveredProjectInventory,
     CrushProjectInventorySelector, CrushProjectInventorySelectorError,
+    CrushReleasedProjectInventory,
 };
 pub use specs::{provider_source_spec, provider_source_specs};
 pub use types::{
@@ -100,9 +103,9 @@ pub use types::{
     ProviderSourceStatusReason,
 };
 pub use warp::{
-    discover_warp_sources_with_authority, resolve_warp_discovery_authority, DiscoveredWarpSource,
-    WarpDiscoveryUnavailable, WarpInstalledPlatform, WarpInstalledSurfaceKey, WarpReleaseChannel,
-    WarpTerminalSurface,
+    discover_warp_sources_with_authority, resolve_warp_discovery_authority,
+    resolve_warp_released_identity_authority, DiscoveredWarpSource, WarpDiscoveryUnavailable,
+    WarpInstalledPlatform, WarpInstalledSurfaceKey, WarpReleaseChannel, WarpTerminalSurface,
 };
 
 #[cfg(test)]

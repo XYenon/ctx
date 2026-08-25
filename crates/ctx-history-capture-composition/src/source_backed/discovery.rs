@@ -152,7 +152,7 @@ pub fn build_automatic_source_backed_registry_from_report_with_probes(
     data_root: &Path,
     report: DiscoveryReport,
 ) -> SourceBackedAutomaticRegistryBuild {
-    build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+    build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
         probes,
         discovery,
         data_root,
@@ -162,12 +162,12 @@ pub fn build_automatic_source_backed_registry_from_report_with_probes(
 }
 
 #[doc(hidden)]
-pub fn build_automatic_source_backed_registry_from_report_with_probes_and_root_identities(
+pub fn build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
     probes: &StaticProviderProbeCatalog,
     discovery: &DiscoveryContext,
     data_root: &Path,
     report: DiscoveryReport,
-    provider_root_identities: &BTreeMap<String, ProviderRootSourceIdentity>,
+    retained_provider_roots: &BTreeMap<String, AppliedProviderRoot>,
 ) -> SourceBackedAutomaticRegistryBuild {
     build_automatic_source_backed_registry_from_parts_with_probes(
         probes,
@@ -175,7 +175,7 @@ pub fn build_automatic_source_backed_registry_from_report_with_probes_and_root_i
         data_root,
         report.sources,
         report.issues,
-        provider_root_identities,
+        retained_provider_roots,
     )
 }
 
@@ -185,19 +185,19 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
     data_root: &Path,
     sources: Vec<ProviderSource>,
     discovery_issues: Vec<DiscoveryIssue>,
-    provider_root_identities: &BTreeMap<String, ProviderRootSourceIdentity>,
+    retained_provider_roots: &BTreeMap<String, AppliedProviderRoot>,
 ) -> SourceBackedAutomaticRegistryBuild {
     let canonical_automatic =
         ctx_history_source_discovery::discover_canonical_automatic_provider_sources_with_context(
             probes, discovery,
         );
     let canonical_automatic_sources = canonical_automatic.sources;
-    let provider_root_identities = normalized_provider_root_identities(
+    let provider_root_registrations = normalized_provider_root_registrations(
         discovery,
         &sources,
         &canonical_automatic_sources,
         data_root,
-        provider_root_identities,
+        retained_provider_roots,
     );
     let mut registry = SourceBackedProviderRegistry::new();
     let mut issues = discovery_issues
@@ -221,15 +221,11 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
             .and_then(|_| source.route_provenance.route_role())
             .cloned();
         let configured_source_identity = configured_root.map(|root| {
-            provider_root_identities
+            provider_root_registrations
                 .get(&root.id)
-                .copied()
+                .map(|registration| registration.source_identity)
                 .unwrap_or_else(|| default_provider_root_source_identity(discovery, root))
         });
-        let matched_automatic_source = configured_source_identity
-            .filter(|identity| *identity == ProviderRootSourceIdentity::Released)
-            .and_then(|_| matched_canonical_automatic_source(&source, &canonical_automatic_sources))
-            .cloned();
         if let Err(error) =
             validate_provider_source_roots_outside_data_root(data_root, std::iter::once(&source))
         {
@@ -388,51 +384,52 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 );
                 continue;
             };
-            if let Some(matched_automatic_source) = matched_automatic_source
-                .as_ref()
-                .filter(|_| released_root_uses_automatic_registration(source.provider))
+            if configured_source_identity == Some(ProviderRootSourceIdentity::Released)
+                && released_root_uses_automatic_registration(source.provider)
             {
-                let mut released_source = source.clone();
-                apply_matched_automatic_route_role(&mut released_source, matched_automatic_source);
-                let automatic_registration_source = matched_automatic_source.clone();
+                let identity_root = provider_root_registrations
+                    .get(&configured_root.id)
+                    .and_then(|registration| registration.released_identity_root.as_deref());
                 let compound_provider = matches!(
                     format_route.constructor,
                     SourceBackedRouteConstructor::FiniteInventory
                         | SourceBackedRouteConstructor::DiscoveryContext
                 );
-                let registration = register_discovered_automatic_route(
-                    &mut registry,
-                    probes,
-                    discovery,
-                    data_root,
-                    format_route,
-                    automatic_registration_source.clone(),
-                    None,
-                )
-                .and_then(|()| {
-                    bind_released_route_to_configured_root(
-                        &mut registry,
-                        &automatic_registration_source,
-                        released_source.clone(),
-                    )
-                    .map_err(automatic_registration_rejected)
-                });
+                let registration = identity_root.map_or_else(
+                    || {
+                        Err(SourceBackedAutomaticUnavailableReason::SelectorAuthorityUnavailable {
+                            detail: "released provider root has no immutable automatic identity root",
+                        })
+                    },
+                    |identity_root| {
+                        register_released_provider_root_route(
+                            &mut registry,
+                            probes,
+                            discovery,
+                            data_root,
+                            configured_root,
+                            source.clone(),
+                            identity_root,
+                        )
+                        .map_err(automatic_registration_rejected)
+                    },
+                );
                 match registration {
                     Ok(()) => {
                         if compound_provider {
-                            compound_provider_registered.insert(released_source.provider);
+                            compound_provider_registered.insert(source.provider);
                         }
                     }
                     Err(reason) => {
                         if compound_provider {
-                            compound_provider_registered.insert(released_source.provider);
+                            compound_provider_registered.insert(source.provider);
                         }
                         registry.register(SourceBackedRoute::unsupported(
-                            released_source.clone(),
+                            source.clone(),
                             automatic_unavailable_detail(&reason),
                         ));
                         issues.push(SourceBackedAutomaticRegistryIssue::Unavailable {
-                            source: released_source,
+                            source,
                             reason,
                         });
                     }
@@ -525,16 +522,18 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
             SourceBackedRouteConstructor::FiniteInventory
                 | SourceBackedRouteConstructor::DiscoveryContext
         );
-        if compound_provider && compound_provider_registered.contains(&source.provider) {
-            continue;
-        }
-
         let coexistence_lineage = released_root_automatic_coexistence_lineage(
             &registry,
             discovery,
-            &provider_root_identities,
+            &provider_root_registrations,
             &source,
         );
+        if compound_provider
+            && compound_provider_registered.contains(&source.provider)
+            && coexistence_lineage.is_none()
+        {
+            continue;
+        }
         match register_discovered_automatic_route(
             &mut registry,
             probes,
@@ -631,14 +630,15 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
                 })
                 .filter_map(|route| route.metadata.route_identity.clone())
                 .collect::<Vec<_>>();
-            AppliedProviderRoot::with_source_identity(
+            let registration = provider_root_registrations.get(&definition.id);
+            AppliedProviderRoot::with_source_identity_and_released_identity_root(
                 definition.clone(),
-                provider_root_identities
-                    .get(&definition.id)
-                    .copied()
+                registration
+                    .map(|registration| registration.source_identity)
                     .unwrap_or_else(|| {
                         default_provider_root_source_identity(discovery, definition)
                     }),
+                registration.and_then(|registration| registration.released_identity_root.clone()),
                 routes,
             )
             .map_err(SourceBackedCoordinatorError::Index)
@@ -693,13 +693,19 @@ fn build_automatic_source_backed_registry_from_parts_with_probes(
     }
 }
 
-fn normalized_provider_root_identities(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderRootRegistration {
+    source_identity: ProviderRootSourceIdentity,
+    released_identity_root: Option<PathBuf>,
+}
+
+fn normalized_provider_root_registrations(
     discovery: &DiscoveryContext,
     configured_sources: &[ProviderSource],
     canonical_automatic_sources: &[ProviderSource],
     data_root: &Path,
-    retained: &BTreeMap<String, ProviderRootSourceIdentity>,
-) -> BTreeMap<String, ProviderRootSourceIdentity> {
+    retained: &BTreeMap<String, AppliedProviderRoot>,
+) -> BTreeMap<String, ProviderRootRegistration> {
     // Composition may run after the discovery report crossed an I/O boundary,
     // so the canonical automatic view is deliberately revalidated before it
     // can grant a *new* Released owner. Any TOCTOU change (including a root
@@ -711,7 +717,8 @@ fn normalized_provider_root_identities(
     let mut identities = BTreeMap::new();
     for root in discovery.configured_provider_roots() {
         let provider = root.provider.as_str().to_owned();
-        let identity = match retained.get(&root.id).copied() {
+        let retained_root = retained.get(&root.id);
+        let identity = match retained_root.map(AppliedProviderRoot::source_identity) {
             Some(ProviderRootSourceIdentity::Released)
                 if !released_owner.contains_key(&provider) =>
             {
@@ -732,7 +739,29 @@ fn normalized_provider_root_identities(
             }
             None => ProviderRootSourceIdentity::NamedV1,
         };
-        identities.insert(root.id.clone(), identity);
+        let released_identity_root = match identity {
+            ProviderRootSourceIdentity::Released => retained_root
+                .and_then(AppliedProviderRoot::released_identity_root)
+                .map(Path::to_path_buf)
+                .or_else(|| retained_root.map(|root| root.definition().path.clone()))
+                .or_else(|| {
+                    configured_root_matches_canonical_automatic_routes(
+                        root,
+                        configured_sources,
+                        canonical_automatic_sources,
+                        data_root,
+                    )
+                    .then(|| root.path.clone())
+                }),
+            ProviderRootSourceIdentity::NamedV1 => None,
+        };
+        identities.insert(
+            root.id.clone(),
+            ProviderRootRegistration {
+                source_identity: identity,
+                released_identity_root,
+            },
+        );
     }
     identities
 }
@@ -779,41 +808,263 @@ fn matched_canonical_automatic_source<'a>(
     })
 }
 
-fn apply_matched_automatic_route_role(configured: &mut ProviderSource, automatic: &ProviderSource) {
-    let ProviderSourceRouteProvenance::ConfiguredRoot {
+fn register_released_provider_root_route(
+    registry: &mut SourceBackedProviderRegistry,
+    probes: &StaticProviderProbeCatalog,
+    discovery: &DiscoveryContext,
+    data_root: &Path,
+    configured_root: &ProviderRootDefinition,
+    configured_source: ProviderSource,
+    identity_root: &Path,
+) -> SourceBackedCoordinatorResult<()> {
+    let mut identity_source =
+        released_identity_source(configured_root, &configured_source, identity_root)?;
+    let mut scan_source = configured_source.clone();
+    scan_source.route_provenance = identity_source.route_provenance.clone();
+    let mut scoped = SourceBackedProviderRegistry::new();
+    match configured_source.provider {
+        CaptureProvider::OpenClaw => {
+            register_landed_source_backed_route_with_data_root_and_lineage(
+                &mut scoped,
+                scan_source,
+                SourceBackedRouteSelection::Automatic,
+                data_root,
+                None,
+            )?;
+        }
+        CaptureProvider::Hermes => register_hermes_released_source_backed_route(
+            &mut scoped,
+            scan_source,
+            data_root,
+            &identity_source.path,
+        )?,
+        CaptureProvider::Warp => {
+            let selected =
+                resolve_warp_released_identity_authority(probes, discovery, &identity_source.path)
+                    .map_err(|error| {
+                        invalid_route(configured_source.provider, error.to_string())
+                    })?;
+            identity_source.route_provenance = selected.source().route_provenance.clone();
+            scan_source.route_provenance = identity_source.route_provenance.clone();
+            register_warp_source_backed_route(
+                &mut scoped,
+                scan_source,
+                SourceBackedRouteSelection::Automatic,
+                data_root,
+                selected.surface_key().as_str(),
+                None,
+            )?;
+        }
+        CaptureProvider::Goose => {
+            let identity_platform_root = goose_platform_root(discovery, &identity_source.path)
+                .ok_or_else(|| {
+                    invalid_route(
+                        configured_source.provider,
+                        "released Goose identity has no exact automatic platform root",
+                    )
+                })?;
+            let scan_platform_root = rebase_goose_platform_root(
+                &identity_source.path,
+                &identity_platform_root,
+                &scan_source.path,
+            )
+            .or_else(|| scan_source.path.parent().map(Path::to_path_buf))
+            .ok_or_else(|| {
+                invalid_route(
+                    configured_source.provider,
+                    "configured Goose database has no attachment-context parent",
+                )
+            })?;
+            register_goose_source_backed_route(
+                &mut scoped,
+                scan_source,
+                SourceBackedRouteSelection::Automatic,
+                data_root,
+                scan_platform_root,
+                Vec::new(),
+                None,
+            )?;
+        }
+        CaptureProvider::Crush => {
+            let released = resolve_crush_released_project_inventory(
+                probes,
+                discovery,
+                &identity_source.path,
+                &scan_source.path,
+            )
+            .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
+            let databases = released
+                .databases()
+                .iter()
+                .map(|(key, path)| {
+                    CrushProjectDatabaseV0::new(key.clone(), path.clone()).map_err(|error| {
+                        invalid_route(configured_source.provider, error.to_string())
+                    })
+                })
+                .collect::<SourceBackedCoordinatorResult<Vec<_>>>()?;
+            let inventory = Arc::new(ReleasedCrushInventorySource {
+                authority_key: released.authority_key().clone(),
+                revision: released.revision().to_vec(),
+                databases,
+            });
+            register_crush_source_backed_route(
+                &mut scoped,
+                scan_source,
+                SourceBackedRouteSelection::Automatic,
+                data_root,
+                inventory,
+                None,
+            )?;
+        }
+        CaptureProvider::Lingma => {
+            let identity = resolve_lingma_released_identity_authority(
+                probes,
+                discovery,
+                &identity_source.path,
+            )
+            .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
+            let inventory = LingmaInventorySelector::new(discovery.clone(), *probes)
+                .observe()
+                .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
+            let authority_key = inventory
+                .authority_key()
+                .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
+            let mut databases = inventory
+                .databases()
+                .iter()
+                .filter(|database| {
+                    database.path() != identity_source.path
+                        && database.path() != configured_source.path
+                })
+                .map(|database| {
+                    database
+                        .catalog_lineage()
+                        .typed_key()
+                        .map(|lineage| (database.path().to_path_buf(), lineage))
+                        .map_err(|error| {
+                            invalid_route(configured_source.provider, error.to_string())
+                        })
+                })
+                .collect::<SourceBackedCoordinatorResult<Vec<_>>>()?;
+            databases.push((
+                configured_source.path.clone(),
+                identity.catalog_lineage().typed_key().map_err(|error| {
+                    invalid_route(configured_source.provider, error.to_string())
+                })?,
+            ));
+            register_lingma_source_backed_route(
+                &mut scoped,
+                scan_source,
+                SourceBackedRouteSelection::Automatic,
+                data_root,
+                authority_key,
+                databases,
+                None,
+            )?;
+        }
+        CaptureProvider::AstrBot => register_astrbot_released_source_backed_route(
+            &mut scoped,
+            scan_source,
+            identity_source.clone(),
+            discovery.home(),
+            data_root,
+        )?,
+        provider => {
+            return Err(invalid_route(
+                provider,
+                "provider has no released automatic connector reconstruction",
+            ));
+        }
+    }
+    if scoped.routes.len() != 1 {
+        return Err(invalid_route(
+            configured_source.provider,
+            format!(
+                "released automatic registration produced {} routes instead of one",
+                scoped.routes.len()
+            ),
+        ));
+    }
+    let mut route = scoped
+        .routes
+        .pop()
+        .expect("one released route was validated");
+    let mut configured_source = configured_source;
+    if let ProviderSourceRouteProvenance::ConfiguredRoot {
         automatic_route_role,
         ..
-    } = &mut configured.route_provenance
-    else {
-        return;
-    };
-    *automatic_route_role = automatic.route_provenance.automatic_route_role().cloned();
+    } = &mut configured_source.route_provenance
+    {
+        *automatic_route_role = identity_source
+            .route_provenance
+            .automatic_route_role()
+            .cloned();
+    }
+    route.apply_released_automatic_identity(&identity_source, configured_source)?;
+    registry.register(route);
+    Ok(())
 }
 
-fn bind_released_route_to_configured_root(
-    registry: &mut SourceBackedProviderRegistry,
-    automatic: &ProviderSource,
-    configured: ProviderSource,
-) -> SourceBackedCoordinatorResult<()> {
-    let route_identity = automatic_source_backed_route_identity(automatic)?;
-    let route = registry
-        .routes
-        .iter_mut()
-        .find(|route| route.metadata.route_identity.as_ref() == Some(&route_identity))
-        .ok_or_else(|| {
+fn released_identity_source(
+    configured_root: &ProviderRootDefinition,
+    configured_source: &ProviderSource,
+    identity_root: &Path,
+) -> SourceBackedCoordinatorResult<ProviderSource> {
+    let relative = configured_source
+        .path
+        .strip_prefix(&configured_root.path)
+        .map_err(|_| {
             invalid_route(
-                automatic.provider,
-                "released automatic registration produced no matching route",
+                configured_source.provider,
+                "configured source is outside its provider root",
             )
         })?;
-    route.metadata.source = configured;
-    Ok(())
+    let mut identity_source = configured_source.clone();
+    identity_source.path = identity_root.join(relative);
+    identity_source.route_provenance = ProviderSourceRouteProvenance::Unroled;
+    if configured_source.provider == CaptureProvider::OpenClaw {
+        let mut components = relative.components();
+        let agents = components.next();
+        let agent_id = components.next().map(|component| component.as_os_str());
+        if agents.map(|component| component.as_os_str()) != Some(std::ffi::OsStr::new("agents"))
+            || agent_id.is_none()
+        {
+            return Err(invalid_route(
+                configured_source.provider,
+                "released OpenClaw source has no bounded automatic agent identity",
+            ));
+        }
+        let route_role = ProviderRouteRole::from_dynamic([
+            b"agent".as_slice(),
+            agent_id.expect("agent id was validated").as_encoded_bytes(),
+        ])
+        .map_err(|error| invalid_route(configured_source.provider, error.to_string()))?;
+        identity_source.route_provenance = ProviderSourceRouteProvenance::Automatic { route_role };
+    }
+    Ok(identity_source)
+}
+
+fn rebase_goose_platform_root(
+    identity_database: &Path,
+    identity_platform_root: &Path,
+    scan_database: &Path,
+) -> Option<PathBuf> {
+    let suffix = identity_database
+        .strip_prefix(identity_platform_root)
+        .ok()?;
+    if suffix.as_os_str().is_empty() || !scan_database.ends_with(suffix) {
+        return None;
+    }
+    scan_database
+        .ancestors()
+        .nth(suffix.components().count())
+        .map(Path::to_path_buf)
 }
 
 fn released_root_automatic_coexistence_lineage(
     registry: &SourceBackedProviderRegistry,
     discovery: &DiscoveryContext,
-    provider_root_identities: &BTreeMap<String, ProviderRootSourceIdentity>,
+    provider_root_registrations: &BTreeMap<String, ProviderRootRegistration>,
     automatic: &ProviderSource,
 ) -> Option<[u8; 32]> {
     let ordinary_route = automatic_source_backed_route_identity(automatic).ok()?;
@@ -822,7 +1073,11 @@ fn released_root_automatic_coexistence_lineage(
             && !provider_paths_equivalent(&route.metadata.source.path, &automatic.path)
     })?;
     let (root_id, _) = adopted.metadata.source.route_provenance.configured_root()?;
-    if provider_root_identities.get(root_id) != Some(&ProviderRootSourceIdentity::Released) {
+    if provider_root_registrations
+        .get(root_id)
+        .map(|registration| registration.source_identity)
+        != Some(ProviderRootSourceIdentity::Released)
+    {
         return None;
     }
     let root = discovery
@@ -1031,6 +1286,27 @@ impl CrushProjectInventorySourceV0 for ConfiguredCrushInventorySource {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ReleasedCrushInventorySource {
+    authority_key: TypedKey,
+    revision: Vec<u8>,
+    databases: Vec<CrushProjectDatabaseV0>,
+}
+
+impl CrushProjectInventorySourceV0 for ReleasedCrushInventorySource {
+    fn observe(
+        &self,
+    ) -> ctx_history_providers_sqlite_inventory::CrushSourceBackedResultV0<
+        CrushProjectInventoryObservationV0,
+    > {
+        CrushProjectInventoryObservationV0::new(
+            self.authority_key.clone(),
+            self.revision.clone(),
+            self.databases.clone(),
+        )
+    }
+}
+
 #[cfg(test)]
 pub(in crate::source_backed) fn build_automatic_source_backed_registry_from_parts(
     discovery: &DiscoveryContext,
@@ -1228,7 +1504,7 @@ fn register_discovered_automatic_route_scoped(
                 source,
                 SourceBackedRouteSelection::Automatic,
                 data_root,
-                discovery.clone(),
+                discovery.clone().with_configured_provider_roots(Vec::new()),
                 source_root_lineage,
             )
         }

@@ -4,6 +4,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use ctx_history_capture_model::ProviderSource;
 #[cfg(test)]
 use ctx_history_core::CertifiedSourceInventory;
 use ctx_history_core::{
@@ -127,6 +128,42 @@ impl AstrBotSourceBackedInventoryV0 {
         Ok(Self {
             observation,
             sources,
+        })
+    }
+
+    pub(crate) fn released_scoped(
+        identity_home: &Path,
+        identity_source: &ProviderSource,
+        scan_path: &Path,
+        source_scope: SourceAnchorScope,
+    ) -> AstrBotSourceBackedResultV0<Self> {
+        let identity = launcher_instance_identity(identity_home, &identity_source.path)
+            .map(AstrBotSourceIdentityV0::LauncherInstance)
+            .unwrap_or(AstrBotSourceIdentityV0::SelectedCore);
+        let source_key = source_key_scoped(&identity, source_scope)?;
+        let mut digest = Sha256::new();
+        digest.update(b"ctx-astrbot-source-inventory-observation-v0\0");
+        digest.update(1_u64.to_be_bytes());
+        let path = identity_source.path.as_os_str().as_encoded_bytes();
+        digest.update((path.len() as u64).to_be_bytes());
+        digest.update(path);
+        digest.update((identity_source.source_format.len() as u64).to_be_bytes());
+        digest.update(identity_source.source_format.as_bytes());
+        digest.update(identity_source.status.as_str().as_bytes());
+        let observation = SourceInventoryObservation::new(
+            CaptureProvider::AstrBot.as_str(),
+            INVENTORY_AUTHORITY_NAMESPACE,
+            TypedKey::utf8(INVENTORY_AUTHORITY_KEY)?,
+            INVENTORY_REVISION_KIND,
+            digest.finalize().to_vec(),
+        )?;
+        Ok(Self {
+            observation,
+            sources: vec![AstrBotSourceBackedSourceV0 {
+                path: scan_path.to_path_buf(),
+                identity,
+                source_key,
+            }],
         })
     }
 

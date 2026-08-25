@@ -24,7 +24,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use ctx_history_capture::{
     automatic_provider_root_coexistence_route_identity,
     automatic_provider_root_coexistence_source_lineage, automatic_source_backed_route_identity,
-    build_automatic_source_backed_registry_from_report_with_root_identities,
+    build_automatic_source_backed_registry_from_report_with_retained_roots,
     discover_provider_sources_with_context_and_work_budget, source_backed_refresh_work_budget,
     source_backed_refresh_writer_options, validate_provider_source_roots_outside_data_root,
     DiscoveryContext, SourceBackedAutomaticRegistryIssue, SourceBackedAutomaticUnavailableReason,
@@ -265,22 +265,22 @@ pub fn source_backed_watch_catalog(
         Err(IndexError::MissingActiveGenerationPointer) => None,
         Err(error) => return Err(error.into()),
     };
-    let provider_root_identities =
-        configured_provider_root_identities(&discovery, retained_generation.as_ref())?;
-    let mut build = build_automatic_source_backed_registry_from_report_with_root_identities(
+    let retained_provider_roots =
+        configured_retained_provider_roots(&discovery, retained_generation.as_ref())?;
+    let mut build = build_automatic_source_backed_registry_from_report_with_retained_roots(
         &discovery,
         data_root,
         report,
-        &provider_root_identities,
+        &retained_provider_roots,
     );
     build.discovery_duration = discovery_duration;
     Ok(build.registry.watch_catalog())
 }
 
-fn configured_provider_root_identities(
+fn configured_retained_provider_roots(
     discovery: &DiscoveryContext,
     retained_generation: Option<&VerifiedIndex>,
-) -> Result<BTreeMap<String, ProviderRootSourceIdentity>> {
+) -> Result<BTreeMap<String, ctx_history_index::AppliedProviderRoot>> {
     let roots = discovery.configured_provider_roots();
     let mut root_ids = BTreeSet::new();
     if let Some(duplicate) = roots.iter().find(|root| !root_ids.insert(root.id.as_str())) {
@@ -298,9 +298,9 @@ fn configured_provider_root_identities(
                     .provider_roots()
                     .iter()
                     .find(|applied| provider_root_retention_compatible(applied.definition(), root))
-                    .map(|applied| applied.source_identity())
+                    .cloned()
             });
-            retained.map(|identity| (root.id.clone(), identity))
+            retained.map(|applied| (root.id.clone(), applied))
         })
         .collect())
 }

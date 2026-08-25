@@ -254,6 +254,32 @@ pub fn resolve_lingma_discovery_authority(
         .ok_or(LingmaDiscoveryUnavailable::SourceNotSelected)
 }
 
+/// Reconstructs the installed-client catalog slot for a previously certified
+/// automatic path even after that identity path has moved. Missing candidates
+/// remain eligible here because the caller opens only its current configured
+/// no-follow path.
+pub fn resolve_lingma_released_identity_authority(
+    probes: &StaticProviderProbeCatalog,
+    context: &DiscoveryContext,
+    identity_path: &Path,
+) -> Result<DiscoveredLingmaDatabase, LingmaDiscoveryUnavailable> {
+    if matches!(context.platform(), DiscoveryPlatform::OtherUnix) {
+        return Err(LingmaDiscoveryUnavailable::UnsupportedPlatform {
+            platform: context.platform(),
+        });
+    }
+    let spec = provider_source_spec(CaptureProvider::Lingma)
+        .ok_or(LingmaDiscoveryUnavailable::ProviderSpecUnavailable)?;
+    let (report, discovered) = resolve_lingma_with_authority(probes, context, spec);
+    if !report.issues.is_empty() {
+        return Err(LingmaDiscoveryUnavailable::SelectorUnavailable);
+    }
+    discovered
+        .into_iter()
+        .find(|database| database.source.path == identity_path)
+        .ok_or(LingmaDiscoveryUnavailable::SourceNotSelected)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};

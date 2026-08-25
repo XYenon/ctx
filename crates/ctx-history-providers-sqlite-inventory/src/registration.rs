@@ -202,6 +202,95 @@ where
     )
 }
 
+pub fn astrbot_released_registration_scoped<L, S>(
+    source: ProviderSource,
+    identity_source: ProviderSource,
+    identity_home: &Path,
+    data_root: &Path,
+    source_scope: SourceAnchorScope,
+) -> SourceBackedRouteResult<
+    SqliteInventoryRegistration<
+        impl ReplacementDocumentTree<
+            Lifecycle = L,
+            Spool = S,
+            RouteControl = crate::ProviderRouteControlExpectation,
+        >,
+    >,
+>
+where
+    L: CaptureLifecycleSink + 'static,
+    S: DocumentRecordSpool,
+{
+    let watch_primary = source.path.clone();
+    let inventory = AstrBotSourceBackedInventoryV0::released_scoped(
+        identity_home,
+        &identity_source,
+        &source.path,
+        source_scope,
+    )
+    .map_err(astrbot_inventory_route_error)?;
+    let adapter = SqliteInventoryDocumentAdapter::new(
+        data_root,
+        CaptureProvider::AstrBot,
+        ASTRBOT_SQLITE_SOURCE_FORMAT,
+        AstrBotReleasedInventoryProvider { inventory },
+    );
+    Ok(SqliteInventoryRegistration::new(
+        source,
+        SourceBackedRouteSelection::Automatic,
+        SourceBackedSelectorAuthority::DiscoveredWinner,
+        adapter,
+        Some(Box::new(move || {
+            Some(sqlite_inventory_watch_targets([watch_primary.as_path()]))
+        })),
+    ))
+}
+
+pub struct AstrBotReleasedInventoryProvider {
+    inventory: AstrBotSourceBackedInventoryV0,
+}
+
+impl<L, S> SqliteInventoryProvider<L, S> for AstrBotReleasedInventoryProvider
+where
+    L: CaptureLifecycleSink + 'static,
+    S: DocumentRecordSpool,
+{
+    type Leaf = AstrBotSourceBackedSourceV0;
+
+    fn parser_revision(&self) -> &'static str {
+        ASTRBOT_SOURCE_BACKED_PARSER_REVISION
+    }
+
+    fn discover(&self) -> SourceBackedRouteResult<SqliteInventoryCatalog<Self::Leaf>> {
+        let authority_fingerprint =
+            sqlite_inventory_authority_fingerprint(self.inventory.observation())?;
+        let leaves = self
+            .inventory
+            .sources()
+            .iter()
+            .cloned()
+            .map(|leaf| SqliteInventoryCatalogLeaf {
+                source: leaf.source_key().clone(),
+                physical_locator: leaf.path().to_path_buf(),
+                provider_leaf: leaf,
+            })
+            .collect();
+        Ok(SqliteInventoryCatalog {
+            authority_fingerprint,
+            leaves,
+        })
+    }
+
+    fn scan(
+        &self,
+        leaf: &Self::Leaf,
+        snapshot: SqliteSourceReadSnapshot,
+        sink: &mut ChangedDocumentSink<'_, '_, L, S>,
+    ) -> SourceBackedRouteResult<CertifiedSource> {
+        scan_astrbot_inventory_leaf(leaf, snapshot, sink)
+    }
+}
+
 pub struct AstrBotInventoryProvider {
     discovery: DiscoveryContext,
     source_scope: SourceAnchorScope,
@@ -246,29 +335,41 @@ where
         snapshot: SqliteSourceReadSnapshot,
         sink: &mut ChangedDocumentSink<'_, '_, L, S>,
     ) -> SourceBackedRouteResult<CertifiedSource> {
-        let mut sink_failure = None;
-        let mut rejections = SourceBackedRecordRejectionDrafts::default();
-        let certificate = scan_astrbot_snapshot_v0(
-            leaf,
-            snapshot,
-            &mut |record| {
-                if let Err(error) = sink.emit_core_record(record) {
-                    let detail = error.to_string();
-                    sink_failure = Some(error);
-                    return Err(
+        scan_astrbot_inventory_leaf(leaf, snapshot, sink)
+    }
+}
+
+fn scan_astrbot_inventory_leaf<L, S>(
+    leaf: &AstrBotSourceBackedSourceV0,
+    snapshot: SqliteSourceReadSnapshot,
+    sink: &mut ChangedDocumentSink<'_, '_, L, S>,
+) -> SourceBackedRouteResult<CertifiedSource>
+where
+    L: CaptureLifecycleSink + 'static,
+    S: DocumentRecordSpool,
+{
+    let mut sink_failure = None;
+    let mut rejections = SourceBackedRecordRejectionDrafts::default();
+    let certificate = scan_astrbot_snapshot_v0(
+        leaf,
+        snapshot,
+        &mut |record| {
+            if let Err(error) = sink.emit_core_record(record) {
+                let detail = error.to_string();
+                sink_failure = Some(error);
+                return Err(
                     crate::provider::providers::astrbot::native_path::source_backed::AstrBotSourceBackedErrorV0::Capture(
                         CaptureError::InvalidPayload(detail),
                     ),
                 );
-                }
-                Ok(())
-            },
-            &mut rejections,
-        );
-        let certificate = astrbot_scan_route_result(sink_failure, certificate)?;
-        sink.record_rejections(rejections);
-        Ok(certificate)
-    }
+            }
+            Ok(())
+        },
+        &mut rejections,
+    );
+    let certificate = astrbot_scan_route_result(sink_failure, certificate)?;
+    sink.record_rejections(rejections);
+    Ok(certificate)
 }
 
 fn astrbot_scan_route_result(

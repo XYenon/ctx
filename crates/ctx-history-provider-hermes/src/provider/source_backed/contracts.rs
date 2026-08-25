@@ -75,6 +75,24 @@ impl HermesSourceCandidate {
             source: hermes_source_key_scoped(anchor, source_scope)?,
         })
     }
+
+    pub(crate) fn released_scoped(
+        data_root: impl Into<PathBuf>,
+        source: ProviderSource,
+        identity_path: &Path,
+        source_scope: SourceAnchorScope,
+    ) -> HermesSourceBackedResult<Self> {
+        let profile = hermes_automatic_profile_name(identity_path)?;
+        let anchor = SourceAnchor::provider_native(
+            HERMES_SOURCE_ANCHOR_NAMESPACE,
+            TypedKey::utf8(&profile)?,
+        )?;
+        Ok(Self {
+            data_root: data_root.into(),
+            path: source.path,
+            source: hermes_source_key_scoped(anchor, source_scope)?,
+        })
+    }
 }
 
 /// Admits an explicitly selected Hermes database with caller-owned persistent
