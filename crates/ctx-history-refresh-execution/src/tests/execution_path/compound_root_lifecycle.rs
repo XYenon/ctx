@@ -554,7 +554,11 @@ fn unavailable_only_released_member_is_carried_while_automatic_peer_advances() {
             1
         );
         assert_eq!(stable_source_bytes(&missing, "lifecycleinitial0"), alpha);
-        assert_eq!(missing.manifest().source_routes()[0].sources().len(), 2);
+        assert_eq!(
+            missing.manifest().source_routes()[0].sources().len(),
+            2,
+            "{provider:?} dropped a retained shared-route member"
+        );
         let retained = &missing.manifest().provider_roots()[0];
         assert_eq!(retained.definition().id, "alpha");
         assert_eq!(retained.routes(), &[route]);

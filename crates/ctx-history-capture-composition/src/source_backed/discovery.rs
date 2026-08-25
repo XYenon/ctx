@@ -705,6 +705,17 @@ fn released_root_automatic_coexistence_lineage(
     configured_sources: &[ProviderSource],
     automatic: &ProviderSource,
 ) -> Option<[u8; 32]> {
+    if matches!(
+        automatic.provider,
+        CaptureProvider::Crush | CaptureProvider::Lingma
+    ) {
+        // These compound adapters share one route across independently keyed
+        // databases. Exact source-token membership distinguishes each root;
+        // route-wide coexistence lineage would instead scope unrelated
+        // automatic peers to one unavailable root and hide their base members
+        // from partial-inventory carry.
+        return None;
+    }
     let ordinary_route = automatic_source_backed_route_identity(automatic).ok()?;
     let adopted = registry.routes.iter().find(|route| {
         route.metadata.route_identity.as_ref() == Some(&ordinary_route)
