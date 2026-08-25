@@ -342,6 +342,7 @@ fn observe_logical_source(
     observe_logical_source_with_progress(connection, dialect, &mut |_| Ok(()))
 }
 
+#[cfg(test)]
 fn observe_logical_source_with_progress(
     connection: &Connection,
     dialect: &'static OpenCodeSqliteDialect,

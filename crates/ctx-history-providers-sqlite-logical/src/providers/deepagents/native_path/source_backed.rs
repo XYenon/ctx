@@ -529,6 +529,7 @@ fn open_root_authorized_snapshot_with_hook(
     Ok((source_root, sqlite_snapshot))
 }
 
+#[cfg(test)]
 fn deepagents_source_key() -> DeepAgentsSourceBackedResultV0<SourceKey> {
     deepagents_source_key_scoped(SourceAnchorScope::Unqualified)
 }

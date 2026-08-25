@@ -169,6 +169,7 @@ impl ZedNativeSink for ZedSourceBackedSinkV0<'_> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn zed_source_key() -> ZedSourceBackedResultV0<ctx_history_core::SourceKey> {
     zed_source_key_scoped(SourceAnchorScope::Unqualified)
 }

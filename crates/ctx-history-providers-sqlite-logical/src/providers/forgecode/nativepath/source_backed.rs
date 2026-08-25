@@ -91,6 +91,7 @@ enum ForgeCodeSourceAuthorityV0 {
 }
 
 impl ForgeCodeSourceSelectionV0 {
+    #[cfg(test)]
     pub(crate) fn selected(data_root: &Path, path: impl Into<PathBuf>) -> Self {
         Self::selected_scoped(data_root, path, SourceAnchorScope::Unqualified)
     }
