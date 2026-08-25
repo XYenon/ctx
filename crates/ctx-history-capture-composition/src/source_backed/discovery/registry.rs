@@ -252,14 +252,16 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
                     |identity_root| {
                         register_released_provider_root_route(
                             &mut registry,
-                            probes,
-                            discovery,
-                            data_root,
                             configured_root,
                             source.clone(),
                             identity_root,
-                            &released_compound_sources,
-                            &provider_root_registrations,
+                            ReleasedProviderRootRegistrationContext {
+                                probes,
+                                discovery,
+                                data_root,
+                                released_compound_sources: &released_compound_sources,
+                                provider_root_registrations: &provider_root_registrations,
+                            },
                         )
                         .map_err(automatic_registration_rejected)
                     },

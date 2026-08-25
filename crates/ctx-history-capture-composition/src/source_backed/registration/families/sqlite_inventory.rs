@@ -85,16 +85,26 @@ where
     )
 }
 
+pub struct LingmaSourceBackedRouteInput {
+    pub authority_key: TypedKey,
+    pub databases: Vec<(PathBuf, TypedKey)>,
+    pub source_root_lineage: Option<[u8; 32]>,
+    pub coverage: SqliteInventoryCoverage,
+}
+
 pub fn register_lingma_source_backed_route(
     registry: &mut SourceBackedProviderRegistry,
     source: ProviderSource,
     selection: SourceBackedRouteSelection,
     data_root: &Path,
-    authority_key: TypedKey,
-    databases: Vec<(PathBuf, TypedKey)>,
-    source_root_lineage: Option<[u8; 32]>,
-    coverage: SqliteInventoryCoverage,
+    input: LingmaSourceBackedRouteInput,
 ) -> SourceBackedCoordinatorResult<()> {
+    let LingmaSourceBackedRouteInput {
+        authority_key,
+        databases,
+        source_root_lineage,
+        coverage,
+    } = input;
     let provider = source.provider;
     let registration =
         lingma_registration_scoped::<CaptureDocumentLifecycle, CaptureDocumentSpool>(
