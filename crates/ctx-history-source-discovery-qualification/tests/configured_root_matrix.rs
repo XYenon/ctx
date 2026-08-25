@@ -87,7 +87,7 @@ fn public_matrix_matches_configured_root_implementation_exhaustively() {
 }
 
 #[test]
-fn qoder_documents_the_projects_container_as_its_selectable_root() {
+fn qoder_documents_the_projects_container_as_its_complete_root() {
     let matrix = provider_support_matrix();
     let qoder = matrix["providers"]
         .as_array()
@@ -99,8 +99,8 @@ fn qoder_documents_the_projects_container_as_its_selectable_root() {
     assert_eq!(
         qoder["history_locations"],
         json!([
-            "Winner: `~/.qoder/projects` with bounded per-project transcript and direct session JSONL leaves."
+            "Canonical complete root: `~/.qoder/projects`, which includes bounded per-project transcript and direct session JSONL leaves; selecting one project can include its transcript tree but not its direct session leaves."
         ]),
-        "Qoder's exact source is the projects container, not one project directory",
+        "Qoder's projects container is required to include both native layouts",
     );
 }

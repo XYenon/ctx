@@ -704,7 +704,7 @@
         }
       ],
       "history_locations": [
-        "Winner: `~/.qoder/projects` with bounded per-project transcript and direct session JSONL leaves."
+        "Canonical complete root: `~/.qoder/projects`, which includes bounded per-project transcript and direct session JSONL leaves; selecting one project can include its transcript tree but not its direct session leaves."
       ],
       "imports_existing_history": true,
       "captures_new_runs_passively": false,
