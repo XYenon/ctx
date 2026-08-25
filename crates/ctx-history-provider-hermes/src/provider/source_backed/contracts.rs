@@ -157,11 +157,6 @@ fn valid_automatic_profile_name(name: &str) -> bool {
         })
 }
 
-#[cfg(test)]
-fn hermes_source_key(anchor: SourceAnchor) -> HermesSourceBackedResult<SourceKey> {
-    hermes_source_key_scoped(anchor, SourceAnchorScope::Unqualified)
-}
-
 fn hermes_source_key_scoped(
     anchor: SourceAnchor,
     source_scope: SourceAnchorScope,
