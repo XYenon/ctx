@@ -1003,10 +1003,10 @@ fn rejects_invalid_provider_root_config_as_one_atomic_config() {
     let cases = [
         (
             format!(
-                "[sources.roots.work]\nprovider = \"kiro_cli\"\npath = {:?}\n",
+                "[sources.roots.work]\nprovider = \"nanoclaw\"\npath = {:?}\n",
                 provider_path
             ),
-            "configured history roots are not enabled for kiro_cli",
+            "configured history roots are not enabled for nanoclaw",
         ),
         (
             "[sources.roots.work]\nprovider = \"claude\"\npath = \"relative\"\n".to_owned(),
