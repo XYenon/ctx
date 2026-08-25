@@ -15,6 +15,8 @@ use tempfile::tempdir;
 mod codex_child_independence;
 #[path = "provider_lifecycle/compound_root_ownership.rs"]
 mod compound_root_ownership;
+#[path = "provider_lifecycle/publication_registry.rs"]
+mod publication_registry;
 #[path = "provider_lifecycle/registry_roots.rs"]
 mod registry_roots;
 #[path = "provider_lifecycle/released_root_equivalence.rs"]
@@ -48,6 +50,54 @@ fn fixture_provider_source_at(
         status: ProviderSourceStatus::Available,
         unsupported_reason: None,
         route_provenance: Default::default(),
+    }
+}
+
+fn fixture_provider_source(
+    provider: CaptureProvider,
+    source_format: &'static str,
+    import_support: ProviderImportSupport,
+) -> ProviderSource {
+    fixture_provider_source_at(
+        provider,
+        source_format,
+        import_support,
+        PathBuf::from(format!("/fixture/{}", provider.as_str())),
+    )
+}
+
+fn fixture_session_id(source: &SourceKey) -> ctx_history_core::StableEntityId {
+    use ctx_history_core::{derive_session_id, NativeSessionKey, SessionIdentityInput, TypedKey};
+
+    let session_key =
+        NativeSessionKey::native_id("session", TypedKey::utf8("session").unwrap()).unwrap();
+    derive_session_id(SessionIdentityInput {
+        source,
+        logical_session_kind: "session",
+        native_session_key: &session_key,
+    })
+    .unwrap()
+}
+
+fn fixture_executable_route(
+    provider: CaptureProvider,
+    source_format: &'static str,
+    driver: SourceBackedRouteDriver,
+) -> SourceBackedRoute {
+    SourceBackedRoute::automatic(
+        fixture_provider_source(provider, source_format, ProviderImportSupport::Native),
+        SourceBackedSelectorAuthority::DiscoveredWinner,
+        driver,
+    )
+    .unwrap()
+}
+
+fn route_coordinator_error(error: SourceBackedCoordinatorError) -> SourceBackedRouteError {
+    match error {
+        SourceBackedCoordinatorError::CoreEmission(source) => source,
+        error => {
+            SourceBackedRouteError::new(SourceBackedRouteErrorKind::Internal, error.to_string())
+        }
     }
 }
 

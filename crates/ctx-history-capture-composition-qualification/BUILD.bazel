@@ -87,6 +87,7 @@ ctx_rust_test(
         "//crates/ctx-history-core:lib",
         "//crates/ctx-history-index:lib",
         "//crates/ctx-history-provider-codex:test_support_lib",
+        "//crates/ctx-history-provider-gemini:test_support_lib",
         "//crates/ctx-history-provider-runtime:test_support_lib",
         "//crates/ctx-history-providers-sqlite-selected:test_support_lib",
         "//crates/ctx-history-source-discovery:lib",

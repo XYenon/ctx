@@ -936,5 +936,3 @@ fn cold_refresh_with_only_failed_routes_does_not_publish_ready_data() {
         Err(IndexError::MissingActiveGenerationPointer)
     ));
 }
-
-mod additional;

@@ -1,6 +1,8 @@
 use super::super::*;
 
 mod refresh_control_plane;
+#[cfg(any(test, feature = "test-support"))]
+mod test_support;
 
 #[cfg(test)]
 thread_local! {

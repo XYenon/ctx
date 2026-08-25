@@ -146,6 +146,12 @@ pub(crate) type SourceBackedRouteByteReservation = CoreRouteByteLease;
 pub(crate) const AUTOMATIC_ROUTE_DELETION_MISSING_OBSERVATIONS: u32 =
     ctx_history_index::policy::AUTOMATIC_ROUTE_DELETION_GRACE_OBSERVATIONS;
 
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub const fn automatic_route_deletion_missing_observations_for_test() -> u32 {
+    AUTOMATIC_ROUTE_DELETION_MISSING_OBSERVATIONS
+}
+
 /// Sole concrete lifecycle exchange between source-backed capture and index.
 #[repr(transparent)]
 pub struct IndexCaptureLifecycle(GenerationWriter);
@@ -601,7 +607,7 @@ impl IndexCaptureCommitReceipt {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn manifest(&self) -> &GenerationManifest {
         self.snapshot.manifest()
     }
