@@ -10,6 +10,7 @@ use ctx_history_capture::{
     provider_paths_equivalent, ProviderRootDefinition, ProviderRootKind,
     MAX_CONFIGURED_PROVIDER_ROOTS,
 };
+use ctx_history_cli::parse_capture_provider_name;
 use ctx_history_core::CaptureProvider;
 use ctx_history_platform::platform_security::{
     establish_private_data_root, validate_provider_source_outside_data_root,
@@ -433,9 +434,9 @@ impl AppConfig {
                 let draft = provider_roots.entry(id.to_owned()).or_default();
                 match field {
                     "provider" => {
-                        let provider = parse_non_empty_string(key, value)?
-                            .parse::<CaptureProvider>()
-                            .with_context(|| {
+                        let provider_name = parse_non_empty_string(key, value)?;
+                        let provider =
+                            parse_capture_provider_name(&provider_name).with_context(|| {
                                 format!(
                                     "sources.roots.{id}.provider at line {} is unknown",
                                     value.line

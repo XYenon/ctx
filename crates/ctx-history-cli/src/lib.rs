@@ -56,9 +56,9 @@ pub use list_events::{
 };
 pub use provider_args::{
     cli_supported_provider, compact_provider_error, mcp_provider_names, native_provider_cli_specs,
-    parse_native_provider, parse_native_provider_name, parse_provider, parse_provider_name,
-    provider_cli_name, provider_cli_spec, provider_cli_specs, provider_is_importable, ProviderArg,
-    ProviderCliSpec,
+    parse_capture_provider_name, parse_native_provider, parse_native_provider_name, parse_provider,
+    parse_provider_name, provider_cli_name, provider_cli_spec, provider_cli_specs,
+    provider_is_importable, ProviderArg, ProviderCliSpec,
 };
 pub use provider_sources::{
     discovered_plugin_sources_json, discovered_sources_for_provider_report,

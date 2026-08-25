@@ -229,6 +229,16 @@ fn provider_root_cli_mutation_uses_every_enabled_capability_path_kind() {
             false,
         )
         .unwrap();
+        let persisted = fs::read_to_string(data_root.path().join(CONFIG_FILE)).unwrap();
+        assert!(
+            persisted.contains(&format!("provider = {:?}", capability.provider.as_str())),
+            "{} did not retain its canonical storage identifier: {persisted}",
+            capability.provider.as_str()
+        );
+        assert_eq!(
+            AppConfig::load(data_root.path()).unwrap().provider_roots["root"].provider,
+            capability.provider
+        );
         let replaced = add_provider_root_with_kind(
             data_root.path(),
             "root",

@@ -982,6 +982,83 @@ group = "work"
 }
 
 #[test]
+fn hand_edited_provider_roots_accept_the_cli_provider_vocabulary() {
+    use ctx_history_capture::{
+        configured_root_capabilities, ConfiguredRootPathKind, ProviderRootKind,
+    };
+
+    for capability in configured_root_capabilities()
+        .iter()
+        .filter(|capability| capability.state.is_enabled())
+    {
+        let provider_parent = tempfile::tempdir().unwrap();
+        let provider_root = provider_parent.path().join("history");
+        match capability
+            .state
+            .expected_path_kind()
+            .expect("enabled configured-root capability must declare its path kind")
+        {
+            ConfiguredRootPathKind::Directory => fs::create_dir(&provider_root).unwrap(),
+            ConfiguredRootPathKind::File => fs::write(&provider_root, b"history").unwrap(),
+        }
+        let spec = ctx_history_cli::provider_cli_spec(capability.provider)
+            .expect("configured-root provider must have a public CLI vocabulary entry");
+        let names = std::iter::once(spec.cli_name)
+            .chain(std::iter::once(spec.provider.as_str()))
+            .chain(spec.aliases.iter().copied())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        for name in names {
+            let data_root = tempfile::tempdir().unwrap();
+            let kind = (capability.provider == CaptureProvider::OpenHands)
+                .then_some(ProviderRootKind::OpenHandsCurrentConversations)
+                .map(|kind| format!("kind = {:?}\n", kind.as_str()))
+                .unwrap_or_default();
+            fs::write(
+                data_root.path().join(CONFIG_FILE),
+                format!(
+                    "[sources.roots.work]\nprovider = {name:?}\npath = {:?}\n{kind}",
+                    provider_root.display().to_string(),
+                ),
+            )
+            .unwrap();
+
+            let config = AppConfig::load(data_root.path()).unwrap_or_else(|error| {
+                panic!(
+                    "configured-root provider name {name:?} did not match the CLI vocabulary: {error:#}"
+                )
+            });
+            assert_eq!(
+                config.provider_roots["work"].provider, capability.provider,
+                "configured-root provider name {name:?} resolved differently from the CLI"
+            );
+        }
+    }
+}
+
+#[test]
+fn hand_edited_provider_roots_reject_invalid_provider_names() {
+    let provider_root = tempfile::tempdir().unwrap();
+    for name in ["grokbuild", "Grok-Build", "grok build", "not-a-provider"] {
+        let data_root = tempfile::tempdir().unwrap();
+        fs::write(
+            data_root.path().join(CONFIG_FILE),
+            format!(
+                "[sources.roots.work]\nprovider = {name:?}\npath = {:?}\n",
+                provider_root.path().display().to_string(),
+            ),
+        )
+        .unwrap();
+
+        let error = format!("{:#}", AppConfig::load(data_root.path()).unwrap_err());
+        assert!(
+            error.contains("sources.roots.work.provider at line 2 is unknown"),
+            "{name:?} produced an unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
 fn rejects_invalid_provider_root_config_as_one_atomic_config() {
     let provider_home = tempfile::tempdir().unwrap();
     let provider_path = provider_home.path().display().to_string();
