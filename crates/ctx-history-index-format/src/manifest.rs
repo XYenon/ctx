@@ -22,7 +22,7 @@ use crate::{
     LEXICAL_ANALYZER_VERSION, LEXICAL_SCHEMA_VERSION, MAX_PUBLICATION_METADATA_BYTES,
 };
 
-use ctx_history_core::CertifiedSource;
+use ctx_history_core::{CaptureProvider, CertifiedSource};
 
 const MAX_PUBLICATION_METADATA_ENCODED_BYTES: usize =
     MAX_PUBLICATION_METADATA_BYTES.div_ceil(3) * 4;
@@ -312,6 +312,22 @@ fn migrate_previous_manifest_v9(bytes: &[u8]) -> Result<GenerationManifest> {
     {
         return Err(IndexError::NonCanonicalManifest);
     }
+    // The v9 public config admitted only Codex and Claude roots. Their
+    // released route authority is path-independent, so a moved v9 definition
+    // remains exactly recoverable. Refuse manually constructed rooted-provider
+    // manifests instead of fabricating an original automatic root.
+    if let Some(root) = previous.provider_roots.iter().find(|root| {
+        root.source_identity == ProviderRootSourceIdentity::Released
+            && !matches!(
+                root.definition.provider,
+                CaptureProvider::Codex | CaptureProvider::Claude
+            )
+    }) {
+        return Err(IndexError::InvalidProviderRoots(format!(
+            "v9 released root {} has no recoverable connector authority",
+            root.definition.id
+        )));
+    }
     let mut value = serde_json::to_value(previous)?;
     let object = value
         .as_object_mut()
@@ -329,16 +345,10 @@ fn migrate_previous_manifest_v9(bytes: &[u8]) -> Result<GenerationManifest> {
             .as_object_mut()
             .ok_or(IndexError::NonCanonicalManifest)?;
         if root.get("source_identity") == Some(&serde_json::json!("released")) {
-            let identity_root = root
-                .get("definition")
-                .and_then(|definition| definition.get("path"))
-                .cloned()
-                .ok_or(IndexError::NonCanonicalManifest)?;
             root.insert(
                 "connector_binding".to_owned(),
                 serde_json::json!({
-                    "kind": "released_v1",
-                    "identity_root": identity_root,
+                    "kind": "released_path_independent_v1",
                 }),
             );
         }
@@ -857,7 +867,7 @@ mod tests {
     use ctx_history_core::CaptureProvider;
 
     #[test]
-    fn v9_manifest_migration_seeds_released_connector_binding() {
+    fn v9_manifest_migration_marks_codex_connector_as_path_independent() {
         let temp = tempfile::tempdir().unwrap();
         let definition = ProviderRootDefinition {
             id: "codex".to_owned(),
@@ -892,10 +902,46 @@ mod tests {
 
         let root = &migrated.provider_roots()[0];
         assert_eq!(root.definition(), &definition);
-        assert_eq!(
-            root.connector_binding().unwrap().identity_root(),
-            definition.path
-        );
+        assert!(root.connector_binding().unwrap().identity_root().is_none());
+    }
+
+    #[test]
+    fn v9_manifest_migration_rejects_unrecoverable_rooted_released_authority() {
+        let temp = tempfile::tempdir().unwrap();
+        let definition = ProviderRootDefinition {
+            id: "hermes".to_owned(),
+            provider: CaptureProvider::Hermes,
+            path: temp.path().join("hermes-home"),
+            group: None,
+            kind: None,
+        };
+        let manifest = GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            true,
+            provider_source_config_digest(true, std::slice::from_ref(&definition)),
+            vec![AppliedProviderRoot::with_source_identity(
+                definition,
+                ProviderRootSourceIdentity::Released,
+                Vec::new(),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let mut value = serde_json::to_value(manifest).unwrap();
+        value["manifest_version"] = serde_json::json!(PREVIOUS_GENERATION_MANIFEST_VERSION);
+        value["provider_roots"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("connector_binding");
+        let previous: PreviousGenerationManifestV9 = serde_json::from_value(value).unwrap();
+
+        assert!(matches!(
+            migrate_previous_manifest_v9(&serde_json::to_vec(&previous).unwrap()),
+            Err(IndexError::InvalidProviderRoots(detail))
+                if detail.contains("no recoverable connector authority")
+        ));
     }
 
     #[test]

@@ -31,18 +31,20 @@ fn source_route_snapshot_and_generation_wire_contract_remain_stable() {
 #[test]
 fn released_provider_root_retains_immutable_connector_authority_across_moves() {
     let temp = tempfile::tempdir().unwrap();
-    let original = temp.path().join("original-codex-home");
+    let original = temp.path().join("original-hermes-home");
     let moved = ProviderRootDefinition {
-        id: "codex".to_owned(),
-        provider: CaptureProvider::Codex,
-        path: temp.path().join("moved-codex-home"),
+        id: "hermes".to_owned(),
+        provider: CaptureProvider::Hermes,
+        path: temp.path().join("moved-hermes-home"),
         group: None,
         kind: None,
     };
     let applied = AppliedProviderRoot::with_source_identity_and_connector_binding(
         moved.clone(),
         ProviderRootSourceIdentity::Released,
-        Some(ProviderRootConnectorBinding::released_v1(original.clone())),
+        Some(ProviderRootConnectorBinding::released_rooted_v1(
+            original.clone(),
+        )),
         Vec::new(),
     )
     .unwrap();
@@ -59,7 +61,11 @@ fn released_provider_root_retains_immutable_connector_authority_across_moves() {
     let retained = &manifest.provider_roots()[0];
     assert_eq!(retained.definition().path, moved.path);
     assert_eq!(
-        retained.connector_binding().unwrap().identity_root(),
+        retained
+            .connector_binding()
+            .unwrap()
+            .identity_root()
+            .unwrap(),
         original
     );
 }
@@ -74,7 +80,21 @@ fn provider_root_connector_binding_matches_released_identity_contract() {
         group: None,
         kind: None,
     };
-    let binding = ProviderRootConnectorBinding::released_v1(definition.path.clone());
+    let binding = ProviderRootConnectorBinding::released_path_independent_v1();
+    assert_eq!(
+        serde_json::to_string(&binding).unwrap(),
+        "{\"kind\":\"released_path_independent_v1\"}"
+    );
+    assert_eq!(
+        serde_json::to_string(&ProviderRootConnectorBinding::released_rooted_v1(
+            definition.path.clone()
+        ))
+        .unwrap(),
+        format!(
+            "{{\"kind\":\"released_rooted_v1\",\"identity_root\":{}}}",
+            serde_json::to_string(&definition.path).unwrap()
+        )
+    );
 
     assert!(matches!(
         AppliedProviderRoot::with_source_identity_and_connector_binding(
@@ -96,13 +116,46 @@ fn provider_root_connector_binding_matches_released_identity_contract() {
     ));
     assert!(matches!(
         AppliedProviderRoot::with_source_identity_and_connector_binding(
-            definition,
+            definition.clone(),
             ProviderRootSourceIdentity::Released,
-            Some(ProviderRootConnectorBinding::released_v1("relative-home")),
+            Some(ProviderRootConnectorBinding::released_rooted_v1(
+                temp.path().join("wrong-rooted-codex-home"),
+            )),
             Vec::new(),
         ),
         Err(IndexError::InvalidProviderRoots(_))
     ));
+
+    let hermes = ProviderRootDefinition {
+        id: "hermes".to_owned(),
+        provider: CaptureProvider::Hermes,
+        path: temp.path().join("hermes-home"),
+        group: None,
+        kind: None,
+    };
+    assert!(matches!(
+        AppliedProviderRoot::with_source_identity_and_connector_binding(
+            hermes,
+            ProviderRootSourceIdentity::Released,
+            Some(ProviderRootConnectorBinding::released_rooted_v1(
+                "relative-home",
+            )),
+            Vec::new(),
+        ),
+        Err(IndexError::InvalidProviderRoots(_))
+    ));
+
+    let released = AppliedProviderRoot::with_source_identity(
+        definition,
+        ProviderRootSourceIdentity::Released,
+        Vec::new(),
+    )
+    .unwrap();
+    assert!(released
+        .connector_binding()
+        .unwrap()
+        .identity_root()
+        .is_none());
 }
 
 #[test]
