@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 const OLD_V9_MANIFEST_VERSION: u32 = 9;
 const OLD_FLAT_DELTA_STORAGE: &str = "ctx-manifest-flat-delta-v1";
-const OLD_FLAT_DELTA_PREFIX: &[u8] =
-    br#"{"storage_format":"ctx-manifest-flat-delta-v1","#;
+const OLD_FLAT_DELTA_PREFIX: &[u8] = br#"{"storage_format":"ctx-manifest-flat-delta-v1","#;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -70,7 +69,10 @@ fn install_literal_old_v9_publication(root: &Path, manifest: &GenerationManifest
     let bytes = canonical_old_v9_bytes(manifest);
     let generation_id = ctx_history_index_format::sha256_hex(&bytes);
     ctx_history_index_generation::write_manifest_bytes(root, &generation_id, &bytes).unwrap();
-    assert_eq!(fs::read(manifest_path(root, &generation_id)).unwrap(), bytes);
+    assert_eq!(
+        fs::read(manifest_path(root, &generation_id)).unwrap(),
+        bytes
+    );
 
     let pointer = load_active_generation_pointer(root).unwrap().unwrap();
     let generation_path = active_generation_path(root);
@@ -146,7 +148,10 @@ fn source_only_successor_of_literal_v9_publishes_full_v10_anchor() {
         .unwrap()
         .into_writer()
         .unwrap();
-    assert_eq!(successor.base_generation_id(), Some(v9_generation_id.as_str()));
+    assert_eq!(
+        successor.base_generation_id(),
+        Some(v9_generation_id.as_str())
+    );
     successor.begin_source(source.clone()).unwrap();
     successor
         .add_core_record(document(&source, 2, "candidate source replacement"))
@@ -168,7 +173,8 @@ fn source_only_successor_of_literal_v9_publishes_full_v10_anchor() {
         .into_writer()
         .unwrap();
     next.begin_source(source.clone()).unwrap();
-    next.add_core_record(document(&source, 3, "v10 delta")).unwrap();
+    next.add_core_record(document(&source, 3, "v10 delta"))
+        .unwrap();
     next.certify_source(certificate(&source, 3, 1)).unwrap();
     let delta = next.commit(|_| true).unwrap();
     let delta_bytes = fs::read(manifest_path(temp.path(), &delta.generation_id)).unwrap();
@@ -255,8 +261,14 @@ fn metadata_only_republish_of_literal_v9_anchors_v10_once() {
         .republish_current_publication_metadata(&v9_generation_id, b"v10-owner".to_vec())
         .unwrap();
     assert_ne!(anchored.generation_id(), v9_generation_id);
-    assert_eq!(anchored.publication_metadata(), Some(b"v10-owner".as_slice()));
-    assert!(!old_v9_reader_accepts(temp.path(), anchored.generation_id()));
+    assert_eq!(
+        anchored.publication_metadata(),
+        Some(b"v10-owner".as_slice())
+    );
+    assert!(!old_v9_reader_accepts(
+        temp.path(),
+        anchored.generation_id()
+    ));
 
     let writer = GenerationWriter::open(temp.path(), WriterOptions::default())
         .unwrap()

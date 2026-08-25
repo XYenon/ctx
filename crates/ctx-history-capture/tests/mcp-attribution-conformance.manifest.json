@@ -2830,7 +2830,7 @@
           "class": "exact_boundary",
           "kind": "rust_test",
           "suite": "mcp_attribution_capture_provider_units",
-          "test": "source_backed::tests::copilot::copilot_route_enforces_independent_exact_identity_component_boundaries",
+          "test": "copilot::copilot_route_enforces_independent_exact_identity_component_boundaries",
           "scope": "tuple"
         },
         {
@@ -2872,7 +2872,7 @@
           "class": "stable_ids",
           "kind": "rust_test",
           "suite": "mcp_attribution_capture_provider_units",
-          "test": "source_backed::tests::copilot::copilot_activity_append_replay_preserves_stable_event_ids",
+          "test": "copilot::copilot_activity_append_replay_preserves_stable_event_ids",
           "scope": "tuple"
         }
       ],
