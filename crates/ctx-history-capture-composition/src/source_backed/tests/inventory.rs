@@ -60,6 +60,7 @@ fn configured_compound_roots_register_from_arbitrary_paths_without_automatic_aut
             provider: *provider,
             path: temp.path().join(format!("arbitrary-{}", provider.as_str())),
             group: None,
+            kind: None,
         })
         .collect::<Vec<_>>();
     let context = DiscoveryContext::new(
@@ -117,6 +118,7 @@ fn canonical_equivalence_replay_fails_closed_after_path_changes_and_retains_prio
         provider: CaptureProvider::Goose,
         path: database.clone(),
         group: None,
+        kind: None,
     };
     let context = DiscoveryContext::new(
         &home,

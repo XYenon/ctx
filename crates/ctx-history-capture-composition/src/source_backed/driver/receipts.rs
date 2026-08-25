@@ -853,6 +853,7 @@ mod tests {
             provider: CaptureProvider::OpenClaw,
             path: PathBuf::from("/fixture/openclaw-state"),
             group: None,
+            kind: None,
         };
         let alpha = SourceRouteIdentity::from_sha256("a".repeat(64)).unwrap();
         let beta = SourceRouteIdentity::from_sha256("b".repeat(64)).unwrap();
