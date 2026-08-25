@@ -243,6 +243,7 @@ pub(super) fn require_legacy_sqlite_format(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn kiro_source_key() -> KiroSourceBackedResultV0<SourceKey> {
     kiro_source_key_scoped(SourceAnchorScope::Unqualified)
 }

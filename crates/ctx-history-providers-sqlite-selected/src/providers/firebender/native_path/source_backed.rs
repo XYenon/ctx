@@ -58,6 +58,7 @@ impl From<ctx_history_source_sqlite::SqliteIoError> for FirebenderSourceBackedEr
 pub(crate) type FirebenderSourceBackedResult<T> =
     std::result::Result<T, FirebenderSourceBackedError>;
 
+#[cfg(test)]
 pub(super) fn firebender_source_key() -> FirebenderSourceBackedResult<SourceKey> {
     firebender_source_key_scoped(SourceAnchorScope::Unqualified)
 }

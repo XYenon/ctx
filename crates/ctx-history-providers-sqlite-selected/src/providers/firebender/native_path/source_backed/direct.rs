@@ -10,8 +10,10 @@ use ctx_history_core::{
 use rusqlite::{params_from_iter, Connection};
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+use super::firebender_source_key;
 use super::{
-    canonical_row_bytes, firebender_core_record, firebender_session_id, firebender_source_key,
+    canonical_row_bytes, firebender_core_record, firebender_session_id,
     firebender_source_key_scoped, firebender_workspace, increment, FirebenderSourceBackedError,
     FirebenderSourceBackedResult,
 };
@@ -643,6 +645,7 @@ fn hash_decoded_row(hasher: &mut Sha256, decoded: &DecodedRow) {
     }
 }
 
+#[cfg(test)]
 pub(in crate::providers::firebender::native_path) fn firebender_database_path_and_source(
     explicit_path: &Path,
 ) -> FirebenderSourceBackedResult<(PathBuf, SourceKey)> {

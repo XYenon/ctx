@@ -874,6 +874,7 @@ pub(super) fn warp_session_id(
     })?)
 }
 
+#[cfg(test)]
 fn warp_source_key(selection: &WarpSourceSelectionV0) -> WarpSourceBackedResultV0<SourceKey> {
     warp_source_key_scoped(selection, SourceAnchorScope::Unqualified)
 }

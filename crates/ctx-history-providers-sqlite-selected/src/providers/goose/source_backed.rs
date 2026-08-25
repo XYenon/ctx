@@ -563,6 +563,7 @@ where
     })
 }
 
+#[cfg(test)]
 pub(super) fn goose_source_key() -> GooseSourceBackedResultV0<SourceKey> {
     goose_source_key_scoped(SourceAnchorScope::Unqualified)
 }
