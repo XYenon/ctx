@@ -202,6 +202,7 @@ impl ShelleySourceBackedAdapter {
 }
 
 /// Discovers exactly `<cwd>/shelley.db` and no remembered or recursive roots.
+#[cfg(test)]
 pub(crate) fn discover_shelley_source_backed_exact_cwd(
     data_root: &Path,
     cwd: &Path,

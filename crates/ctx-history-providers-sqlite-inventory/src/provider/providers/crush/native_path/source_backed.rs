@@ -312,6 +312,7 @@ fn before_source_publication_revalidation() {
 #[cfg(not(test))]
 fn before_source_publication_revalidation() {}
 
+#[cfg(test)]
 pub(crate) fn bind_inventory(
     data_root: &Path,
     observation: CrushProjectInventoryObservationV0,

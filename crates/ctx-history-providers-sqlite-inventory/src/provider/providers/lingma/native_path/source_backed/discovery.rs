@@ -78,6 +78,7 @@ pub(crate) struct LingmaDatabaseSourceV0 {
 }
 
 impl LingmaDatabaseSourceV0 {
+    #[cfg(test)]
     pub(crate) fn new(
         path: impl Into<PathBuf>,
         catalog_lineage: TypedKey,

@@ -67,6 +67,7 @@ pub(crate) struct AstrBotSourceBackedInventoryV0 {
 }
 
 impl AstrBotSourceBackedInventoryV0 {
+    #[cfg(test)]
     pub(crate) fn discover(context: &DiscoveryContext) -> AstrBotSourceBackedResultV0<Self> {
         Self::discover_scoped(context, SourceAnchorScope::Unqualified)
     }
@@ -239,6 +240,7 @@ pub(super) fn open_root_authorized_snapshot_with_hook(
     Ok((source_root, sqlite_snapshot))
 }
 
+#[cfg(test)]
 pub(super) fn source_key(
     identity: &AstrBotSourceIdentityV0,
 ) -> AstrBotSourceBackedResultV0<SourceKey> {
