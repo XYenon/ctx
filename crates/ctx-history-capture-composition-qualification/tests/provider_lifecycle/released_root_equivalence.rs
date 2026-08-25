@@ -952,3 +952,93 @@ fn moved_released_roots_survive_restart_and_second_move_without_rotating_bytes()
         }
     }
 }
+
+#[test]
+fn moved_released_roo_root_keeps_its_dynamic_automatic_role() {
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let original = home.join(".vscode-mock/global-storage");
+    let task = original.join("tasks/roo-move");
+    fs::create_dir_all(&task).unwrap();
+    fs::write(task.join("history_item.json"), "{}").unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    let definition = |path| ProviderRootDefinition {
+        id: "roo-work".to_owned(),
+        provider: CaptureProvider::RooCode,
+        path,
+        group: Some("roo".to_owned()),
+        kind: None,
+    };
+    let initial_context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_automatic_provider_discovery(false)
+    .with_configured_provider_roots(vec![definition(original.clone())]);
+    let initial_report =
+        ctx_history_source_discovery::discover_provider_sources_for_provider_with_context(
+            &crate::test_provider_probes(),
+            &initial_context,
+            CaptureProvider::RooCode,
+        );
+    let initial = build_automatic_source_backed_registry_from_report_with_probes(
+        &crate::test_provider_probes(),
+        &initial_context,
+        &temp.path().join("initial-data"),
+        initial_report,
+    );
+    assert!(initial.issues.is_empty(), "{:?}", initial.issues);
+    let initial_root = initial.registry.applied_provider_roots().unwrap().2[0].clone();
+    assert_eq!(
+        initial_root.source_identity(),
+        ProviderRootSourceIdentity::Released
+    );
+    let initial_route = initial_root.routes()[0].clone();
+    let initial_role = initial
+        .registry
+        .routes()
+        .find(|route| route.route_identity.as_ref() == Some(&initial_route))
+        .and_then(|route| route.source.route_provenance.automatic_route_role())
+        .cloned()
+        .unwrap();
+
+    let moved = temp.path().join("roo-moved");
+    fs::rename(&original, &moved).unwrap();
+    let moved_context =
+        initial_context.with_configured_provider_roots(vec![definition(moved.clone())]);
+    let moved_report =
+        ctx_history_source_discovery::discover_provider_sources_for_provider_with_context(
+            &crate::test_provider_probes(),
+            &moved_context,
+            CaptureProvider::RooCode,
+        );
+    let retained = BTreeMap::from([(
+        "roo-work".to_owned(),
+        initial_root.retained_authority().unwrap(),
+    )]);
+    let moved = build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
+        &crate::test_provider_probes(),
+        &moved_context,
+        &temp.path().join("moved-data"),
+        moved_report,
+        &retained,
+    );
+    assert!(moved.issues.is_empty(), "{:?}", moved.issues);
+    let moved_root = &moved.registry.applied_provider_roots().unwrap().2[0];
+    assert_eq!(
+        moved_root.source_identity(),
+        ProviderRootSourceIdentity::Released
+    );
+    assert_eq!(moved_root.routes(), std::slice::from_ref(&initial_route));
+    let moved_role = moved
+        .registry
+        .routes()
+        .find(|route| route.route_identity.as_ref() == Some(&initial_route))
+        .and_then(|route| route.source.route_provenance.automatic_route_role())
+        .cloned()
+        .unwrap();
+    assert_eq!(moved_role, initial_role);
+}
