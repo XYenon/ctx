@@ -328,7 +328,7 @@ fn assert_configured(source: &ProviderSource, expected_id: &str, expected_root: 
 }
 
 #[test]
-fn capability_table_is_exhaustive_and_freezes_32_9_0_inventory() {
+fn capability_table_is_exhaustive_and_freezes_39_2_0_inventory() {
     assert_eq!(configured_root_capabilities().len(), 41);
     let actual = configured_root_capabilities()
         .iter()
