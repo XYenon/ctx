@@ -345,9 +345,9 @@ ctx_cli_integration_test(
     src = "tests/status_store_cutover.rs",
 )
 
-test_suite(
+alias(
     name = "stats_tests",
-    tests = ["//crates/ctx-cli-qualification:stats_tests"],
+    actual = "//crates/ctx-cli-qualification:stats_tests",
 )
 
 test_suite(
