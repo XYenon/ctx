@@ -518,6 +518,60 @@ fn corrected_exact_session_and_gemini_roots_probe_the_configured_path_itself() {
 }
 
 #[test]
+fn configured_auggie_roots_report_only_adapter_visible_session_json() {
+    for (id, leaf, expected_status) in [
+        ("direct", "session.json", ProviderSourceStatus::Available),
+        (
+            "sessions-child",
+            "sessions/session.json",
+            ProviderSourceStatus::Available,
+        ),
+        (
+            "nested-decoy",
+            "archive/session.json",
+            ProviderSourceStatus::Empty,
+        ),
+    ] {
+        let temp = tempdir();
+        let selected = temp.path().join(id);
+        write(
+            &selected.join(leaf),
+            br#"{"sessionId":"configured-auggie","chatHistory":[]}"#,
+        );
+        let report = configured_report(
+            context(&temp),
+            vec![root(id, CaptureProvider::Auggie, selected.clone())],
+            CaptureProvider::Auggie,
+        );
+        assert!(report.issues.is_empty(), "{id}: {:?}", report.issues);
+        assert_eq!(report.sources.len(), 1, "{id}");
+        assert_eq!(report.sources[0].path, selected, "{id}");
+        assert_eq!(report.sources[0].status, expected_status, "{id}");
+        assert_configured(&report.sources[0], id, &report.sources[0].path);
+    }
+
+    let temp = tempdir();
+    let selected = temp.path().join("sessions-precedence");
+    write(
+        &selected.join("ignored.json"),
+        br#"{"sessionId":"shadowed-auggie","chatHistory":[]}"#,
+    );
+    fs::create_dir(selected.join("sessions")).unwrap();
+    let report = configured_report(
+        context(&temp),
+        vec![root(
+            "sessions-precedence",
+            CaptureProvider::Auggie,
+            selected,
+        )],
+        CaptureProvider::Auggie,
+    );
+    assert!(report.issues.is_empty());
+    assert_eq!(report.sources.len(), 1);
+    assert_eq!(report.sources[0].status, ProviderSourceStatus::Empty);
+}
+
+#[test]
 fn claude_and_codex_retain_released_home_expansions_and_role_bytes() {
     let temp = tempdir();
     let claude = temp.path().join("claude-home");

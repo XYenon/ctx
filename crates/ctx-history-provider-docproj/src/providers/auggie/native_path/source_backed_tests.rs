@@ -1,3 +1,5 @@
+use std::{fs, path::Path};
+
 use chrono::DateTime;
 use ctx_history_core::{AgentScope, EventRole, EventType, ProviderNativeSessionRelationship};
 use serde_json::{json, Value};
@@ -30,6 +32,54 @@ fn direct_core_projection_is_complete_and_self_contained() {
         AUGGIE_PARSER_REVISION,
         "auggie-nativepath-json-v5-agent-scope-raw-lineage"
     );
+}
+
+fn write_inventory_session(path: &Path, session_id: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        serde_json::to_vec(&json!({
+            "sessionId": session_id,
+            "created": "2026-07-04T20:00:00.000Z",
+            "modified": "2026-07-04T20:00:00.000Z",
+            "chatHistory": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn discovered_leaf_count(path: &Path) -> usize {
+    let inventory =
+        discover_auggie_source_backed_unfenced(&AuggieSourceBackedRoot::explicit(path)).unwrap();
+    assert_eq!(
+        inventory.status,
+        AuggieSourceBackedInventoryStatus::Complete
+    );
+    inventory.into_complete_tree().unwrap().leaves.len()
+}
+
+#[test]
+fn adapter_inventory_accepts_both_flat_directory_selections() {
+    let direct = tempfile::tempdir().unwrap();
+    write_inventory_session(&direct.path().join("direct.json"), "direct-session");
+    assert_eq!(discovered_leaf_count(direct.path()), 1);
+
+    let parent = tempfile::tempdir().unwrap();
+    write_inventory_session(&parent.path().join("sessions/child.json"), "sessions-child");
+    assert_eq!(discovered_leaf_count(parent.path()), 1);
+}
+
+#[test]
+fn adapter_inventory_ignores_nested_decoys_and_prefers_a_direct_sessions_child() {
+    let nested = tempfile::tempdir().unwrap();
+    write_inventory_session(&nested.path().join("nested/decoy.json"), "nested-decoy");
+    assert_eq!(discovered_leaf_count(nested.path()), 0);
+
+    let shadowed = tempfile::tempdir().unwrap();
+    write_inventory_session(&shadowed.path().join("ignored.json"), "shadowed-direct");
+    fs::create_dir(shadowed.path().join("sessions")).unwrap();
+    assert_eq!(discovered_leaf_count(shadowed.path()), 0);
 }
 
 fn scope_record_with_claims(

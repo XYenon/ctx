@@ -421,6 +421,58 @@ fn exact_source_catalog_lineage_preserves_released_v1_identity() {
 }
 
 #[test]
+fn configured_auggie_parent_root_publishes_its_authentic_sessions_child() {
+    const MARKER: &str = "auggie session json oracle prompt";
+
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let selected = temp.path().join("configured-auggie");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    copy_fixture(
+        "auggie/v0.32.0/sessions/01K0AUGGIESESSION0000000000.json",
+        &selected.join("sessions/01K0AUGGIESESSION0000000000.json"),
+    );
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_automatic_provider_discovery(false)
+    .with_configured_provider_roots(vec![ProviderRootDefinition {
+        id: "configured-auggie".to_owned(),
+        provider: CaptureProvider::Auggie,
+        path: selected.clone(),
+        group: Some("work".to_owned()),
+        kind: None,
+    }]);
+
+    let build = build_provider_registry(
+        &context,
+        &temp.path().join("ctx-data"),
+        CaptureProvider::Auggie,
+    );
+    assert_eq!(build.executable_route_count(), 1);
+    let route = build.registry.routes().next().unwrap();
+    assert_eq!(route.source.path, selected);
+    assert_eq!(route.source.source_format, "auggie_session_json");
+    assert!(route.source.route_provenance.configured_root().is_some());
+    assert_eq!(
+        build.registry.applied_provider_roots().unwrap().2[0].source_identity(),
+        ProviderRootSourceIdentity::NamedV1
+    );
+
+    let publication = publication_bytes(
+        &temp.path().join("configured-index"),
+        &build.registry,
+        MARKER,
+    );
+    assert!(!publication.records.is_empty());
+}
+
+#[test]
 fn disjoint_openhands_automatic_routes_each_adopt_released_identity() {
     const MARKER: &str = "openhands disjoint released adoption";
 
