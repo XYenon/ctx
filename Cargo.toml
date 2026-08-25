@@ -6,6 +6,7 @@ members = [
     "crates/ctx-cli",
     "crates/ctx-cli-contract-tests",
     "crates/ctx-cli-presentation",
+    "crates/ctx-cli-qualification",
     "crates/ctx-client-observability",
     "crates/ctx-daemon-cli",
     "crates/ctx-daemon-application",

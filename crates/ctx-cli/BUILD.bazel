@@ -345,11 +345,9 @@ ctx_cli_integration_test(
     src = "tests/status_store_cutover.rs",
 )
 
-ctx_cli_integration_test(
+test_suite(
     name = "stats_tests",
-    src = "tests/stats.rs",
-    extra_crates = ["rusqlite"],
-    tags = ["cli-contract", "privacy"],
+    tests = ["//crates/ctx-cli-qualification:stats_tests"],
 )
 
 test_suite(
