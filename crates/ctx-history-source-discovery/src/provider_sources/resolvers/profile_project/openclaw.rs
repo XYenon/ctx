@@ -96,6 +96,10 @@ pub(super) fn resolve(
     };
     if truncated {
         issue_limit(&mut report, spec.provider, state_root.join("openclaw.json"));
+        // A bounded prefix cannot stand in for complete agent membership.
+        // Leave automatic discovery route-less rather than publishing a
+        // selector that would silently omit the remaining configured agents.
+        return report;
     }
 
     for agent_id in agent_ids {

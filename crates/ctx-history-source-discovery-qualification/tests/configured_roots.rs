@@ -708,6 +708,41 @@ fn openclaw_compound_root_is_route_less_while_missing_and_restores_exact_agents(
 }
 
 #[test]
+fn configured_openclaw_truncated_agent_inventory_is_route_less() {
+    let temp = tempdir();
+    let state = temp.path().join("openclaw-state");
+    let agents = (0..129)
+        .map(|index| serde_json::json!({"id": format!("agent-{index:03}")}))
+        .collect::<Vec<_>>();
+    write(
+        &state.join("openclaw.json"),
+        &serde_json::to_vec(&serde_json::json!({"agents": {"list": agents}})).unwrap(),
+    );
+    write(
+        &state.join("agents/agent-000/sessions/first.jsonl"),
+        b"{}\n",
+    );
+
+    let report = configured_report(
+        context(&temp),
+        vec![root(
+            "configured-state",
+            CaptureProvider::OpenClaw,
+            state.clone(),
+        )],
+        CaptureProvider::OpenClaw,
+    );
+
+    assert!(report.sources.is_empty());
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(
+        report.issues[0].kind,
+        DiscoveryIssueKind::SelectorUnreconstructible
+    );
+    assert_eq!(report.issues[0].path.as_deref(), Some(state.as_path()));
+}
+
+#[test]
 fn configured_openclaw_route_matching_automatic_keeps_automatic_role_bytes() {
     let temp = tempdir();
     let state = temp.path().join("openclaw-state");

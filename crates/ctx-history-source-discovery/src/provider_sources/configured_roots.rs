@@ -726,6 +726,10 @@ fn expand_openclaw_state_root(
             DiscoveryIssueKind::SelectorUnreconstructible,
             OPENCLAW_CONFIG_LIMIT_REASON,
         );
+        // The bounded inventory is not an authoritative membership list.
+        // Leaving this root route-less lets refresh retain an authenticated
+        // prior membership; a first-time root publishes no partial selector.
+        return;
     }
 
     for agent_id in agent_ids {

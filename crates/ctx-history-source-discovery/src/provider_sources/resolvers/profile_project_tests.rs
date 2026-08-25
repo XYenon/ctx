@@ -748,6 +748,43 @@ fn openclaw_selects_sqlite_per_admitted_agent_and_jsonl_for_foreign_or_corrupt_a
 }
 
 #[test]
+fn openclaw_automatic_truncated_agent_inventory_is_route_less() {
+    let temp = tempdir();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let state = temp.path().join("selected");
+    fs::create_dir_all(&cwd).unwrap();
+    let agents = (0..129)
+        .map(|index| serde_json::json!({"id": format!("agent-{index:03}")}))
+        .collect::<Vec<_>>();
+    write(
+        &state.join("openclaw.json"),
+        &serde_json::to_vec(&serde_json::json!({"agents": {"list": agents}})).unwrap(),
+    );
+    write(
+        &state.join("agents/agent-000/sessions/first.jsonl"),
+        b"{}\n",
+    );
+
+    let report = report(
+        &context(&home, &cwd).with_env("OPENCLAW_STATE_DIR", state.as_os_str().to_owned()),
+        CaptureProvider::OpenClaw,
+    );
+
+    assert!(report.sources.is_empty());
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(
+        report.issues[0].kind,
+        DiscoveryIssueKind::SelectorUnreconstructible
+    );
+    let config_path = state.join("openclaw.json");
+    assert_eq!(
+        report.issues[0].path.as_deref(),
+        Some(config_path.as_path())
+    );
+}
+
+#[test]
 fn openclaw_uses_conditional_clawdbot_and_falls_back_to_its_agent_jsonl() {
     let temp = tempdir();
     let home = temp.path().join("home");
