@@ -759,7 +759,7 @@ fn openclaw_automatic_truncated_agent_inventory_is_route_less() {
         .collect::<Vec<_>>();
     write(
         &state.join("openclaw.json"),
-        &serde_json::to_vec(&serde_json::json!({"agents": {"list": agents}})).unwrap(),
+        serde_json::to_vec(&serde_json::json!({"agents": {"list": agents}})).unwrap(),
     );
     write(
         &state.join("agents/agent-000/sessions/first.jsonl"),
