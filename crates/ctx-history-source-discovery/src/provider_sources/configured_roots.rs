@@ -69,9 +69,9 @@ pub enum ConfiguredRootExpander {
         source_format: &'static str,
         route_role: &'static str,
     },
-    /// Released 1.1 Claude home expansion and role bytes.
+    /// Existing v9 Claude home expansion and role bytes.
     ClaudeHomeV1,
-    /// Released 1.1 Codex home expansion and role bytes.
+    /// Existing v9 Codex home expansion and role bytes.
     CodexHomeV1,
     /// OpenClaw state/profile root with bounded configured-agent expansion.
     OpenClawStateRootV1,

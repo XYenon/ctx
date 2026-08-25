@@ -338,12 +338,11 @@ and contains the selected string. The field is omitted for every other
 provider, preserving the earlier schema-v1 shape. The ordinary human success
 line remains a concise provider/name/path summary.
 
-ctx 1.2 writes generation manifest v10 and cannot produce a v9 index readable
-by ctx 1.1. To downgrade, use a fresh or separate data root and a 1.1-compatible
-config containing only Claude and Codex named roots; back up the current config
-or use a separate `XDG_CONFIG_HOME` as appropriate. Then let the 1.1 binary
-rebuild from provider history. Never reuse a 1.2 data root or expect a 1.2
-import to make its storage readable by 1.1.
+ctx 1.1 writes generation manifest v10 and cannot produce a v8 index readable
+by ctx 1.0. To downgrade, use a fresh or separate data root and a 1.0-compatible
+config; back up the current config or use a separate `XDG_CONFIG_HOME` as
+appropriate. Then let the 1.0 binary rebuild from provider history. Never reuse
+a 1.1 data root or expect a 1.1 import to make its storage readable by 1.0.
 
 Names and groups are local provenance and query selectors. They are not upload
 consent, access-control boundaries, tenant assignment, or retention policy; a
