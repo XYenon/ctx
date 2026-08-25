@@ -392,23 +392,27 @@ result:
 ```bash
 ctx sources add personal --provider claude --root /path/to/claude --source-group work --format json
 ctx sources add personal --provider claude --root /path/to/moved-claude --replace --format json
+ctx sources add openhands-cli --provider openhands --root /path/to/conversations --kind current-conversations --format json
 ctx sources remove personal --format json
 ```
 
 Both successful shapes contain exactly `schema_version`, `operation`,
 `changed`, and `root`. `operation` is `"add"` or `"remove"`; `root` contains
-`name`, `provider`, canonical absolute `path`, and nullable `group`. Repeating
-an add with the same name and identical canonical settings is idempotent and
-returns `changed: false`. Reusing the name with different settings fails unless
-the add includes `--replace`. A same-provider replacement atomically writes the
-new canonical path and complete group state while retaining `operation: "add"`;
+`name`, `provider`, canonical absolute `path`, and nullable `group`. For an
+OpenHands root only, `root` additionally contains `kind` with the exact value
+`"current-conversations"` or `"legacy-persistence"`; the member is omitted,
+not null, for every other provider. Repeating an add with the same name and
+identical canonical settings is idempotent and returns `changed: false`.
+Reusing the name with different settings fails unless the add includes
+`--replace`. A same-provider replacement atomically writes the new canonical
+path, kind, and complete group state while retaining `operation: "add"`;
 supplying `--source-group` sets the group and omitting it clears the group. It
-does not add a JSON field or expose an intermediate removed definition. A
-provider mismatch under the stable name is rejected. With an absent name,
-`--replace` performs an ordinary add. A successful remove returns
-`changed: true` and the removed root; removing an absent name is an error, not a
-successful no-op. Root names and non-null groups use 1 to 64 ASCII letters,
-digits, hyphens, or underscores and remain case-sensitive.
+does not expose an intermediate removed definition. A provider mismatch under
+the stable name is rejected. With an absent name, `--replace` performs an
+ordinary add. A successful remove returns `changed: true` and the removed root;
+removing an absent name is an error, not a successful no-op. Root names and
+non-null groups use 1 to 64 ASCII letters, digits, hyphens, or underscores and
+remain case-sensitive.
 
 ## Import
 

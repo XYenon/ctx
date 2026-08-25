@@ -75,6 +75,15 @@ directory expands to `projects`; a Codex history root directory expands
 independently to `sessions`, `archived_sessions`, and `history.jsonl` so one
 unavailable source cannot hide a healthy peer.
 
+OpenHands is the conditional exception to the provider-neutral command shape:
+its configured root requires `--kind current-conversations` for the direct
+current conversations directory or `--kind legacy-persistence` for the
+released recursive persistence layout. The equivalent OpenHands config table
+requires the same exact `kind` string. The current kind admits only current
+`<conversation>/events/event-*.json` files. Nested automatic/configured roots
+and ancestor-related configured legacy/current roots fail closed instead of
+indexing overlapping history twice.
+
 To move an existing root or change its group atomically, repeat `sources add`
 with the same name and provider plus `--replace`. Supplying `--source-group`
 sets the complete desired group; omitting it during replacement clears the

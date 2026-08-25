@@ -242,6 +242,7 @@ ctx sources --format json
 ctx sources add personal --provider claude --root ~/.claude-personal --source-group personal
 ctx sources add work --provider codex --root ~/.codex-work --source-group work
 ctx sources add work --provider codex --root ~/.codex-relocated --source-group work --replace
+ctx sources add openhands-cli --provider openhands --root ~/.openhands/conversations --kind current-conversations
 ctx sources remove personal
 ```
 
@@ -272,6 +273,11 @@ group = "personal"
 provider = "codex"
 path = "/absolute/path/to/codex-work"
 group = "work"
+
+[sources.roots.openhands-cli]
+provider = "openhands"
+path = "/absolute/path/to/openhands/conversations"
+kind = "current-conversations"
 ```
 
 Names and groups use up to 64 ASCII letters, digits, hyphens, or underscores;
@@ -302,6 +308,29 @@ namespace, including reconciliation of matching provider-native session ids;
 use a new name for an unrelated history root. Replacing `path` under the same
 name is the move operation, editing `group` only changes filtering metadata,
 and changing the table name creates new logical identities.
+
+OpenHands roots additionally require exactly one `--kind`. Use
+`current-conversations` when `--root` is the direct current conversations
+directory; that route accepts only
+`<conversation>/events/event-*.json`. Use `legacy-persistence` for the released
+recursive persistence-tree compatibility layout. `--kind` is rejected for
+other providers, and a hand-edited OpenHands table must contain the equivalent
+`kind = "current-conversations"` or `kind = "legacy-persistence"`. Nested
+automatic/configured OpenHands roots and ancestor-related configured legacy
+and current roots are rejected because they could select the same history.
+
+In `sources add`/`remove --format json`, `root.kind` is present for OpenHands
+and contains the selected string. The field is omitted for every other
+provider, preserving the earlier schema-v1 shape. The ordinary human success
+line remains a concise provider/name/path summary.
+
+An older ctx release that predates OpenHands root kinds cannot read a config or
+active generation containing this new field. Before intentionally downgrading,
+use the newer ctx to remove every configured OpenHands root and complete a full
+`ctx import --all` refresh so the active generation no longer contains those
+definitions. Do not merely delete `kind`: that is invalid for OpenHands in the
+new contract. If that preparation cannot be completed, keep the newer binary
+or select a separate data root for the older release.
 
 Names and groups are local provenance and query selectors. They are not upload
 consent, access-control boundaries, tenant assignment, or retention policy; a
