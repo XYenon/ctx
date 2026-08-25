@@ -606,21 +606,29 @@ fn unavailable_configured_claude_home_carries_only_itself_while_peer_refreshes()
     fs::rename(&work_home, &displaced_work_home).unwrap();
     fs::write(&work_home, b"temporarily not a directory").unwrap();
     let current = build_discovered_provider_registry(&context, &data_root, CaptureProvider::Claude);
-    assert!(current.issues.iter().any(|issue| matches!(
-        issue,
-        SourceBackedAutomaticRegistryIssue::Discovery(issue)
-            if issue.path.as_deref() == Some(work.as_path())
-    )));
+    assert!(
+        current.issues.iter().any(|issue| matches!(
+            issue,
+            SourceBackedAutomaticRegistryIssue::Discovery(issue)
+                if issue.path.as_deref() == Some(work_home.as_path())
+        )),
+        "{:?}",
+        current.issues
+    );
     fs::remove_file(&work_home).unwrap();
     fs::rename(&displaced_work_home, &work_home).unwrap();
     let receipt =
         refresh_source_backed_generation(&index, &current.registry, writer_options()).unwrap();
-    assert!(matches!(
-        receipt.failed_routes.as_slice(),
-        [failure]
-            if failure.class == SourceBackedSourceFailureClass::Unavailable
-                && failure.carried_forward
-    ));
+    assert!(
+        matches!(
+            receipt.failed_routes.as_slice(),
+            [failure]
+                if failure.class == SourceBackedSourceFailureClass::Unavailable
+                    && failure.carried_forward
+        ),
+        "{:?}",
+        receipt.failed_routes
+    );
     let personal_records = indexed_records(&index, CaptureProvider::Claude, "personal-session");
     assert_literal_bodies(
         &personal_records,
@@ -681,20 +689,28 @@ fn cold_unavailable_configured_claude_home_does_not_block_healthy_peer() {
         &temp.path().join("data"),
         CaptureProvider::Claude,
     );
-    assert!(build.issues.iter().any(|issue| matches!(
-        issue,
-        SourceBackedAutomaticRegistryIssue::Discovery(issue)
-            if issue.path.as_deref() == Some(work_home.join("projects").as_path())
-    )));
+    assert!(
+        build.issues.iter().any(|issue| matches!(
+            issue,
+            SourceBackedAutomaticRegistryIssue::Discovery(issue)
+                if issue.path.as_deref() == Some(work_home.as_path())
+        )),
+        "{:?}",
+        build.issues
+    );
     let index = temp.path().join("index");
     let receipt =
         refresh_source_backed_generation(&index, &build.registry, writer_options()).unwrap();
-    assert!(matches!(
-        receipt.failed_routes.as_slice(),
-        [failure]
-            if failure.class == SourceBackedSourceFailureClass::Unavailable
-                && !failure.carried_forward
-    ));
+    assert!(
+        matches!(
+            receipt.failed_routes.as_slice(),
+            [failure]
+                if failure.class == SourceBackedSourceFailureClass::Unavailable
+                    && !failure.carried_forward
+        ),
+        "{:?}",
+        receipt.failed_routes
+    );
     assert_eq!(
         receipt.successful_route_ids.len(),
         2,
