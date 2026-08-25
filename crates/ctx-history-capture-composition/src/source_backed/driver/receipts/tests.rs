@@ -40,7 +40,7 @@ fn unavailable_openclaw_root_restores_all_prior_agent_routes() {
         .unwrap();
 
     registry
-        .retain_unavailable_provider_root_routes(&[prior.clone()])
+        .retain_unavailable_provider_root_routes(std::slice::from_ref(&prior))
         .unwrap();
 
     let restored = &registry.applied_provider_roots().unwrap().2[0];
