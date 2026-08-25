@@ -1,0 +1,299 @@
+use super::*;
+
+#[test]
+fn naming_the_automatic_openhands_current_root_adopts_released_identity() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    let conversations = home.join(".openhands/conversations");
+    write_current_message_at_root(
+        &conversations,
+        "released-session",
+        1,
+        "released-event",
+        "released body",
+        "2026-07-28T12:00:00Z",
+    );
+    let automatic = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    );
+    let data_root = temp.path().join("ctx-data");
+    let index = temp.path().join("index");
+    let automatic_receipt = refresh_source_backed_generation(
+        &index,
+        &discovered_openhands_registry(&automatic, &data_root),
+        WriterOptions::default(),
+    )
+    .unwrap();
+    let automatic_record = indexed_events(&index, &automatic_receipt).remove(0);
+
+    let named = automatic.with_configured_provider_roots(vec![ProviderRootDefinition {
+        id: "released".to_owned(),
+        provider: CaptureProvider::OpenHands,
+        path: conversations,
+        group: Some("work".to_owned()),
+        kind: Some(ProviderRootKind::OpenHandsCurrentConversations),
+    }]);
+    let named_registry = discovered_openhands_registry(&named, &data_root);
+    let applied = &named_registry.applied_provider_roots().unwrap().2;
+    assert_eq!(applied.len(), 1);
+    assert_eq!(
+        applied[0].source_identity(),
+        ProviderRootSourceIdentity::Released
+    );
+    assert_eq!(named_registry.executable_route_count(), 1);
+    let named_receipt =
+        refresh_source_backed_generation(&index, &named_registry, WriterOptions::default())
+            .unwrap();
+    let named_record = indexed_events(&index, &named_receipt).remove(0);
+    assert!(named_record
+        .source
+        .exact_descriptor_eq(&automatic_record.source));
+    assert_eq!(named_record.session_id, automatic_record.session_id);
+    assert_eq!(named_record.event_id, automatic_record.event_id);
+    assert_eq!(VerifiedIndex::open(&index).unwrap().document_count(), 1);
+}
+
+#[test]
+fn current_cli_automatic_discovery_covers_append_rewrite_and_conversation_deletion() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    let profile = home.join(".openhands");
+    let conversations = profile.join("conversations");
+    let first = write_current_message(
+        &profile,
+        "conversation-lifecycle",
+        1,
+        "event-a",
+        "one",
+        "2026-07-28T12:00:00Z",
+    );
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    );
+    let data_root = temp.path().join("ctx-data");
+    let index = temp.path().join("automatic-index");
+
+    let cold_registry = discovered_openhands_registry(&context, &data_root);
+    let current_route = cold_registry
+        .routes()
+        .find(|route| route.source.provider == CaptureProvider::OpenHands)
+        .unwrap();
+    assert_eq!(current_route.source.path, conversations);
+    assert_eq!(current_route.source.status, ProviderSourceStatus::Available);
+    let cold =
+        refresh_source_backed_generation(&index, &cold_registry, WriterOptions::default()).unwrap();
+    assert_eq!(indexed_bodies(&index, &cold), vec!["one"]);
+
+    write_current_message(
+        &profile,
+        "conversation-lifecycle",
+        2,
+        "event-b",
+        "two",
+        "2026-07-28T12:00:01Z",
+    );
+    let appended_registry = discovered_openhands_registry(&context, &data_root);
+    let appended =
+        refresh_source_backed_generation(&index, &appended_registry, WriterOptions::default())
+            .unwrap();
+    assert_eq!(indexed_bodies(&index, &appended), vec!["one", "two"]);
+
+    fs::write(
+        &first,
+        serde_json::to_vec(&message("event-a", "one rewritten")).unwrap(),
+    )
+    .unwrap();
+    let rewritten_registry = discovered_openhands_registry(&context, &data_root);
+    let rewritten =
+        refresh_source_backed_generation(&index, &rewritten_registry, WriterOptions::default())
+            .unwrap();
+    assert_eq!(
+        indexed_bodies(&index, &rewritten),
+        vec!["one rewritten", "two"]
+    );
+
+    fs::remove_dir_all(conversations.join("conversation-lifecycle")).unwrap();
+    let deleted_registry = discovered_openhands_registry(&context, &data_root);
+    let current_route = deleted_registry
+        .routes()
+        .find(|route| route.source.provider == CaptureProvider::OpenHands)
+        .unwrap();
+    assert_eq!(current_route.source.path, conversations);
+    assert_eq!(current_route.source.status, ProviderSourceStatus::Empty);
+    refresh_source_backed_generation(&index, &deleted_registry, WriterOptions::default()).unwrap();
+    assert_eq!(VerifiedIndex::open(&index).unwrap().document_count(), 0);
+}
+
+#[test]
+fn disjoint_legacy_and_current_routes_coexist_and_delete_independently() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    let legacy_root = temp.path().join("legacy-profile");
+    let current_profile = temp.path().join("current-profile");
+    let conversations = current_profile.join("conversations");
+    write_message(
+        &legacy_root,
+        "conversation-legacy",
+        "legacy-event",
+        "legacy body",
+    );
+    write_current_message(
+        &current_profile,
+        "conversation-current",
+        1,
+        "current-event",
+        "current body",
+        "2026-07-28T12:00:00Z",
+    );
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        crate::DiscoveryPlatformDirs::default(),
+    )
+    .with_env("OH_PERSISTENCE_DIR", legacy_root.as_os_str().to_owned())
+    .with_env(
+        "OPENHANDS_CONVERSATIONS_DIR",
+        conversations.as_os_str().to_owned(),
+    );
+    let data_root = temp.path().join("ctx-data");
+    let index = temp.path().join("coexistence-index");
+
+    let cold_registry = discovered_openhands_registry(&context, &data_root);
+    let cold_routes = openhands_route_facts(&cold_registry);
+    assert_eq!(cold_routes.len(), 2);
+    assert_eq!(
+        cold_routes
+            .iter()
+            .map(|(_, format, authority)| (*format, *authority))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                OPENHANDS_CURRENT_CLI_SOURCE_FORMAT,
+                SourceBackedSelectorAuthority::CatalogLineage,
+            ),
+            (
+                "openhands_file_events",
+                SourceBackedSelectorAuthority::DiscoveredWinner,
+            ),
+        ]
+    );
+    assert_ne!(cold_routes[0].0, cold_routes[1].0);
+    let cold =
+        refresh_source_backed_generation(&index, &cold_registry, WriterOptions::default()).unwrap();
+    assert_eq!(
+        indexed_bodies(&index, &cold),
+        vec!["current body", "legacy body"]
+    );
+
+    fs::remove_dir_all(
+        legacy_root
+            .join("v1_conversations")
+            .join("conversation-legacy"),
+    )
+    .unwrap();
+    let legacy_deleted_registry = discovered_openhands_registry(&context, &data_root);
+    assert_eq!(openhands_route_facts(&legacy_deleted_registry), cold_routes);
+    let legacy_deleted = refresh_source_backed_generation(
+        &index,
+        &legacy_deleted_registry,
+        WriterOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        indexed_bodies(&index, &legacy_deleted),
+        vec!["current body"]
+    );
+
+    write_message(
+        &legacy_root,
+        "conversation-legacy",
+        "legacy-event",
+        "legacy body",
+    );
+    let restored_registry = discovered_openhands_registry(&context, &data_root);
+    let restored =
+        refresh_source_backed_generation(&index, &restored_registry, WriterOptions::default())
+            .unwrap();
+    assert_eq!(
+        indexed_bodies(&index, &restored),
+        vec!["current body", "legacy body"]
+    );
+
+    fs::remove_dir_all(conversations.join("conversation-current")).unwrap();
+    let current_deleted_registry = discovered_openhands_registry(&context, &data_root);
+    assert_eq!(
+        openhands_route_facts(&current_deleted_registry),
+        cold_routes
+    );
+    let current_deleted = refresh_source_backed_generation(
+        &index,
+        &current_deleted_registry,
+        WriterOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        indexed_bodies(&index, &current_deleted),
+        vec!["legacy body"]
+    );
+}
+
+#[test]
+fn openhands_append_rewrite_delete_and_exact_replay_converge() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let selected = temp.path().join("openhands");
+    let first = write_message(&selected, "conversation", "event-1", "one");
+    let index = temp.path().join("index");
+    let registry = registry(&selected);
+    let cold =
+        refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
+    let source_id = cold.sources[0].observation().source().identity().digest();
+
+    let second = write_message(&selected, "conversation", "event-2", "two");
+    let appended =
+        refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
+    assert_eq!(indexed_bodies(&index, &appended), vec!["one", "two"]);
+
+    fs::write(
+        &first,
+        serde_json::to_vec(&message("event-1", "one rewritten")).unwrap(),
+    )
+    .unwrap();
+    let rewritten =
+        refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
+    assert_eq!(
+        indexed_bodies(&index, &rewritten),
+        vec!["one rewritten", "two"]
+    );
+
+    fs::remove_file(second).unwrap();
+    let deleted =
+        refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
+    assert_eq!(indexed_bodies(&index, &deleted), vec!["one rewritten"]);
+    assert_eq!(
+        deleted.sources[0]
+            .observation()
+            .source()
+            .identity()
+            .digest(),
+        source_id
+    );
+
+    let replay =
+        refresh_source_backed_generation(&index, &registry, WriterOptions::default()).unwrap();
+    assert_eq!(replay.commit.generation_id, deleted.commit.generation_id);
+    assert_eq!(replay.sources, deleted.sources);
+    assert_eq!(indexed_bodies(&index, &replay), vec!["one rewritten"]);
+}

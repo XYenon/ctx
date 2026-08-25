@@ -33,20 +33,6 @@ pub(crate) fn test_provider_probes() -> StaticProviderProbeCatalog {
     StaticProviderProbeCatalog::new(CursorProbeFragment::new(cursor))
 }
 
-#[cfg(test)]
-pub(crate) mod provider_sources {
-    use std::path::PathBuf;
-
-    use ctx_history_core::CaptureProvider;
-
-    pub(crate) fn provider_source_for_path(
-        provider: CaptureProvider,
-        path: PathBuf,
-    ) -> crate::ProviderSource {
-        crate::provider_source_for_path(provider, path)
-    }
-}
-
 pub use source_backed::*;
 
 pub fn hermes_route_control_exact_due(control: &[u8], now_ms: i64) -> Option<bool> {

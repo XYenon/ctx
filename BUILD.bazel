@@ -768,6 +768,7 @@ py_test(
         "//crates/ctx-cli-contract-tests:cargo_package_data",
         "//crates/ctx-history-capture:cargo_package_data",
         "//crates/ctx-history-capture-composition:cargo_package_data",
+        "//crates/ctx-history-capture-composition-qualification:cargo_package_data",
         "//crates/ctx-history-read-application:cargo_package_data",
         "//crates/ctx-history-source-discovery:cargo_package_data",
     ] + glob(["docs/**"]),

@@ -6,8 +6,6 @@ use ctx_history_providers_sqlite_logical::{
     explicit_forgecode_route_plan, logical_sqlite_route_plan_scoped, LogicalSqliteRoutePlan,
     LogicalSqliteRuntimeBinding,
 };
-#[cfg(test)]
-use ctx_history_providers_sqlite_logical::logical_sqlite_route_plan;
 
 pub(crate) struct CaptureLogicalSqliteBinding;
 
