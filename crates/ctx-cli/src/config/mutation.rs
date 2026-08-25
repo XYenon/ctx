@@ -174,15 +174,22 @@ pub struct ProviderRootMutation {
 }
 
 #[cfg(test)]
-pub fn add_provider_root(
+pub fn add_claude_root(
     data_root: &Path,
     id: &str,
-    provider: CaptureProvider,
     root: &Path,
     group: Option<&str>,
     replace: bool,
 ) -> Result<ProviderRootMutation> {
-    add_provider_root_with_kind(data_root, id, provider, root, group, None, replace)
+    add_provider_root_with_kind(
+        data_root,
+        id,
+        CaptureProvider::Claude,
+        root,
+        group,
+        None,
+        replace,
+    )
 }
 
 pub fn add_provider_root_with_kind(

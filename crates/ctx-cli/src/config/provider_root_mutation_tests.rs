@@ -14,10 +14,9 @@ fn provider_root_replace_atomically_changes_path_and_complete_group_state() {
     )
     .unwrap();
 
-    add_provider_root(
+    add_claude_root(
         data_root.path(),
         "work",
-        CaptureProvider::Claude,
         &original,
         Some("old-group"),
         false,
@@ -27,10 +26,9 @@ fn provider_root_replace_atomically_changes_path_and_complete_group_state() {
     let before_rejected_replace = fs::read(&config_path).unwrap();
     let error = format!(
         "{:#}",
-        add_provider_root(
+        add_claude_root(
             data_root.path(),
             "work",
-            CaptureProvider::Claude,
             &replacement,
             Some("new-group"),
             false,
@@ -40,10 +38,9 @@ fn provider_root_replace_atomically_changes_path_and_complete_group_state() {
     assert!(error.contains("pass --replace"), "{error}");
     assert_eq!(fs::read(&config_path).unwrap(), before_rejected_replace);
 
-    let replaced = add_provider_root(
+    let replaced = add_claude_root(
         data_root.path(),
         "work",
-        CaptureProvider::Claude,
         &replacement,
         Some("new-group"),
         true,
@@ -58,15 +55,7 @@ fn provider_root_replace_atomically_changes_path_and_complete_group_state() {
     assert!(!loaded.analytics.enabled);
     assert_eq!(loaded.provider_roots["work"], replaced.root);
 
-    let cleared = add_provider_root(
-        data_root.path(),
-        "work",
-        CaptureProvider::Claude,
-        &original,
-        None,
-        true,
-    )
-    .unwrap();
+    let cleared = add_claude_root(data_root.path(), "work", &original, None, true).unwrap();
     assert!(cleared.changed);
     assert!(cleared.replaced);
     assert_eq!(cleared.root.group, None);
@@ -74,15 +63,7 @@ fn provider_root_replace_atomically_changes_path_and_complete_group_state() {
     assert!(!cleared_text.contains("group ="), "{cleared_text}");
 
     let before_noop = fs::read(&config_path).unwrap();
-    let unchanged = add_provider_root(
-        data_root.path(),
-        "work",
-        CaptureProvider::Claude,
-        &original,
-        None,
-        true,
-    )
-    .unwrap();
+    let unchanged = add_claude_root(data_root.path(), "work", &original, None, true).unwrap();
     assert!(!unchanged.changed);
     assert!(!unchanged.replaced);
     assert_eq!(fs::read(&config_path).unwrap(), before_noop);
@@ -96,26 +77,19 @@ fn provider_root_replace_rejects_provider_changes_under_a_stable_name() {
     let codex_root = provider_parent.path().join("codex");
     fs::create_dir(&claude_root).unwrap();
     fs::create_dir(&codex_root).unwrap();
-    add_provider_root(
-        data_root.path(),
-        "work",
-        CaptureProvider::Claude,
-        &claude_root,
-        Some("team"),
-        false,
-    )
-    .unwrap();
+    add_claude_root(data_root.path(), "work", &claude_root, Some("team"), false).unwrap();
     let config_path = data_root.path().join(CONFIG_FILE);
     let before = fs::read(&config_path).unwrap();
 
     let error = format!(
         "{:#}",
-        add_provider_root(
+        add_provider_root_with_kind(
             data_root.path(),
             "work",
             CaptureProvider::Codex,
             &codex_root,
             Some("team"),
+            None,
             true,
         )
         .unwrap_err()
@@ -129,10 +103,9 @@ fn provider_root_replace_rejects_provider_changes_under_a_stable_name() {
 fn provider_root_mutation_rejects_a_second_name_for_the_same_physical_root() {
     let data_root = tempfile::tempdir().unwrap();
     let provider_root = tempfile::tempdir().unwrap();
-    add_provider_root(
+    add_claude_root(
         data_root.path(),
         "personal",
-        CaptureProvider::Claude,
         provider_root.path(),
         None,
         false,
@@ -143,15 +116,7 @@ fn provider_root_mutation_rejects_a_second_name_for_the_same_physical_root() {
 
     let error = format!(
         "{:#}",
-        add_provider_root(
-            data_root.path(),
-            "work",
-            CaptureProvider::Claude,
-            provider_root.path(),
-            None,
-            false,
-        )
-        .unwrap_err()
+        add_claude_root(data_root.path(), "work", provider_root.path(), None, false).unwrap_err()
     );
 
     assert!(
@@ -166,15 +131,8 @@ fn provider_root_replace_adds_an_absent_name_and_remove_rejects_a_missing_name()
     let data_root = tempfile::tempdir().unwrap();
     let provider_root = tempfile::tempdir().unwrap();
 
-    let added = add_provider_root(
-        data_root.path(),
-        "work",
-        CaptureProvider::Claude,
-        provider_root.path(),
-        None,
-        true,
-    )
-    .unwrap();
+    let added =
+        add_claude_root(data_root.path(), "work", provider_root.path(), None, true).unwrap();
     assert!(added.changed);
     assert!(!added.replaced);
 
@@ -286,15 +244,7 @@ fn provider_root_replace_revalidates_a_concurrent_config_edit_after_locking() {
     let replacement = provider_parent.path().join("replacement");
     fs::create_dir(&original).unwrap();
     fs::create_dir(&replacement).unwrap();
-    add_provider_root(
-        data_root.path(),
-        "work",
-        CaptureProvider::Claude,
-        &original,
-        Some("team"),
-        false,
-    )
-    .unwrap();
+    add_claude_root(data_root.path(), "work", &original, Some("team"), false).unwrap();
     let config_path = AppConfig::config_path(data_root.path());
     let lock = durable_write::ConfigMutationLock::acquire(&config_path).unwrap();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -303,14 +253,7 @@ fn provider_root_replace_revalidates_a_concurrent_config_edit_after_locking() {
     let replacement_path = replacement.clone();
     let worker = std::thread::spawn(move || {
         started_tx.send(()).unwrap();
-        let result = add_provider_root(
-            &data_root_path,
-            "work",
-            CaptureProvider::Claude,
-            &replacement_path,
-            None,
-            true,
-        );
+        let result = add_claude_root(&data_root_path, "work", &replacement_path, None, true);
         finished_tx.send(result).unwrap();
     });
     started_rx.recv().unwrap();
@@ -356,11 +299,12 @@ fn openhands_root_kind_is_required_replaced_atomically_and_rejects_overlap() {
 
     let missing_kind = format!(
         "{:#}",
-        add_provider_root(
+        add_provider_root_with_kind(
             data_root.path(),
             "legacy",
             CaptureProvider::OpenHands,
             &legacy,
+            None,
             None,
             false,
         )

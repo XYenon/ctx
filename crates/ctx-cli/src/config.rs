@@ -22,7 +22,7 @@ mod provider_roots;
 mod toml_subset;
 
 #[cfg(test)]
-pub(crate) use mutation::add_provider_root;
+pub(crate) use mutation::add_claude_root;
 pub(crate) use mutation::{
     add_provider_root_with_kind, persisted_daemon_enabled, remove_provider_root,
     set_daemon_enabled, set_semantic_search_enabled, write_default_config, ProviderRootMutation,
