@@ -707,7 +707,12 @@ fn openclaw_compound_root_is_route_less_while_missing_and_restores_exact_agents(
     fs::rename(&state, &displaced).unwrap();
     let missing = discover();
     assert!(missing.sources.is_empty());
-    assert!(missing.issues.is_empty());
+    assert_eq!(missing.issues.len(), 1);
+    assert_eq!(
+        missing.issues[0].kind,
+        DiscoveryIssueKind::ConfiguredRootMissing
+    );
+    assert_eq!(missing.issues[0].path.as_deref(), Some(state.as_path()));
 
     let cold_missing_path = temp.path().join("cold-missing-openclaw-state");
     let cold_missing = configured_report(
@@ -720,7 +725,11 @@ fn openclaw_compound_root_is_route_less_while_missing_and_restores_exact_agents(
         CaptureProvider::OpenClaw,
     );
     assert!(cold_missing.sources.is_empty());
-    assert!(cold_missing.issues.is_empty());
+    assert_eq!(cold_missing.issues.len(), 1);
+    assert_eq!(
+        cold_missing.issues[0].kind,
+        DiscoveryIssueKind::ConfiguredRootMissing
+    );
 
     fs::rename(&displaced, &state).unwrap();
     let restored = discover();

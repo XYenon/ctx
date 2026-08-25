@@ -334,6 +334,15 @@ fn discovery_issue_json(
                 .collect(),
         );
     }
+    if issue.kind == DiscoveryIssueKind::ConfiguredRootMissing {
+        if let Some(root) = configured_root_for_issue(issue, provider_roots) {
+            value["configured_root"] = json!({
+                "name": root.id,
+                "path": root.path,
+                "group": root.group,
+            });
+        }
+    }
     value
 }
 
@@ -343,7 +352,18 @@ fn discovery_issue_code(kind: DiscoveryIssueKind) -> &'static str {
         DiscoveryIssueKind::SelectorUnreconstructible => "selector_unreconstructible",
         DiscoveryIssueKind::InsufficientOfficialEvidence => "insufficient_official_evidence",
         DiscoveryIssueKind::ConfiguredRootConflict => "configured_root_conflict",
+        DiscoveryIssueKind::ConfiguredRootMissing => "configured_root_missing",
     }
+}
+
+pub(crate) fn configured_root_for_issue<'a>(
+    issue: &DiscoveryIssue,
+    provider_roots: &'a [ProviderRootDefinition],
+) -> Option<&'a ProviderRootDefinition> {
+    let path = issue.path.as_deref()?;
+    provider_roots
+        .iter()
+        .find(|root| root.provider == issue.provider && root.path == path)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

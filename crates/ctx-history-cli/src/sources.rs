@@ -7,8 +7,8 @@ use ctx_history_capture::{DiscoveryIssue, DiscoveryIssueKind, ProviderSourceStat
 use ctx_history_core::CaptureProvider;
 
 use crate::provider_sources::{
-    configured_root_conflict_details, configured_root_for_source, sources_json_with_selection,
-    ConfiguredRootConflictKind,
+    configured_root_conflict_details, configured_root_for_issue, configured_root_for_source,
+    sources_json_with_selection, ConfiguredRootConflictKind,
 };
 use crate::{
     discovery_report_issues_json_with_provider_roots, history_source_plugin_report,
@@ -65,6 +65,7 @@ where
         ctx_history_ingest_application::SourceListingRequest {
             provider_filter,
             show_all: show_all_sources,
+            configured_provider_roots: provider_roots.clone(),
             default_visible_missing_providers: DEFAULT_VISIBLE_SOURCE_PROVIDERS.to_vec(),
         },
     )?;
@@ -527,6 +528,37 @@ fn render_discovery_issue(
             },
         );
     }
+    if issue.kind == DiscoveryIssueKind::ConfiguredRootMissing {
+        let root = configured_root_for_issue(issue, provider_roots);
+        let root_name = root.map_or("configured root", |root| root.id.as_str());
+        let selection = root.map(|root| match root.group.as_deref() {
+            Some(group) => format!("{} ({group})", root.id),
+            None => root.id.clone(),
+        });
+        let location = issue.path.as_deref().map(|path| human_path(path, None));
+        let mut fields = Vec::new();
+        if let Some(selection) = selection.as_deref() {
+            fields.push(Field::new("Selection", selection));
+        }
+        if let Some(location) = location.as_deref() {
+            fields.push(Field::new("Location", location));
+        }
+        fields.push(Field::new("Reason", issue.reason));
+        let detail = format!(
+            "The named root remains configured, but its provider-owned state is absent. Restore it or remove `{root_name}` when it is no longer needed."
+        );
+        let action_command = root.map(|root| format!("ctx sources remove {}", root.id));
+        return diagnostic(
+            context,
+            Diagnostic {
+                level: DiagnosticLevel::Warning,
+                summary: &format!("{provider} configured history root is missing"),
+                detail: Some(&detail),
+                fields: &fields,
+                action: action_command.as_deref().map(|command| Action { command }),
+            },
+        );
+    }
     let (summary, detail) = match issue.kind {
         DiscoveryIssueKind::NoDiskHistory => (
             format!("{provider} has no disk history selected"),
@@ -541,6 +573,7 @@ fn render_discovery_issue(
             issue.reason,
         ),
         DiscoveryIssueKind::ConfiguredRootConflict => unreachable!(),
+        DiscoveryIssueKind::ConfiguredRootMissing => unreachable!(),
     };
     let command = manual_path_guidance(issue.provider);
     diagnostic(

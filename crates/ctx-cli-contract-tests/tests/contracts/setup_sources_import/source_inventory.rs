@@ -59,6 +59,74 @@ fn sources_default_hides_unsupported_missing_locations() {
 }
 
 #[test]
+fn configured_missing_roots_remain_listed_without_exposing_automatic_missing_routes() {
+    let temp = tempdir();
+    let missing_openclaw = temp.path().join("missing-openclaw-state");
+    let missing_goose = temp.path().join("missing-goose-sessions.db");
+    fs::create_dir_all(data_root(&temp)).unwrap();
+    fs::write(
+        data_root(&temp).join("config.toml"),
+        format!(
+            "[sources.roots.personal-openclaw]\nprovider = \"openclaw\"\npath = {:?}\ngroup = \"personal\"\n\n[sources.roots.work-goose]\nprovider = \"goose\"\npath = {:?}\ngroup = \"work\"\n",
+            missing_openclaw.display().to_string(),
+            missing_goose.display().to_string(),
+        ),
+    )
+    .unwrap();
+
+    let default = json_output(ctx(&temp).args(["sources", "--format=json"]));
+    assert_eq!(default["scope"], "default");
+    let goose = source_entries(&default)
+        .iter()
+        .find(|source| source["path"] == missing_goose.to_str().unwrap())
+        .unwrap_or_else(|| panic!("configured Goose source missing from {default:#}"));
+    assert_eq!(goose["provider"], "goose");
+    assert_eq!(goose["status"], "missing");
+    assert_eq!(
+        goose["selection"],
+        json!({"kind": "configured", "root": "work-goose", "group": "work"}),
+    );
+    assert!(source_entries(&default).iter().all(|source| {
+        source["provider"] != "goose" || source["path"] == missing_goose.to_str().unwrap()
+    }));
+    let openclaw = default["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|issue| issue["code"] == "configured_root_missing")
+        .unwrap_or_else(|| panic!("route-less OpenClaw root missing from {default:#}"));
+    assert_eq!(openclaw["provider"], "openclaw");
+    assert_eq!(openclaw["path"], missing_openclaw.to_str().unwrap());
+    assert_eq!(
+        openclaw["configured_root"],
+        json!({
+            "name": "personal-openclaw",
+            "path": missing_openclaw.to_str().unwrap(),
+            "group": "personal",
+        }),
+    );
+
+    let all = json_output(ctx(&temp).args(["sources", "--all", "--format=json"]));
+    assert_eq!(all["scope"], "all");
+    assert!(source_entries(&all)
+        .iter()
+        .any(|source| source["path"] == missing_goose.to_str().unwrap()));
+    assert!(all["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["code"] == "configured_root_missing"
+            && issue["configured_root"]["name"] == "personal-openclaw"));
+
+    let human = success_stdout(ctx(&temp).arg("sources"));
+    assert!(human.contains("personal-openclaw (personal)"), "{human}");
+    assert!(
+        human.contains("configured history root is missing"),
+        "{human}"
+    );
+}
+
+#[test]
 fn request_scoped_import_paths_do_not_enter_the_automatic_source_inventory() {
     let temp = tempdir();
     let explicit_root = temp.path().join("external-codex-history");

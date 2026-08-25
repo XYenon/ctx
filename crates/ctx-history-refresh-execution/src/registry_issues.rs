@@ -230,6 +230,7 @@ pub(super) fn automatic_registry_route_less_blockers(
                     issue.kind,
                     DiscoveryIssueKind::NoDiskHistory
                         | DiscoveryIssueKind::InsufficientOfficialEvidence
+                        | DiscoveryIssueKind::ConfiguredRootMissing
                 ) =>
             {
                 continue;

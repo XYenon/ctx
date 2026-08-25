@@ -10,6 +10,10 @@ pub enum DiscoveryIssueKind {
     SelectorUnreconstructible,
     InsufficientOfficialEvidence,
     ConfiguredRootConflict,
+    /// A persistent configured root is absent and cannot yield a concrete
+    /// provider route to list. The root remains configured for refresh and
+    /// removal purposes.
+    ConfiguredRootMissing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,6 +258,10 @@ mod tests {
             (
                 DiscoveryIssueKind::ConfiguredRootConflict,
                 "ConfiguredRootConflict",
+            ),
+            (
+                DiscoveryIssueKind::ConfiguredRootMissing,
+                "ConfiguredRootMissing",
             ),
         ] {
             assert_eq!(format!("{value:?}"), spelling);

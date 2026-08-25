@@ -50,6 +50,7 @@ const OPENCLAW_CONFIG_LIMIT_REASON: &str =
     "the configured OpenClaw state root exceeds a bounded agent-registry limit";
 const OPENCLAW_UNSUPPORTED_REASON: &str =
     "OpenClaw openclaw-agent.sqlite does not satisfy the bounded current v17 schema and ownership contract";
+const CONFIGURED_ROOT_MISSING_REASON: &str = "the configured provider history root is missing";
 
 /// Filesystem kind required by a configured-root capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -717,10 +718,22 @@ fn expand_openclaw_state_root(
     root: &ProviderRootDefinition,
     availability: ConfiguredRootAvailability,
 ) {
+    if availability == ConfiguredRootAvailability::Missing {
+        // OpenClaw membership is rooted in the state directory. A missing
+        // state root cannot safely invent an agent route, but it is still a
+        // durable configured root and must remain diagnosable/listable.
+        report.issues.push(issue(
+            spec.provider,
+            Some(root.path.clone()),
+            DiscoveryIssueKind::ConfiguredRootMissing,
+            CONFIGURED_ROOT_MISSING_REASON,
+        ));
+        return;
+    }
     if availability != ConfiguredRootAvailability::Present {
         // A non-present root cannot safely enumerate agent membership. Leave
         // it route-less so refresh can retain exact prior membership instead
-        // of inventing `main`; cold missing roots remain empty.
+        // of inventing `main`.
         return;
     }
     let (agent_ids, truncated) = match openclaw_agent_ids_for_state_root(&root.path) {

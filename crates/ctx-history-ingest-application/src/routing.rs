@@ -180,6 +180,10 @@ pub(crate) fn validate_selected_provider(
                 "{} has no official automatic history location established",
                 guidance.display_name
             ),
+            DiscoveryIssueKind::ConfiguredRootMissing => format!(
+                "{} configured history root is missing",
+                guidance.display_name
+            ),
             DiscoveryIssueKind::ConfiguredRootConflict => unreachable!(),
         };
         return Err(anyhow!(
