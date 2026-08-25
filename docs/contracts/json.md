@@ -382,7 +382,8 @@ produce a source row. It is additive to `sources[]`, contains at most 64 rows,
 and each row includes `provider`, nullable `path`, stable `code`, `message`,
 and `message_truncated`. Messages are capped at 512 UTF-8 bytes. Stable issue
 codes are `no_disk_history`, `selector_unreconstructible`,
-`insufficient_official_evidence`, and `configured_root_conflict`.
+`insufficient_official_evidence`, `configured_root_conflict`, and
+`configured_root_missing`.
 A `configured_root_conflict` row additionally contains nullable
 `conflict_kind` (`configured_configured` or `automatic_configured`) and
 `configured_roots`, a possibly empty array of the recoverable configured
@@ -390,6 +391,10 @@ A `configured_root_conflict` row additionally contains nullable
 the path reported by discovery. `issues_truncated` is true when additional
 issue rows were omitted. Invalid history-source plugin manifests remain
 non-importable rows in `sources[]`; they are not provider discovery issues.
+A `configured_root_missing` row represents a durable configured root that
+cannot safely produce a concrete source route while absent. When its root
+definition is recoverable, `configured_root` contains its `name`, `path`, and
+nullable `group`; the root remains configured until restored or removed.
 
 Named provider history root mutations have a separate schema-version-1 JSON
 result:

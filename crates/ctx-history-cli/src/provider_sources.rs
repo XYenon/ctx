@@ -556,6 +556,10 @@ mod tests {
                     DiscoveryIssueKind::ConfiguredRootConflict,
                     "configured roots conflict",
                 ),
+                issue(
+                    DiscoveryIssueKind::ConfiguredRootMissing,
+                    "configured root missing",
+                ),
             ],
         };
 
@@ -568,6 +572,8 @@ mod tests {
         assert_eq!(issues[3]["code"], "configured_root_conflict");
         assert_eq!(issues[3]["conflict_kind"], Value::Null);
         assert_eq!(issues[3]["configured_roots"], json!([]));
+        assert_eq!(issues[4]["code"], "configured_root_missing");
+        assert_eq!(issues[4]["configured_root"], Value::Null);
     }
 
     #[test]
