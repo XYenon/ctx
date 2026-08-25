@@ -55,6 +55,7 @@ RUST_FORMAT_TARGETS = [
     "//crates/ctx-history-capture:self_contained_core_final_locator_removal_tests",
     "//crates/ctx-history-capture:unit_tests",
     "//crates/ctx-history-capture-composition-qualification:jsonl_publication_tests",
+    "//crates/ctx-history-capture-composition-qualification:openclaw_configured_root_lifecycle_tests",
     "//crates/ctx-history-capture-composition-qualification:provider_lifecycle_tests",
     "//crates/ctx-history-capture-composition:unit_tests",
     "//crates/ctx-history-providers-sqlite-logical:capture_facade_replay_tests",
