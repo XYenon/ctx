@@ -545,7 +545,7 @@ fn render_discovery_issue(
         }
         fields.push(Field::new("Reason", issue.reason));
         let detail = format!(
-            "The named root remains configured, but its provider-owned state is absent. Restore it or remove `{root_name}` when it is no longer needed."
+            "The named root remains configured, but its provider-owned state is absent. Restore it, replace its persisted path with `ctx sources add <name> --provider {provider} --root <replacement-path> --replace`, or remove `{root_name}` when it is no longer needed."
         );
         let action_command = root.map(|root| format!("ctx sources remove {}", root.id));
         return diagnostic(

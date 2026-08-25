@@ -14,6 +14,23 @@ fn source_entry<'a>(report: &'a Value, provider: &str, source_format: Option<&st
         .unwrap_or_else(|| panic!("missing {provider} source in {report:#}"))
 }
 
+fn write_maximum_missing_openclaw_roots(temp: &TempDir) -> Vec<String> {
+    fs::create_dir_all(data_root(temp)).unwrap();
+    let mut config = String::new();
+    for index in (0..64).rev() {
+        let name = format!("openclaw-{index:02}");
+        let path = temp.path().join(format!("missing-{name}"));
+        config.push_str(&format!(
+            "[sources.roots.{name}]\nprovider = \"openclaw\"\npath = {}\n\n",
+            json!(path),
+        ));
+    }
+    fs::write(data_root(temp).join("config.toml"), config).unwrap();
+    (0..64)
+        .map(|index| format!("openclaw-{index:02}"))
+        .collect()
+}
+
 #[test]
 fn setup_skips_empty_codex_session_tree() {
     let temp = tempdir();
@@ -124,6 +141,51 @@ fn configured_missing_roots_remain_listed_without_exposing_automatic_missing_rou
         human.contains("configured history root is missing"),
         "{human}"
     );
+    assert!(
+        human.contains("--root <replacement-path> --replace"),
+        "{human}"
+    );
+}
+
+#[test]
+fn maximum_missing_roots_precede_automatic_issues_without_exceeding_json_bounds() {
+    let temp = tempdir();
+    let expected_names = write_maximum_missing_openclaw_roots(&temp);
+
+    let sources = json_output(
+        ctx(&temp)
+            .env("CLAUDE_CONFIG_DIR", "relative-account")
+            .args(["sources", "--format=json"]),
+    );
+
+    assert_eq!(sources["issues_truncated"], true, "{sources:#}");
+    let issues = sources["issues"].as_array().unwrap();
+    assert_eq!(issues.len(), 64, "{sources:#}");
+    let actual_names = issues
+        .iter()
+        .map(|issue| {
+            assert_eq!(issue["code"], "configured_root_missing", "{issue:#}");
+            let root = issue
+                .get("configured_root")
+                .and_then(Value::as_object)
+                .unwrap_or_else(|| panic!("missing configured_root object in {issue:#}"));
+            assert!(root["group"].is_null(), "{issue:#}");
+            root["name"].as_str().unwrap().to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual_names, expected_names);
+
+    let human = success_stdout(
+        ctx(&temp)
+            .env("CLAUDE_CONFIG_DIR", "relative-account")
+            .arg("sources"),
+    );
+    assert_eq!(
+        human.matches("configured history root is missing").count(),
+        64,
+        "{human}"
+    );
+    assert_eq!(human.matches("--replace").count(), 64, "{human}");
 }
 
 #[test]

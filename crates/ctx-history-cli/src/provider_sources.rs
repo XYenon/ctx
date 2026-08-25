@@ -294,10 +294,25 @@ pub fn discovery_report_issues_json_with_provider_roots(
     let issues = report
         .issues
         .iter()
+        .filter(|issue| is_persisted_configured_root_missing(issue, provider_roots))
+        .chain(
+            report
+                .issues
+                .iter()
+                .filter(|issue| !is_persisted_configured_root_missing(issue, provider_roots)),
+        )
         .take(MAX_DISCOVERY_ISSUES)
         .map(|issue| discovery_issue_json(issue, provider_roots, automatic_provider_discovery))
         .collect();
     (issues, report.issues.len() > MAX_DISCOVERY_ISSUES)
+}
+
+fn is_persisted_configured_root_missing(
+    issue: &DiscoveryIssue,
+    provider_roots: &[ProviderRootDefinition],
+) -> bool {
+    issue.kind == DiscoveryIssueKind::ConfiguredRootMissing
+        && configured_root_for_issue(issue, provider_roots).is_some()
 }
 
 fn discovery_issue_json(
@@ -335,13 +350,14 @@ fn discovery_issue_json(
         );
     }
     if issue.kind == DiscoveryIssueKind::ConfiguredRootMissing {
-        if let Some(root) = configured_root_for_issue(issue, provider_roots) {
-            value["configured_root"] = json!({
+        value["configured_root"] = match configured_root_for_issue(issue, provider_roots) {
+            Some(root) => json!({
                 "name": root.id,
                 "path": root.path,
                 "group": root.group,
-            });
-        }
+            }),
+            None => Value::Null,
+        };
     }
     value
 }
@@ -573,7 +589,52 @@ mod tests {
         assert_eq!(issues[3]["conflict_kind"], Value::Null);
         assert_eq!(issues[3]["configured_roots"], json!([]));
         assert_eq!(issues[4]["code"], "configured_root_missing");
+        assert!(issues[4]
+            .as_object()
+            .unwrap()
+            .contains_key("configured_root"));
         assert_eq!(issues[4]["configured_root"], Value::Null);
+    }
+
+    #[test]
+    fn persisted_missing_roots_take_priority_without_widening_issue_bounds() {
+        let roots = (0..MAX_DISCOVERY_ISSUES)
+            .map(|index| ProviderRootDefinition {
+                id: format!("openclaw-{index:02}"),
+                provider: CaptureProvider::OpenClaw,
+                path: PathBuf::from(format!("/missing/openclaw-{index:02}")),
+                group: None,
+                kind: None,
+            })
+            .collect::<Vec<_>>();
+        let mut report = DiscoveryReport {
+            sources: Vec::new(),
+            issues: vec![issue(
+                DiscoveryIssueKind::SelectorUnreconstructible,
+                "automatic issue",
+            )],
+        };
+        report
+            .issues
+            .extend(roots.iter().map(|root| DiscoveryIssue {
+                provider: root.provider,
+                path: Some(root.path.clone()),
+                kind: DiscoveryIssueKind::ConfiguredRootMissing,
+                reason: "configured root missing",
+            }));
+
+        let (issues, truncated) =
+            discovery_report_issues_json_with_provider_roots(&report, &roots, true);
+
+        assert!(truncated);
+        assert_eq!(issues.len(), MAX_DISCOVERY_ISSUES);
+        for (index, issue) in issues.iter().enumerate() {
+            assert_eq!(issue["code"], "configured_root_missing");
+            assert_eq!(
+                issue.get("configured_root").unwrap()["name"],
+                format!("openclaw-{index:02}")
+            );
+        }
     }
 
     #[test]

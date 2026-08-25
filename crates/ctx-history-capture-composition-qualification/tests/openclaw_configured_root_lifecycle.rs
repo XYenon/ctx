@@ -4,9 +4,9 @@ use ctx_history_capture_composition::{
     build_automatic_source_backed_registry_from_report_with_probes,
     refresh_source_backed_generation, source_backed_refresh_writer_options, DiscoveryContext,
     DiscoveryPlatform, DiscoveryPlatformDirs, SourceBackedAutomaticRegistryBuild,
-    SourceBackedProviderRegistry, StaticProviderProbeCatalog,
+    SourceBackedAutomaticRegistryIssue, SourceBackedProviderRegistry, StaticProviderProbeCatalog,
 };
-use ctx_history_capture_model::ProviderRootDefinition;
+use ctx_history_capture_model::{DiscoveryIssue, DiscoveryIssueKind, ProviderRootDefinition};
 use ctx_history_core::CaptureProvider;
 use ctx_history_index::VerifiedIndex;
 use ctx_history_source_discovery::{CursorProbeFragment, CursorTranscriptProbeOutcome};
@@ -248,7 +248,17 @@ fn missing_openclaw_compound_root_retains_exact_agent_membership_until_restored(
     let displaced = temp.path().join("openclaw-state-displaced");
     fs::rename(&state, &displaced).unwrap();
     let mut missing = build_registry(&context, &temp.path().join("missing-data"));
-    assert!(missing.issues.is_empty(), "{:?}", missing.issues);
+    assert_eq!(
+        missing.issues,
+        vec![SourceBackedAutomaticRegistryIssue::Discovery(
+            DiscoveryIssue {
+                provider: CaptureProvider::OpenClaw,
+                path: Some(state.clone()),
+                kind: DiscoveryIssueKind::ConfiguredRootMissing,
+                reason: "the configured provider history root is missing",
+            }
+        )]
+    );
     assert_eq!(missing.executable_route_count(), 0);
     assert!(missing.registry.applied_provider_roots().unwrap().2[0]
         .routes()

@@ -392,9 +392,13 @@ the path reported by discovery. `issues_truncated` is true when additional
 issue rows were omitted. Invalid history-source plugin manifests remain
 non-importable rows in `sources[]`; they are not provider discovery issues.
 A `configured_root_missing` row represents a durable configured root that
-cannot safely produce a concrete source route while absent. When its root
-definition is recoverable, `configured_root` contains its `name`, `path`, and
-nullable `group`; the root remains configured until restored or removed.
+cannot safely produce a concrete source route while absent. Its
+`configured_root` member is always present: when the persisted definition is
+recoverable it is an object containing `name`, `path`, and nullable `group`;
+otherwise it is null. The member is absent, rather than null, on every other
+issue code. Recoverable missing-root rows are ordered before automatic issues
+so all 64 valid configured roots remain represented at the issue limit; the
+root remains configured until restored, replaced, or removed.
 
 Named provider history root mutations have a separate schema-version-1 JSON
 result:

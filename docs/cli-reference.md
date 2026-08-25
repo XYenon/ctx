@@ -249,12 +249,13 @@ ctx sources remove personal
 `sources` lists bounded provider history locations selected for this machine.
 Provider precedence is winner-only: an environment or persistent-config
 replacement suppresses its lower-priority default. Current coexisting installed
-surfaces or persisted profiles may produce separate rows. One-shot, old, moved,
-or unreconstructible roots require an exact `--path` and are not remembered.
-Most users need no source configuration. For a provider with an enabled
-configured-root capability, `sources add` registers an existing provider
-history root under a stable local name in `config.toml`; `sources remove`
-removes that definition. The provider capability determines whether the root
+surfaces or persisted profiles may produce separate rows. One-shot imports and
+unconfigured automatic locations that are old, moved, or unreconstructible
+require an exact `--path` and are not remembered. Most users need no source
+configuration. For a provider with an enabled configured-root capability,
+`sources add` registers an existing provider history root under a stable local
+name in `config.toml`; `sources remove` removes that definition. The provider
+capability determines whether the root
 must be a file or directory; the
 [provider support matrix](provider-support-matrix.json) publishes that state
 and, when enabled, the path kind and expansion strategy for every provider.
@@ -263,6 +264,16 @@ added to the provider's ordinary environment/default winner, and every distinct
 configured root is indexed. Registering the already inferred root gives it a name and optional
 group without indexing it twice. Other providers keep their ordinary discovery
 behavior.
+
+A named root is the persisted exception to one-shot discovery: it remains
+configured and listed when its provider-owned path goes missing. Restore the
+state at that path, replace the path atomically under the same name with the
+`ctx sources add <name> --provider <provider> --root <replacement-path> --replace`
+form, or remove the definition with `ctx sources remove <name>`. A missing
+OpenClaw state root cannot safely invent its agent routes, so it appears as a
+route-less configured-root diagnostic rather than an unrelated automatic
+missing route. JSON and MCP identify that diagnostic with
+`code: "configured_root_missing"` and an explicit `configured_root` object.
 
 The equivalent editable configuration is:
 
