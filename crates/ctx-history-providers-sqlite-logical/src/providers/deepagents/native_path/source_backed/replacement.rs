@@ -58,6 +58,14 @@ impl<B: crate::LogicalSqliteRuntimeBinding> ReplacementDocumentTree for DeepAgen
             && source.provider_identity_version() == 1
     }
 
+    fn durable_replay_source(
+        &self,
+        _authority: &Self::TreeAuthority,
+        leaf: &Self::Leaf,
+    ) -> SourceBackedRouteResult<Option<SourceKey>> {
+        Ok(Some(leaf.clone()))
+    }
+
     fn discover_complete(
         &self,
     ) -> SourceBackedRouteResult<CompleteDocumentTree<Self::Leaf, Self::TreeAuthority>> {

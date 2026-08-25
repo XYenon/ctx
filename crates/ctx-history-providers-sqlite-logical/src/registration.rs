@@ -206,6 +206,14 @@ impl<B: LogicalSqliteRuntimeBinding> ReplacementDocumentTree for ZedRouteAdapter
             && source.source_format() == ZED_THREADS_SQLITE_SOURCE_FORMAT
     }
 
+    fn durable_replay_source(
+        &self,
+        _authority: &Self::TreeAuthority,
+        leaf: &Self::Leaf,
+    ) -> SourceBackedRouteResult<Option<SourceKey>> {
+        Ok(Some(leaf.clone()))
+    }
+
     fn discover_complete(
         &self,
     ) -> SourceBackedRouteResult<CompleteDocumentTree<Self::Leaf, Self::TreeAuthority>> {
