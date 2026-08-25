@@ -59,9 +59,10 @@ impl GenerationManifest {
         provider_roots = provider_roots
             .into_iter()
             .map(|root| {
-                AppliedProviderRoot::with_source_identity(
+                AppliedProviderRoot::with_source_identity_and_connector_binding(
                     root.definition().clone(),
                     root.source_identity(),
+                    root.connector_binding().cloned(),
                     root.routes()
                         .iter()
                         .filter(|route| retained_route_ids.contains(*route))

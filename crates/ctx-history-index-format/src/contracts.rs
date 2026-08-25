@@ -21,9 +21,9 @@ use crate::{
 mod digest;
 mod provider_root;
 use digest::{decode_sha256_hex, is_sha256_hex};
-pub use provider_root::AppliedProviderRoot;
+pub use provider_root::{AppliedProviderRoot, ProviderRootConnectorBinding};
 
-pub const GENERATION_MANIFEST_VERSION: u32 = 9;
+pub const GENERATION_MANIFEST_VERSION: u32 = 10;
 pub const LEXICAL_SCHEMA_VERSION: u32 = LEXICAL_SCHEMA_REVISION;
 pub const LEXICAL_ANALYZER_VERSION: u32 = LEXICAL_TOKENIZER_REVISION;
 pub const MAX_PUBLICATION_METADATA_BYTES: usize = 48 * 1024;

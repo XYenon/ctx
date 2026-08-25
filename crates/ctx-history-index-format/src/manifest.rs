@@ -16,10 +16,10 @@ use tantivy::{IndexMeta, Searcher};
 
 use crate::{
     expected_source_generation_policy_hash, is_generation_id, provider_source_config_digest,
-    validate_core_contract_fingerprint, CommitPayload, GenerationManifest, IndexError, Result,
-    SourceCoreRecordAggregate, SourceRouteSnapshot, COMMIT_PAYLOAD_VERSION,
-    GENERATION_MANIFEST_VERSION, LEXICAL_ANALYZER_VERSION, LEXICAL_SCHEMA_VERSION,
-    MAX_PUBLICATION_METADATA_BYTES,
+    validate_core_contract_fingerprint, CommitPayload, GenerationManifest, IndexError,
+    ProviderRootDefinition, ProviderRootSourceIdentity, Result, SourceCoreRecordAggregate,
+    SourceRouteIdentity, SourceRouteSnapshot, COMMIT_PAYLOAD_VERSION, GENERATION_MANIFEST_VERSION,
+    LEXICAL_ANALYZER_VERSION, LEXICAL_SCHEMA_VERSION, MAX_PUBLICATION_METADATA_BYTES,
 };
 
 use ctx_history_core::CertifiedSource;
@@ -31,7 +31,8 @@ const MANIFEST_FLAT_DELTA_STORAGE: &str = "ctx-manifest-flat-delta-v1";
 const MANIFEST_FLAT_DELTA_PREFIX: &[u8] = br#"{"storage_format":"ctx-manifest-flat-delta-v1","#;
 const MAX_MANIFEST_DELTA_CHANGES: usize = 64;
 const MAX_MANIFEST_DELTA_BYTES: usize = 1024 * 1024;
-const PREVIOUS_GENERATION_MANIFEST_VERSION: u32 = 8;
+const PREVIOUS_GENERATION_MANIFEST_VERSION: u32 = 9;
+const LEGACY_GENERATION_MANIFEST_VERSION: u32 = 8;
 
 type ManifestCacheKey = (PathBuf, String);
 static MANIFEST_CACHE: OnceLock<Mutex<BTreeMap<ManifestCacheKey, ManifestCacheEntry>>> =
@@ -96,6 +97,34 @@ struct StoredManifestSourceChangeV1 {
     source_identity: [u8; 32],
     source: CertifiedSource,
     aggregate: SourceCoreRecordAggregate,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviousAppliedProviderRootV9 {
+    definition: ProviderRootDefinition,
+    source_identity: ProviderRootSourceIdentity,
+    routes: Vec<SourceRouteIdentity>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviousGenerationManifestV9 {
+    manifest_version: u32,
+    identity_version: u16,
+    core_record_version: u32,
+    core_record_contract_fingerprint: String,
+    lexical_schema_version: u32,
+    lexical_analyzer_version: u32,
+    policy_schema_hash: String,
+    indexed_documents: u64,
+    certified_source_bytes: u64,
+    sources: Vec<CertifiedSource>,
+    core_record_aggregates: Vec<SourceCoreRecordAggregate>,
+    source_routes: Vec<SourceRouteSnapshot>,
+    automatic_provider_discovery: bool,
+    provider_root_config_digest: String,
+    provider_roots: Vec<PreviousAppliedProviderRootV9>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -253,7 +282,8 @@ fn load_materialized_manifest(
                 }
                 manifest
             }
-            PREVIOUS_GENERATION_MANIFEST_VERSION => migrate_previous_manifest_v8(&bytes)?,
+            PREVIOUS_GENERATION_MANIFEST_VERSION => migrate_previous_manifest_v9(&bytes)?,
+            LEGACY_GENERATION_MANIFEST_VERSION => migrate_previous_manifest_v8(&bytes)?,
             version => return Err(IndexError::UnsupportedManifest(version)),
         };
         validate_manifest_contract(&manifest)?;
@@ -275,9 +305,50 @@ fn load_materialized_manifest(
     Ok(manifest)
 }
 
+fn migrate_previous_manifest_v9(bytes: &[u8]) -> Result<GenerationManifest> {
+    let previous: PreviousGenerationManifestV9 = serde_json::from_slice(bytes)?;
+    if previous.manifest_version != PREVIOUS_GENERATION_MANIFEST_VERSION
+        || serde_json::to_vec(&previous)? != bytes
+    {
+        return Err(IndexError::NonCanonicalManifest);
+    }
+    let mut value = serde_json::to_value(previous)?;
+    let object = value
+        .as_object_mut()
+        .ok_or(IndexError::NonCanonicalManifest)?;
+    object.insert(
+        "manifest_version".to_owned(),
+        serde_json::json!(GENERATION_MANIFEST_VERSION),
+    );
+    let roots = object
+        .get_mut("provider_roots")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or(IndexError::NonCanonicalManifest)?;
+    for root in roots {
+        let root = root
+            .as_object_mut()
+            .ok_or(IndexError::NonCanonicalManifest)?;
+        if root.get("source_identity") == Some(&serde_json::json!("released")) {
+            let identity_root = root
+                .get("definition")
+                .and_then(|definition| definition.get("path"))
+                .cloned()
+                .ok_or(IndexError::NonCanonicalManifest)?;
+            root.insert(
+                "connector_binding".to_owned(),
+                serde_json::json!({
+                    "kind": "released_v1",
+                    "identity_root": identity_root,
+                }),
+            );
+        }
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
 fn migrate_previous_manifest_v8(bytes: &[u8]) -> Result<GenerationManifest> {
     let previous: PreviousGenerationManifestV8 = serde_json::from_slice(bytes)?;
-    if previous.manifest_version != PREVIOUS_GENERATION_MANIFEST_VERSION
+    if previous.manifest_version != LEGACY_GENERATION_MANIFEST_VERSION
         || serde_json::to_vec(&previous)? != bytes
     {
         return Err(IndexError::NonCanonicalManifest);
@@ -777,4 +848,71 @@ pub fn searcher_generation(searcher: &Searcher) -> BTreeMap<String, Option<u64>>
         .iter()
         .map(|segment| (segment.segment_id().uuid_string(), segment.delete_opstamp()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppliedProviderRoot;
+    use ctx_history_core::CaptureProvider;
+
+    #[test]
+    fn v9_manifest_migration_seeds_released_connector_binding() {
+        let temp = tempfile::tempdir().unwrap();
+        let definition = ProviderRootDefinition {
+            id: "codex".to_owned(),
+            provider: CaptureProvider::Codex,
+            path: temp.path().join("codex-home"),
+            group: None,
+            kind: None,
+        };
+        let manifest = GenerationManifest::from_parts_with_record_aggregates_and_provider_roots(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            true,
+            provider_source_config_digest(true, std::slice::from_ref(&definition)),
+            vec![AppliedProviderRoot::with_source_identity(
+                definition.clone(),
+                ProviderRootSourceIdentity::Released,
+                Vec::new(),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let mut value = serde_json::to_value(manifest).unwrap();
+        value["manifest_version"] = serde_json::json!(PREVIOUS_GENERATION_MANIFEST_VERSION);
+        value["provider_roots"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("connector_binding");
+        let previous: PreviousGenerationManifestV9 = serde_json::from_value(value).unwrap();
+        let migrated = migrate_previous_manifest_v9(&serde_json::to_vec(&previous).unwrap())
+            .expect("canonical v9 manifest migrates");
+
+        let root = &migrated.provider_roots()[0];
+        assert_eq!(root.definition(), &definition);
+        assert_eq!(
+            root.connector_binding().unwrap().identity_root(),
+            definition.path
+        );
+    }
+
+    #[test]
+    fn v8_manifest_still_migrates_directly_to_current_contract() {
+        let manifest = GenerationManifest::from_parts(Vec::new(), Vec::new()).unwrap();
+        let mut value = serde_json::to_value(manifest).unwrap();
+        value["manifest_version"] = serde_json::json!(LEGACY_GENERATION_MANIFEST_VERSION);
+        let object = value.as_object_mut().unwrap();
+        object.remove("automatic_provider_discovery");
+        object.remove("provider_root_config_digest");
+        object.remove("provider_roots");
+        let previous: PreviousGenerationManifestV8 = serde_json::from_value(value).unwrap();
+        let migrated = migrate_previous_manifest_v8(&serde_json::to_vec(&previous).unwrap())
+            .expect("canonical v8 manifest migrates");
+
+        assert_eq!(migrated.manifest_version, GENERATION_MANIFEST_VERSION);
+        assert!(migrated.automatic_provider_discovery());
+        assert!(migrated.provider_roots().is_empty());
+    }
 }
