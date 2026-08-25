@@ -699,8 +699,7 @@ fn register_enabled_catalog_route(
                     data_root,
                     authority,
                     vec![(path, database_lineage)],
-                    None,
-                    SqliteInventoryCoverage::Complete,
+                    (None, SqliteInventoryCoverage::Complete),
                 )?;
             }
             CaptureProvider::Crush => bail!(
