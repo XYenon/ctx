@@ -155,6 +155,8 @@ impl LocalToolBackend {
                     daemon_enabled: config.automatic_indexing_enabled(),
                     semantic_search_enabled: config.semantic_search_enabled(),
                     local_usage_enabled: config.local_usage.enabled,
+                    automatic_provider_discovery: config.automatic_source_discovery_enabled(),
+                    provider_roots: config.provider_root_definitions(),
                 },
             )
             .map_err(classify_mcp_search_error)?;
