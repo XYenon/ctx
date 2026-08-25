@@ -96,19 +96,22 @@ pub(super) fn applied_provider_roots(
                 .collect::<Vec<_>>();
             let mut automatic_route_roles = BTreeMap::new();
             for route in &root_routes {
-                let Some(role) = route
-                    .metadata
-                    .source
-                    .route_provenance
-                    .automatic_route_role()
-                else {
+                let provenance = &route.metadata.source.route_provenance;
+                let (Some(configured_role), Some(automatic_role)) = (
+                    provenance.route_role(),
+                    provenance.automatic_route_role(),
+                ) else {
                     continue;
                 };
                 let source_format = route.metadata.source.source_format.to_owned();
-                let role = role.as_bytes().to_vec();
+                let configured_role = configured_role.as_bytes().to_vec();
+                let automatic_role = automatic_role.as_bytes().to_vec();
                 if automatic_route_roles
-                    .insert(source_format.clone(), role.clone())
-                    .is_some_and(|previous| previous != role)
+                    .insert(
+                        (source_format.clone(), configured_role.clone()),
+                        automatic_role.clone(),
+                    )
+                    .is_some_and(|previous| previous != automatic_role)
                 {
                     return Err(SourceBackedCoordinatorError::Index(
                         IndexError::InvalidProviderRoots(format!(
@@ -154,14 +157,26 @@ pub(super) fn applied_provider_roots(
                     .connector_binding()
                     .into_iter()
                     .flat_map(|binding| binding.automatic_route_roles())
-                    .map(|role| (role.source_format().to_owned(), role.role().to_vec()))
+                    .map(|role| {
+                        (
+                            (
+                                role.source_format().to_owned(),
+                                role.configured_route_role().to_vec(),
+                            ),
+                            role.role().to_vec(),
+                        )
+                    })
                     .collect::<BTreeMap<_, _>>();
                 retained_automatic_route_roles.extend(automatic_route_roles);
                 root.with_released_automatic_route_roles(
                     retained_automatic_route_roles
                         .into_iter()
-                        .map(|(source_format, role)| {
-                            ReleasedProviderRootAutomaticRole::new(source_format, role)
+                        .map(|((source_format, configured_route_role), role)| {
+                            ReleasedProviderRootAutomaticRole::new(
+                                source_format,
+                                configured_route_role,
+                                role,
+                            )
                         })
                         .collect(),
                 )
@@ -180,4 +195,39 @@ pub(super) fn applied_provider_roots(
             .map_err(SourceBackedCoordinatorError::Index)
         })
         .collect()
+}
+
+pub(super) fn restore_released_automatic_route_role(
+    source: &mut ProviderSource,
+    configured_root: &ProviderRootDefinition,
+    registrations: &BTreeMap<String, ProviderRootRegistration>,
+) -> SourceBackedCoordinatorResult<()> {
+    let configured_role = source
+        .route_provenance
+        .route_role()
+        .ok_or_else(|| invalid_route(source.provider, "configured source has no route role"))?
+        .as_bytes()
+        .to_vec();
+    let Some(encoded_role) = registrations
+        .get(&configured_root.id)
+        .and_then(|registration| registration.retained_authority.as_ref())
+        .and_then(RetainedProviderRootAuthority::connector_binding)
+        .and_then(|binding| binding.automatic_route_role(source.source_format, &configured_role))
+    else {
+        return Ok(());
+    };
+    let role = ProviderRouteRole::try_from_encoded(encoded_role)
+        .map_err(|error| invalid_route(source.provider, error.to_string()))?;
+    let ProviderSourceRouteProvenance::ConfiguredRoot {
+        automatic_route_role,
+        ..
+    } = &mut source.route_provenance
+    else {
+        return Err(invalid_route(
+            source.provider,
+            "released configured source has no configured-root provenance",
+        ));
+    };
+    *automatic_route_role = Some(role);
+    Ok(())
 }

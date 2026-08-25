@@ -198,13 +198,19 @@ fn detached_released_authority_is_bounded_and_platform_independent() {
 #[test]
 fn released_connector_automatic_roles_are_bounded() {
     let temp = tempfile::tempdir().unwrap();
-    let roles = (0..=64_u64)
+    let roles = (0..=256_u64)
         .map(|index| {
             let component = index.to_be_bytes();
-            let role = ProviderRouteRole::from_dynamic([component.as_slice()]).unwrap();
+            let configured_role =
+                ProviderRouteRole::from_dynamic([b"configured".as_slice(), component.as_slice()])
+                    .unwrap();
+            let automatic_role =
+                ProviderRouteRole::from_dynamic([b"automatic".as_slice(), component.as_slice()])
+                    .unwrap();
             ReleasedProviderRootAutomaticRole::new(
                 format!("fixture_{index}"),
-                role.as_bytes().to_vec(),
+                configured_role.as_bytes().to_vec(),
+                automatic_role.as_bytes().to_vec(),
             )
         })
         .collect();

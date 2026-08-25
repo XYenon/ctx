@@ -87,19 +87,25 @@ impl ProviderRootSourceIdentity {
 #[serde(deny_unknown_fields)]
 pub struct ReleasedProviderRootAutomaticRole {
     source_format: String,
+    configured_route_role: Vec<u8>,
     role: Vec<u8>,
 }
 
 impl ReleasedProviderRootAutomaticRole {
-    pub fn new(source_format: String, role: Vec<u8>) -> Self {
+    pub fn new(source_format: String, configured_route_role: Vec<u8>, role: Vec<u8>) -> Self {
         Self {
             source_format,
+            configured_route_role,
             role,
         }
     }
 
     pub fn source_format(&self) -> &str {
         &self.source_format
+    }
+
+    pub fn configured_route_role(&self) -> &[u8] {
+        &self.configured_route_role
     }
 
     pub fn role(&self) -> &[u8] {
@@ -147,10 +153,17 @@ impl ProviderRootConnectorBinding {
         }
     }
 
-    pub fn automatic_route_role(&self, source_format: &str) -> Option<&[u8]> {
+    pub fn automatic_route_role(
+        &self,
+        source_format: &str,
+        configured_route_role: &[u8],
+    ) -> Option<&[u8]> {
         self.automatic_route_roles()
             .iter()
-            .find(|role| role.source_format == source_format)
+            .find(|role| {
+                role.source_format == source_format
+                    && role.configured_route_role == configured_route_role
+            })
             .map(ReleasedProviderRootAutomaticRole::role)
     }
 

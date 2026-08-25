@@ -4,7 +4,7 @@ mod provider_roots;
 mod registry;
 use provider_roots::{
     applied_provider_roots, released_compound_inventory_coverage, released_compound_root_sources,
-    ReleasedCompoundRootSource, ReleasedProviderRootRoute,
+    restore_released_automatic_route_role, ReleasedCompoundRootSource, ReleasedProviderRootRoute,
 };
 #[cfg(test)]
 pub(in crate::source_backed) use registry::build_automatic_source_backed_registry_from_parts;

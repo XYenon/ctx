@@ -8,14 +8,15 @@ use serde::{Deserialize, Serialize};
 use super::{is_sha256_hex, IndexError, Result};
 
 const MAX_PROVIDER_ROOT_CONNECTOR_PATH_BYTES: usize = 16 * 1024;
-const MAX_RELEASED_CONNECTOR_AUTOMATIC_ROUTE_ROLES: usize = 64;
+const MAX_RELEASED_CONNECTOR_AUTOMATIC_ROUTE_ROLES: usize = 256;
 
 fn validate_connector_binding(binding: &ProviderRootConnectorBinding) -> Result<()> {
     let roles = binding.automatic_route_roles();
     if roles.len() > MAX_RELEASED_CONNECTOR_AUTOMATIC_ROUTE_ROLES
-        || roles
-            .windows(2)
-            .any(|pair| pair[0].source_format() >= pair[1].source_format())
+        || roles.windows(2).any(|pair| {
+            (pair[0].source_format(), pair[0].configured_route_role())
+                >= (pair[1].source_format(), pair[1].configured_route_role())
+        })
     {
         return Err(IndexError::InvalidProviderRoots(
             "released connector automatic route roles are not bounded, strictly sorted, and unique"
@@ -34,11 +35,13 @@ fn validate_connector_binding(binding: &ProviderRootConnectorBinding) -> Result<
                 "released connector automatic route role has an invalid source format".to_owned(),
             ));
         }
-        ProviderRouteRole::try_from_encoded(role.role()).map_err(|_| {
-            IndexError::InvalidProviderRoots(
-                "released connector automatic route role has an invalid encoding".to_owned(),
-            )
-        })?;
+        for encoded in [role.configured_route_role(), role.role()] {
+            ProviderRouteRole::try_from_encoded(encoded).map_err(|_| {
+                IndexError::InvalidProviderRoots(
+                    "released connector automatic route role has an invalid encoding".to_owned(),
+                )
+            })?;
+        }
     }
     let Some(path) = binding.identity_root() else {
         return Ok(());
@@ -288,8 +291,10 @@ impl AppliedProviderRoot {
         mut self,
         mut automatic_route_roles: Vec<ReleasedProviderRootAutomaticRole>,
     ) -> Result<Self> {
-        automatic_route_roles
-            .sort_by(|left, right| left.source_format().cmp(right.source_format()));
+        automatic_route_roles.sort_by(|left, right| {
+            (left.source_format(), left.configured_route_role())
+                .cmp(&(right.source_format(), right.configured_route_role()))
+        });
         let connector_binding = self.connector_binding.take().ok_or_else(|| {
             IndexError::InvalidProviderRoots(format!(
                 "released root {} has no connector binding",
