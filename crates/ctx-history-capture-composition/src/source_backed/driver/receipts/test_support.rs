@@ -1,3 +1,5 @@
+//! Hidden mutation seams for external qualification targets.
+
 use super::*;
 
 impl SourceBackedRoute {

@@ -76,7 +76,7 @@ rust_library(
 rust_library(
     name = "test_support_lib",
     testonly = True,
-    srcs = PROD_SRCS,
+    srcs = PROD_SRCS + ["src/source_backed/driver/receipts/test_support.rs"],
     crate_name = "ctx_history_capture_composition",
     crate_root = "src/lib.rs",
     edition = crate_edition(),

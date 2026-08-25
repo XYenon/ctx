@@ -227,12 +227,12 @@ where
     }
     let no_replacement_cohorts = BTreeMap::new();
     let publication_replacement_cohorts = if install_provider_roots {
-        &pending_configured_root_replacement_cohorts
+        pending_configured_root_replacement_cohorts
     } else {
         &no_replacement_cohorts
     };
     let route_schedule =
-        replacement_route_schedule(registry, &attempt_selected, publication_replacement_cohorts);
+        replacement_route_schedule(registry, attempt_selected, publication_replacement_cohorts);
     let mut active_replacement_cohort = None::<ReplacementCohortAttemptCheckpoint>;
     for scheduled in route_schedule {
         let route_index = scheduled.route_index;
@@ -319,7 +319,7 @@ where
                 .iter()
                 .all(|path| path_presence(path) == PathPresence::Missing)
             {
-                let accounting_valid = Arc::clone(&exact_scan_accounting_valid);
+                let accounting_valid = Arc::clone(exact_scan_accounting_valid);
                 lifecycle.observe_missing_route(
                     route_identity.clone(),
                     automatic_missing_observed_at_unix_ms,
@@ -374,7 +374,7 @@ where
                         logical_failures: &mut *logical_source_failures,
                         record_rejections: &mut *record_rejections,
                     },
-                    &exact_scan_accounting_valid,
+                    exact_scan_accounting_valid,
                 )?;
             }
             continue;
@@ -407,7 +407,7 @@ where
         lifecycle.begin_route_stage(route_identity.clone())?;
         if let Some(revalidate) = driver.revalidate_at_publication.as_ref() {
             let revalidate = Arc::clone(revalidate);
-            let accounting_valid = Arc::clone(&exact_scan_accounting_valid);
+            let accounting_valid = Arc::clone(exact_scan_accounting_valid);
             lifecycle.register_route_revalidation(route_identity.clone(), move || {
                 let valid = revalidate();
                 if !valid {
@@ -792,7 +792,7 @@ where
                     logical_failures: &mut *logical_source_failures,
                     record_rejections: &mut *record_rejections,
                 },
-                &exact_scan_accounting_valid,
+                exact_scan_accounting_valid,
             )?;
         }
     }
