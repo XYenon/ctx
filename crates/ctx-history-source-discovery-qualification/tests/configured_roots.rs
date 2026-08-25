@@ -55,6 +55,12 @@ const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str
         "mimocode-database",
     ),
     (
+        CaptureProvider::KiroCli,
+        ConfiguredRootPathKind::File,
+        "kiro_cli_sqlite",
+        "kiro-cli-database",
+    ),
+    (
         CaptureProvider::Crush,
         ConfiguredRootPathKind::File,
         "crush_sqlite",
@@ -65,6 +71,12 @@ const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str
         ConfiguredRootPathKind::File,
         "goose_sessions_sqlite",
         "goose-sessions-database",
+    ),
+    (
+        CaptureProvider::Antigravity,
+        ConfiguredRootPathKind::Directory,
+        "antigravity_cli_transcript_jsonl_tree",
+        "antigravity-brain",
     ),
     (
         CaptureProvider::Gemini,
@@ -97,6 +109,12 @@ const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str
         "copilot-session-state",
     ),
     (
+        CaptureProvider::FactoryAiDroid,
+        ConfiguredRootPathKind::Directory,
+        "factory_ai_droid_sessions_jsonl",
+        "factory-droid-sessions",
+    ),
+    (
         CaptureProvider::QwenCode,
         ConfiguredRootPathKind::Directory,
         "qwen_code_chat_jsonl_tree",
@@ -109,16 +127,34 @@ const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str
         "kimi-history",
     ),
     (
+        CaptureProvider::Auggie,
+        ConfiguredRootPathKind::Directory,
+        "auggie_session_json",
+        "auggie-sessions",
+    ),
+    (
         CaptureProvider::Junie,
         ConfiguredRootPathKind::Directory,
         "junie_session_events_jsonl_tree",
         "junie-sessions",
     ),
     (
+        CaptureProvider::Firebender,
+        ConfiguredRootPathKind::File,
+        "firebender_chat_history_sqlite",
+        "firebender-chat-history-database",
+    ),
+    (
         CaptureProvider::ForgeCode,
         ConfiguredRootPathKind::File,
         "forgecode_sqlite",
         "forgecode-database",
+    ),
+    (
+        CaptureProvider::DeepAgents,
+        ConfiguredRootPathKind::File,
+        "deepagents_sessions_sqlite",
+        "deepagents-sessions-database",
     ),
     (
         CaptureProvider::MistralVibe,
@@ -169,6 +205,12 @@ const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str
         "lingma-client-profile-database",
     ),
     (
+        CaptureProvider::Qoder,
+        ConfiguredRootPathKind::Directory,
+        "qoder_transcript_jsonl_tree",
+        "qoder-projects",
+    ),
+    (
         CaptureProvider::Warp,
         ConfiguredRootPathKind::File,
         "warp_sqlite",
@@ -182,17 +224,8 @@ const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str
     ),
 ];
 
-const INTENTIONAL_AUTOMATIC_EXACT: &[CaptureProvider] = &[
-    CaptureProvider::KiroCli,
-    CaptureProvider::Antigravity,
-    CaptureProvider::FactoryAiDroid,
-    CaptureProvider::Auggie,
-    CaptureProvider::Firebender,
-    CaptureProvider::DeepAgents,
-    CaptureProvider::NanoClaw,
-    CaptureProvider::Shelley,
-    CaptureProvider::Qoder,
-];
+const INTENTIONAL_AUTOMATIC_EXACT: &[CaptureProvider] =
+    &[CaptureProvider::NanoClaw, CaptureProvider::Shelley];
 
 const COMPOUND_CAPABILITIES: &[(CaptureProvider, ConfiguredRootExpander)] = &[
     (CaptureProvider::Codex, ConfiguredRootExpander::CodexHomeV1),
@@ -327,8 +360,8 @@ fn capability_table_is_exhaustive_and_freezes_32_9_0_inventory() {
         .map(|capability| capability.provider)
         .collect::<Vec<_>>();
 
-    assert_eq!(enabled, 32);
-    assert_eq!(intentional.len(), 9);
+    assert_eq!(enabled, 39);
+    assert_eq!(intentional.len(), 2);
     assert_eq!(
         intentional,
         INTENTIONAL_AUTOMATIC_EXACT.iter().copied().collect()
@@ -338,7 +371,7 @@ fn capability_table_is_exhaustive_and_freezes_32_9_0_inventory() {
 
 #[test]
 fn exact_and_compound_capability_metadata_is_exhaustive() {
-    assert_eq!(EXACT_CAPABILITIES.len(), 27);
+    assert_eq!(EXACT_CAPABILITIES.len(), 34);
     for &(provider, expected_path_kind, source_format, route_role) in EXACT_CAPABILITIES {
         assert_eq!(
             configured_root_capability(provider).map(|capability| capability.state),
@@ -378,7 +411,7 @@ fn configured_root_missing_route_inventory_is_exhaustive_when_automatic_is_false
         .with_configured_provider_roots(roots);
     let report = discover_provider_sources_with_context(&TEST_PROVIDER_PROBES, &context);
 
-    assert_eq!(report.sources.len(), 34);
+    assert_eq!(report.sources.len(), 41);
     assert!(report.issues.is_empty());
     assert!(report
         .sources

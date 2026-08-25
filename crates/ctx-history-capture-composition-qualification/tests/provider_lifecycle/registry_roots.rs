@@ -108,6 +108,109 @@ fn configured_compound_roots_register_from_arbitrary_paths_without_automatic_aut
 }
 
 #[test]
+fn configured_exact_roots_register_with_named_identity_without_automatic_authority() {
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    let cases = [
+        (
+            CaptureProvider::KiroCli,
+            "kiro_cli_sqlite",
+            "kiro-cli-database",
+        ),
+        (
+            CaptureProvider::Antigravity,
+            "antigravity_cli_transcript_jsonl_tree",
+            "antigravity-brain",
+        ),
+        (
+            CaptureProvider::FactoryAiDroid,
+            "factory_ai_droid_sessions_jsonl",
+            "factory-droid-sessions",
+        ),
+        (
+            CaptureProvider::Auggie,
+            "auggie_session_json",
+            "auggie-sessions",
+        ),
+        (
+            CaptureProvider::Firebender,
+            "firebender_chat_history_sqlite",
+            "firebender-chat-history-database",
+        ),
+        (
+            CaptureProvider::DeepAgents,
+            "deepagents_sessions_sqlite",
+            "deepagents-sessions-database",
+        ),
+        (
+            CaptureProvider::Qoder,
+            "qoder_transcript_jsonl_tree",
+            "qoder-projects",
+        ),
+    ];
+    let roots = cases
+        .iter()
+        .map(|(provider, _, _)| ProviderRootDefinition {
+            id: format!("configured-{}", provider.as_str()),
+            provider: *provider,
+            path: temp.path().join(provider.as_str()),
+            group: None,
+            kind: None,
+        })
+        .collect::<Vec<_>>();
+    let context = DiscoveryContext::new(
+        &home,
+        &cwd,
+        DiscoveryPlatform::Linux,
+        DiscoveryPlatformDirs::default(),
+    )
+    .with_automatic_provider_discovery(false)
+    .with_configured_provider_roots(roots.clone());
+    let sources = cases
+        .iter()
+        .zip(&roots)
+        .map(|((provider, format, role), root)| {
+            configured_source(
+                fixture_provider_source_at(
+                    *provider,
+                    format,
+                    ProviderImportSupport::Native,
+                    root.path.clone(),
+                ),
+                root,
+                role,
+            )
+        })
+        .collect();
+    let build = build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
+        &test_provider_probes(),
+        &context,
+        &temp.path().join("ctx-data"),
+        DiscoveryReport {
+            sources,
+            issues: Vec::new(),
+        },
+        &BTreeMap::new(),
+    );
+
+    assert!(build.issues.is_empty(), "{:?}", build.issues);
+    assert_eq!(build.executable_route_count(), cases.len());
+    assert!(build.registry.routes().all(|route| {
+        route.source.route_provenance.configured_root().is_some() && route.route_identity.is_some()
+    }));
+    assert!(build
+        .registry
+        .applied_provider_roots()
+        .unwrap()
+        .2
+        .iter()
+        .all(|root| root.source_identity() == ProviderRootSourceIdentity::NamedV1));
+}
+
+#[test]
 fn only_one_root_can_claim_the_same_released_automatic_route() {
     let temp = tempdir().unwrap();
     let home = temp.path().join("home");

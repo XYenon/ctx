@@ -202,7 +202,11 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::KiroCli,
-        state: INTENTIONAL_AUTOMATIC_EXACT,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "kiro_cli_sqlite",
+            "kiro-cli-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Crush,
@@ -222,7 +226,11 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Antigravity,
-        state: INTENTIONAL_AUTOMATIC_EXACT,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "antigravity_cli_transcript_jsonl_tree",
+            "antigravity-brain",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Gemini,
@@ -266,7 +274,11 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::FactoryAiDroid,
-        state: INTENTIONAL_AUTOMATIC_EXACT,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "factory_ai_droid_sessions_jsonl",
+            "factory-droid-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::QwenCode,
@@ -286,7 +298,11 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Auggie,
-        state: INTENTIONAL_AUTOMATIC_EXACT,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "auggie_session_json",
+            "auggie-sessions",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Junie,
@@ -298,7 +314,11 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Firebender,
-        state: INTENTIONAL_AUTOMATIC_EXACT,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "firebender_chat_history_sqlite",
+            "firebender-chat-history-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::ForgeCode,
@@ -310,7 +330,11 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::DeepAgents,
-        state: INTENTIONAL_AUTOMATIC_EXACT,
+        state: exact_source(
+            ConfiguredRootPathKind::File,
+            "deepagents_sessions_sqlite",
+            "deepagents-sessions-database",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::MistralVibe,
@@ -398,7 +422,11 @@ const CONFIGURED_ROOT_CAPABILITIES: &[ConfiguredRootCapability] = &[
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Qoder,
-        state: INTENTIONAL_AUTOMATIC_EXACT,
+        state: exact_source(
+            ConfiguredRootPathKind::Directory,
+            "qoder_transcript_jsonl_tree",
+            "qoder-projects",
+        ),
     },
     ConfiguredRootCapability {
         provider: CaptureProvider::Warp,

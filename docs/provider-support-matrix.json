@@ -463,7 +463,13 @@
       "status": "supported",
       "capture_provider": "kiro_cli",
       "configured_root": {
-        "state": "intentional_automatic_exact"
+        "state": "enabled",
+        "expected_path_kind": "file",
+        "expander": {
+          "kind": "exact_source",
+          "source_format": "kiro_cli_sqlite",
+          "route_role": "kiro-cli-database"
+        }
       },
       "implemented_paths": [
         {
@@ -677,7 +683,13 @@
       "status": "supported",
       "capture_provider": "qoder",
       "configured_root": {
-        "state": "intentional_automatic_exact"
+        "state": "enabled",
+        "expected_path_kind": "directory",
+        "expander": {
+          "kind": "exact_source",
+          "source_format": "qoder_transcript_jsonl_tree",
+          "route_role": "qoder-projects"
+        }
       },
       "implemented_paths": [
         {
@@ -1221,7 +1233,13 @@
       "status": "supported",
       "capture_provider": "antigravity",
       "configured_root": {
-        "state": "intentional_automatic_exact"
+        "state": "enabled",
+        "expected_path_kind": "directory",
+        "expander": {
+          "kind": "exact_source",
+          "source_format": "antigravity_cli_transcript_jsonl_tree",
+          "route_role": "antigravity-brain"
+        }
       },
       "implemented_paths": [
         {
@@ -1537,7 +1555,13 @@
       "status": "supported",
       "capture_provider": "factory_ai_droid",
       "configured_root": {
-        "state": "intentional_automatic_exact"
+        "state": "enabled",
+        "expected_path_kind": "directory",
+        "expander": {
+          "kind": "exact_source",
+          "source_format": "factory_ai_droid_sessions_jsonl",
+          "route_role": "factory-droid-sessions"
+        }
       },
       "implemented_paths": [
         {
@@ -1689,7 +1713,13 @@
       "status": "supported",
       "capture_provider": "auggie",
       "configured_root": {
-        "state": "intentional_automatic_exact"
+        "state": "enabled",
+        "expected_path_kind": "directory",
+        "expander": {
+          "kind": "exact_source",
+          "source_format": "auggie_session_json",
+          "route_role": "auggie-sessions"
+        }
       },
       "implemented_paths": [
         {
@@ -1795,7 +1825,13 @@
       "status": "supported",
       "capture_provider": "firebender",
       "configured_root": {
-        "state": "intentional_automatic_exact"
+        "state": "enabled",
+        "expected_path_kind": "file",
+        "expander": {
+          "kind": "exact_source",
+          "source_format": "firebender_chat_history_sqlite",
+          "route_role": "firebender-chat-history-database"
+        }
       },
       "implemented_paths": [
         {
@@ -1903,7 +1939,13 @@
       "status": "supported",
       "capture_provider": "deepagents",
       "configured_root": {
-        "state": "intentional_automatic_exact"
+        "state": "enabled",
+        "expected_path_kind": "file",
+        "expander": {
+          "kind": "exact_source",
+          "source_format": "deepagents_sessions_sqlite",
+          "route_role": "deepagents-sessions-database"
+        }
       },
       "implemented_paths": [
         {
