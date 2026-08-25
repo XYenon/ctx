@@ -77,6 +77,7 @@ fn configured_codex_homes_with_the_same_native_session_publish_independent_sourc
             root_id: root_id.to_owned(),
             root_path: root_path.clone(),
             route_role: ProviderRouteRole::from_static(route_role),
+            automatic_route_role: None,
         };
         sources.push(source);
     }
