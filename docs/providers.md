@@ -60,7 +60,10 @@ precedence and checks only the winning official root. A replacement environment
 or persistent-config value replaces the lower-priority default; it is not added
 beside it. Multiple roots are emitted only for current coexisting stores such as
 installed clients, persisted profiles, or configured agents. See
-[`provider-support-matrix.json`](provider-support-matrix.json) for every row.
+[`provider-support-matrix.json`](provider-support-matrix.json) for every row;
+each provider's `configured_root` object publishes whether named roots are
+enabled or intentionally limited to automatic discovery and exact import, plus
+the required path kind and expansion strategy when enabled.
 
 Providers with an enabled configured-root capability additionally support
 explicitly named history roots for work/personal, multi-profile, and moved-root

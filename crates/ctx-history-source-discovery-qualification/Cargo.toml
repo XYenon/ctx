@@ -15,6 +15,10 @@ name = "configured_roots"
 path = "tests/configured_roots.rs"
 
 [[test]]
+name = "configured_root_matrix"
+path = "tests/configured_root_matrix.rs"
+
+[[test]]
 name = "default_discovery"
 path = "tests/default_discovery.rs"
 

@@ -1131,6 +1131,55 @@ fn hand_edited_provider_roots_reject_distinct_symlinks_to_one_physical_home() {
     );
 }
 
+#[cfg(any(unix, windows))]
+#[test]
+fn hand_edited_file_roots_reject_hard_links_to_one_physical_database() {
+    let data_root = tempfile::tempdir().unwrap();
+    let provider_parent = tempfile::tempdir().unwrap();
+    let database = provider_parent.path().join("opencode.db");
+    let alias = provider_parent.path().join("opencode-alias.db");
+    fs::write(&database, b"provider database").unwrap();
+    fs::hard_link(&database, &alias).unwrap();
+    fs::write(
+        data_root.path().join(CONFIG_FILE),
+        format!(
+            "[sources.roots.first]\nprovider = \"opencode\"\npath = {:?}\n\n[sources.roots.second]\nprovider = \"opencode\"\npath = {:?}\n",
+            database.display().to_string(),
+            alias.display().to_string(),
+        ),
+    )
+    .unwrap();
+
+    let error = format!("{:#}", AppConfig::load(data_root.path()).unwrap_err());
+    assert!(
+        error.contains("select the same opencode history root"),
+        "{error}"
+    );
+    assert!(error.contains("`first` and `second`"), "{error}");
+}
+
+#[test]
+fn hand_edited_distinct_directory_roots_remain_independent() {
+    let data_root = tempfile::tempdir().unwrap();
+    let provider_parent = tempfile::tempdir().unwrap();
+    let first = provider_parent.path().join("claude-first");
+    let second = provider_parent.path().join("claude-second");
+    fs::create_dir(&first).unwrap();
+    fs::create_dir(&second).unwrap();
+    fs::write(
+        data_root.path().join(CONFIG_FILE),
+        format!(
+            "[sources.roots.first]\nprovider = \"claude\"\npath = {:?}\n\n[sources.roots.second]\nprovider = \"claude\"\npath = {:?}\n",
+            first.display().to_string(),
+            second.display().to_string(),
+        ),
+    )
+    .unwrap();
+
+    let config = AppConfig::load(data_root.path()).unwrap();
+    assert_eq!(config.provider_roots.len(), 2);
+}
+
 #[test]
 fn provider_root_count_is_bounded() {
     let temp = tempfile::tempdir().unwrap();

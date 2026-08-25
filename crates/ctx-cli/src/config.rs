@@ -542,23 +542,27 @@ impl AppConfig {
                 root.path = physical_path;
             }
         }
-        let mut physical_roots = BTreeMap::new();
-        for root in self.provider_roots.values() {
-            // Hand-edited config may use a symlink spelling even though the
-            // safe CLI editor records canonical non-symlink history roots. Compare
-            // existing paths by their physical target so two aliases cannot
-            // stage the same provider source through distinct routes.
-            let key = (root.provider.as_str(), root.path.clone());
-            if let Some(previous) = physical_roots.insert(key, root.id.as_str()) {
-                bail!(
-                    "provider roots `{previous}` and `{}` select the same {} history root {}",
-                    root.id,
-                    root.provider.as_str(),
-                    root.path.display()
-                );
-            }
-        }
         let roots = self.provider_roots.values().collect::<Vec<_>>();
+        if let Some((left, right)) = roots.iter().enumerate().find_map(|(index, left)| {
+            roots[index + 1..]
+                .iter()
+                .find(|right| {
+                    left.provider == right.provider
+                        && provider_paths_equivalent(&left.path, &right.path)
+                })
+                .map(|right| (*left, *right))
+        }) {
+            // Use the same physical-file identity authority as the safe editor
+            // and discovery. Canonical spellings alone do not collapse hard
+            // links to one provider database.
+            bail!(
+                "provider roots `{}` and `{}` select the same {} history root {}",
+                left.id,
+                right.id,
+                right.provider.as_str(),
+                right.path.display()
+            );
+        }
         if let Some((left, right)) = roots.iter().enumerate().find_map(|(index, left)| {
             roots[index + 1..]
                 .iter()

@@ -43,6 +43,14 @@ fn capture_repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+pub fn provider_support_matrix() -> serde_json::Value {
+    let path = capture_repo_root().join("docs/provider-support-matrix.json");
+    let bytes = fs::read(&path)
+        .unwrap_or_else(|error| panic!("read provider support matrix {}: {error}", path.display()));
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("parse provider support matrix {}: {error}", path.display()))
+}
+
 fn capture_manifest_dir() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if manifest.is_absolute() {

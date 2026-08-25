@@ -6,9 +6,10 @@ use serde_json::{json, Value};
 use ctx_history_capture::{
     discover_provider_sources_for_provider_report,
     discover_provider_sources_for_provider_with_context, discover_provider_sources_report,
-    discover_provider_sources_with_context, provider_source_status_reason, DiscoveryContext,
-    DiscoveryIssue, DiscoveryIssueKind, DiscoveryReport, ProviderImportSupport,
-    ProviderRootDefinition, ProviderSource, ProviderSourceStatus,
+    discover_provider_sources_with_context, provider_paths_equivalent,
+    provider_source_status_reason, DiscoveryContext, DiscoveryIssue, DiscoveryIssueKind,
+    DiscoveryReport, ProviderImportSupport, ProviderRootDefinition, ProviderSource,
+    ProviderSourceStatus,
 };
 use ctx_history_core::CaptureProvider;
 pub use ctx_history_ingest_application::history_source_plugin_report;
@@ -282,25 +283,58 @@ pub fn enrich_sources_json_with_selection(
 }
 
 pub fn discovery_report_issues_json(report: &DiscoveryReport) -> (Vec<Value>, bool) {
+    discovery_report_issues_json_with_provider_roots(report, &[], true)
+}
+
+pub fn discovery_report_issues_json_with_provider_roots(
+    report: &DiscoveryReport,
+    provider_roots: &[ProviderRootDefinition],
+    automatic_provider_discovery: bool,
+) -> (Vec<Value>, bool) {
     let issues = report
         .issues
         .iter()
         .take(MAX_DISCOVERY_ISSUES)
-        .map(discovery_issue_json)
+        .map(|issue| discovery_issue_json(issue, provider_roots, automatic_provider_discovery))
         .collect();
     (issues, report.issues.len() > MAX_DISCOVERY_ISSUES)
 }
 
-fn discovery_issue_json(issue: &DiscoveryIssue) -> Value {
+fn discovery_issue_json(
+    issue: &DiscoveryIssue,
+    provider_roots: &[ProviderRootDefinition],
+    automatic_provider_discovery: bool,
+) -> Value {
     let (message, message_truncated) =
         bounded_utf8(issue.reason, MAX_DISCOVERY_ISSUE_MESSAGE_BYTES);
-    json!({
+    let mut value = json!({
         "provider": issue.provider.as_str(),
         "path": issue.path,
         "code": discovery_issue_code(issue.kind),
         "message": message,
         "message_truncated": message_truncated,
-    })
+    });
+    if issue.kind == DiscoveryIssueKind::ConfiguredRootConflict {
+        let details =
+            configured_root_conflict_details(issue, provider_roots, automatic_provider_discovery);
+        value["conflict_kind"] = details
+            .kind
+            .map(ConfiguredRootConflictKind::as_str)
+            .map_or(Value::Null, Value::from);
+        value["configured_roots"] = Value::Array(
+            details
+                .roots
+                .iter()
+                .map(|root| {
+                    json!({
+                        "name": root.id,
+                        "path": root.path,
+                    })
+                })
+                .collect(),
+        );
+    }
+    value
 }
 
 fn discovery_issue_code(kind: DiscoveryIssueKind) -> &'static str {
@@ -310,6 +344,71 @@ fn discovery_issue_code(kind: DiscoveryIssueKind) -> &'static str {
         DiscoveryIssueKind::InsufficientOfficialEvidence => "insufficient_official_evidence",
         DiscoveryIssueKind::ConfiguredRootConflict => "configured_root_conflict",
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfiguredRootConflictKind {
+    ConfiguredConfigured,
+    AutomaticConfigured,
+}
+
+impl ConfiguredRootConflictKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ConfiguredConfigured => "configured_configured",
+            Self::AutomaticConfigured => "automatic_configured",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfiguredRootConflictDetails {
+    pub(crate) kind: Option<ConfiguredRootConflictKind>,
+    pub(crate) roots: Vec<ProviderRootDefinition>,
+}
+
+pub(crate) fn configured_root_conflict_details(
+    issue: &DiscoveryIssue,
+    provider_roots: &[ProviderRootDefinition],
+    automatic_provider_discovery: bool,
+) -> ConfiguredRootConflictDetails {
+    if issue.kind != DiscoveryIssueKind::ConfiguredRootConflict {
+        return ConfiguredRootConflictDetails {
+            kind: None,
+            roots: Vec::new(),
+        };
+    }
+
+    let provider_roots = provider_roots
+        .iter()
+        .filter(|root| root.provider == issue.provider)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut roots = issue.path.as_deref().map_or_else(Vec::new, |path| {
+        provider_roots
+            .iter()
+            .filter(|root| provider_paths_equivalent(&root.path, path))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    if roots.len() < 2 {
+        if let Some((left, right)) = provider_roots.iter().enumerate().find_map(|(index, left)| {
+            provider_roots[index + 1..]
+                .iter()
+                .find(|right| left.openhands_selected_histories_overlap(right))
+                .map(|right| ((*left).clone(), (*right).clone()))
+        }) {
+            roots = vec![left, right];
+        }
+    }
+    let kind = if roots.len() >= 2 {
+        Some(ConfiguredRootConflictKind::ConfiguredConfigured)
+    } else if automatic_provider_discovery && roots.len() == 1 {
+        Some(ConfiguredRootConflictKind::AutomaticConfigured)
+    } else {
+        None
+    };
+    ConfiguredRootConflictDetails { kind, roots }
 }
 
 fn bounded_utf8(value: &str, maximum_bytes: usize) -> (&str, bool) {
@@ -433,6 +532,10 @@ mod tests {
                     DiscoveryIssueKind::InsufficientOfficialEvidence,
                     "no official location",
                 ),
+                issue(
+                    DiscoveryIssueKind::ConfiguredRootConflict,
+                    "configured roots conflict",
+                ),
             ],
         };
 
@@ -442,6 +545,9 @@ mod tests {
         assert_eq!(issues[0]["code"], "no_disk_history");
         assert_eq!(issues[1]["code"], "selector_unreconstructible");
         assert_eq!(issues[2]["code"], "insufficient_official_evidence");
+        assert_eq!(issues[3]["code"], "configured_root_conflict");
+        assert_eq!(issues[3]["conflict_kind"], Value::Null);
+        assert_eq!(issues[3]["configured_roots"], json!([]));
     }
 
     #[test]

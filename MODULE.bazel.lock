@@ -579,7 +579,7 @@
           "FILE:@@//crates/ctx-history-snapshot-reader/Cargo.toml 421fa3f97f01c8b9301e794546b04e69ffd4662fb3ee6d03fb640adb34f26e09",
           "FILE:@@//crates/ctx-deepseek-harness-qualification/Cargo.toml 24ede89a630318af377313accedcd95712825d3db1764aaeee3a1857c2ca0b64",
           "FILE:@@//crates/ctx-grok-build-qualification/Cargo.toml 7665dd6f79fa97b2f5a668305f6039cb83acd5ebc8fec262dd4518161c26e501",
-          "FILE:@@//crates/ctx-history-source-discovery-qualification/Cargo.toml 6f285f6412eba9c3b8164a5f50c2a2dea961051465c4042aec3c908158b8d06a",
+          "FILE:@@//crates/ctx-history-source-discovery-qualification/Cargo.toml 163bb8268ff9bbca383984cacec6e74a4bd150f92e7c673dde348a5f1323ddf5",
           "FILE:@@//crates/ctx-protocol/Cargo.toml 62e1b412c0c2e178fe7cfe17c9dc91e7c65a6b3013a5caa1b0b24eca43cdfe98",
           "FILE:@@//crates/ctx-sdk/Cargo.toml a132a8154e93a5222ce2ea7b3b766eda0d80a37ea9266fa18420c8b56dc62e67"
         ],

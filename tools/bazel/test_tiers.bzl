@@ -75,6 +75,7 @@ RUST_FORMAT_TARGETS = [
     "//crates/ctx-history-providers-sqlite-inventory:unit_tests",
     "//crates/ctx-history-providers-sqlite-logical:unit_tests",
     "//crates/ctx-history-ingest-application:unit_tests",
+    "//crates/ctx-history-source-discovery-qualification:configured_root_matrix_tests",
     "//crates/ctx-history-source-discovery-qualification:configured_roots_tests",
     "//crates/ctx-history-source-discovery-qualification:default_discovery_tests",
     "//crates/ctx-history-source-discovery-qualification:env_discovery_tests",

@@ -117,7 +117,11 @@ impl LocalToolBackend {
                 .map_err(classify_application_error)?,
         );
         let (issues, issues_truncated) =
-            crate::provider_sources::discovery_report_issues_json(&report);
+            crate::provider_sources::discovery_report_issues_json_with_provider_roots(
+                &report,
+                &provider_roots,
+                automatic_discovery,
+            );
         Ok(SourceCatalog {
             automatic_discovery,
             sources: source_values,

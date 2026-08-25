@@ -255,9 +255,11 @@ Most users need no source configuration. For a provider with an enabled
 configured-root capability, `sources add` registers an existing provider
 history root under a stable local name in `config.toml`; `sources remove`
 removes that definition. The provider capability determines whether the root
-must be a file or directory. Configured roots are added to the provider's
-ordinary environment/default winner, and every distinct configured root is
-indexed. Registering the already inferred root gives it a name and optional
+must be a file or directory; the
+[provider support matrix](provider-support-matrix.json) publishes that state,
+path kind, and expansion strategy for every provider. Configured roots are
+added to the provider's ordinary environment/default winner, and every distinct
+configured root is indexed. Registering the already inferred root gives it a name and optional
 group without indexing it twice. Other providers keep their ordinary discovery
 behavior.
 
@@ -324,13 +326,12 @@ and contains the selected string. The field is omitted for every other
 provider, preserving the earlier schema-v1 shape. The ordinary human success
 line remains a concise provider/name/path summary.
 
-An older ctx release that predates OpenHands root kinds cannot read a config or
-active generation containing this new field. Before intentionally downgrading,
-use the newer ctx to remove every configured OpenHands root and complete a full
-`ctx import --all` refresh so the active generation no longer contains those
-definitions. Do not merely delete `kind`: that is invalid for OpenHands in the
-new contract. If that preparation cannot be completed, keep the newer binary
-or select a separate data root for the older release.
+ctx 1.2 writes generation manifest v10 and cannot produce a v9 index readable
+by ctx 1.1. To downgrade, use a fresh or separate data root and a 1.1-compatible
+config containing only Claude and Codex named roots; back up the current config
+or use a separate `XDG_CONFIG_HOME` as appropriate. Then let the 1.1 binary
+rebuild from provider history. Never reuse a 1.2 data root or expect a 1.2
+import to make its storage readable by 1.1.
 
 Names and groups are local provenance and query selectors. They are not upload
 consent, access-control boundaries, tenant assignment, or retention policy; a

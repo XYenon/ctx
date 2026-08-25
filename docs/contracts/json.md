@@ -381,8 +381,13 @@ empty, or unknown rows and otherwise null.
 produce a source row. It is additive to `sources[]`, contains at most 64 rows,
 and each row includes `provider`, nullable `path`, stable `code`, `message`,
 and `message_truncated`. Messages are capped at 512 UTF-8 bytes. Stable issue
-codes are `no_disk_history`, `selector_unreconstructible`, and
-`insufficient_official_evidence`. `issues_truncated` is true when additional
+codes are `no_disk_history`, `selector_unreconstructible`,
+`insufficient_official_evidence`, and `configured_root_conflict`.
+A `configured_root_conflict` row additionally contains nullable
+`conflict_kind` (`configured_configured` or `automatic_configured`) and
+`configured_roots`, a possibly empty array of the recoverable configured
+`name` and `path` pairs involved. The existing top-level nullable `path` remains
+the path reported by discovery. `issues_truncated` is true when additional
 issue rows were omitted. Invalid history-source plugin manifests remain
 non-importable rows in `sources[]`; they are not provider discovery issues.
 

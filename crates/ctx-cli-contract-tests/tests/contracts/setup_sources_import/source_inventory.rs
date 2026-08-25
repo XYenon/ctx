@@ -147,6 +147,52 @@ fn sources_json_reports_typed_discovery_issues_additively() {
 }
 
 #[test]
+fn sources_json_and_human_output_expose_configured_root_conflict_repairs() {
+    let temp = tempdir();
+    let legacy_root = temp.path().join(".openhands");
+    let configured_root = legacy_root.join("conversations");
+    fs::create_dir_all(configured_root.join("conversation/events")).unwrap();
+    fs::write(
+        configured_root.join("conversation/events/event-00001.json"),
+        "{}",
+    )
+    .unwrap();
+    fs::create_dir_all(legacy_root.join("v1_conversations/legacy")).unwrap();
+    fs::write(legacy_root.join("v1_conversations/legacy/event.json"), "{}").unwrap();
+    fs::create_dir_all(data_root(&temp)).unwrap();
+    fs::write(
+        data_root(&temp).join("config.toml"),
+        format!(
+            "[sources.roots.work]\nprovider = \"openhands\"\npath = {:?}\nkind = \"current-conversations\"\n",
+            configured_root.display().to_string(),
+        ),
+    )
+    .unwrap();
+
+    let sources =
+        json_output(ctx(&temp).args(["sources", "--provider", "openhands", "--format=json"]));
+    let issues = sources["issues"].as_array().unwrap();
+    assert_eq!(issues.len(), 1, "{sources:#}");
+    assert_eq!(issues[0]["provider"], "openhands");
+    assert_eq!(issues[0]["path"], configured_root.to_str().unwrap());
+    assert_eq!(issues[0]["code"], "configured_root_conflict");
+    assert_eq!(issues[0]["conflict_kind"], "automatic_configured");
+    assert_eq!(
+        issues[0]["configured_roots"],
+        json!([{
+            "name": "work",
+            "path": configured_root.to_str().unwrap(),
+        }]),
+    );
+
+    let human = success_stdout(ctx(&temp).args(["sources", "--provider", "openhands"]));
+    assert!(human.contains("automatic/configured"), "{human}");
+    assert!(human.contains("ctx sources remove work"), "{human}");
+    assert!(human.contains("automatic=false"), "{human}");
+    assert!(!human.contains("ctx import"), "{human}");
+}
+
+#[test]
 fn sources_lists_supported_personal_agent_provider_defaults() {
     let temp = tempdir();
     install_default_hermes_fixture(&temp, "hermes-sources-oracle");

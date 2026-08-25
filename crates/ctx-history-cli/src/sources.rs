@@ -6,12 +6,15 @@ use serde_json::json;
 use ctx_history_capture::{DiscoveryIssue, DiscoveryIssueKind, ProviderSourceStatus};
 use ctx_history_core::CaptureProvider;
 
-use crate::provider_sources::{configured_root_for_source, sources_json_with_selection};
+use crate::provider_sources::{
+    configured_root_conflict_details, configured_root_for_source, sources_json_with_selection,
+    ConfiguredRootConflictKind,
+};
 use crate::{
-    discovery_report_issues_json, history_source_plugin_report, manual_path_guidance,
-    plugin_manifest_failures_json, plugin_sources_json, provider_cli_name, CliSourceDiscoveryPort,
-    HistorySourcePluginManifestFailure, HistorySourcePluginSource, OutputFormat, SourceInfo,
-    SourcesRequest, DEFAULT_VISIBLE_SOURCE_PROVIDERS,
+    discovery_report_issues_json_with_provider_roots, history_source_plugin_report,
+    manual_path_guidance, plugin_manifest_failures_json, plugin_sources_json, provider_cli_name,
+    CliSourceDiscoveryPort, HistorySourcePluginManifestFailure, HistorySourcePluginSource,
+    OutputFormat, SourceInfo, SourcesRequest, DEFAULT_VISIBLE_SOURCE_PROVIDERS,
 };
 use ctx_terminal::{
     canonical_human_output_bytes, diagnostic, empty_state, hint, outcome, section, table, Action,
@@ -97,7 +100,11 @@ where
     let result_count = canonical_entries.len();
     let content_bytes = serde_json::to_vec(&canonical_entries)?.len();
     let output_bytes = if request.format == OutputFormat::Json {
-        let (issues, issues_truncated) = discovery_report_issues_json(&discovery_report);
+        let (issues, issues_truncated) = discovery_report_issues_json_with_provider_roots(
+            &discovery_report,
+            &provider_roots,
+            automatic_provider_discovery,
+        );
         let value = json!({
             "schema_version": 1,
             "scope": if show_all_sources { "all" } else { "default" },
@@ -367,7 +374,12 @@ fn render_sources_human(context: &RenderContext, input: SourcesHumanRenderInput<
     }
     for issue in issues {
         document.push_blank();
-        document.append(render_discovery_issue(context, issue));
+        document.append(render_discovery_issue(
+            context,
+            issue,
+            provider_roots,
+            automatic_provider_discovery,
+        ));
     }
     for failure in plugin_failures {
         let manifest = human_path(&failure.manifest_path, home);
@@ -445,8 +457,76 @@ fn human_source_format(format: &str) -> String {
     }
 }
 
-fn render_discovery_issue(context: &RenderContext, issue: &DiscoveryIssue) -> Document {
+fn render_discovery_issue(
+    context: &RenderContext,
+    issue: &DiscoveryIssue,
+    provider_roots: &[ctx_history_capture::ProviderRootDefinition],
+    automatic_provider_discovery: bool,
+) -> Document {
     let provider = source_provider_cli_name(issue.provider);
+    if issue.kind == DiscoveryIssueKind::ConfiguredRootConflict {
+        let details =
+            configured_root_conflict_details(issue, provider_roots, automatic_provider_discovery);
+        let summary = match details.kind {
+            Some(ConfiguredRootConflictKind::ConfiguredConfigured) => {
+                format!("{provider} configured roots conflict")
+            }
+            Some(ConfiguredRootConflictKind::AutomaticConfigured) => {
+                format!("{provider} automatic and configured roots conflict")
+            }
+            None => format!("{provider} configured roots conflict"),
+        };
+        let root_descriptions = details
+            .roots
+            .iter()
+            .map(|root| format!("{} ({})", root.id, human_path(&root.path, None)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let reported_path = issue.path.as_deref().map(|path| human_path(path, None));
+        let conflict = details.kind.map(|kind| match kind {
+            ConfiguredRootConflictKind::ConfiguredConfigured => "configured/configured",
+            ConfiguredRootConflictKind::AutomaticConfigured => "automatic/configured",
+        });
+        let mut fields = Vec::new();
+        if let Some(conflict) = conflict {
+            fields.push(Field::new("Conflict", conflict));
+        }
+        if !root_descriptions.is_empty() {
+            fields.push(Field::new("Configured roots", &root_descriptions));
+        }
+        if let Some(reported_path) = reported_path.as_deref() {
+            fields.push(Field::new("Reported path", reported_path));
+        }
+        fields.push(Field::new("Reason", issue.reason));
+
+        let repair_root = details.roots.last();
+        let detail = match (details.kind, repair_root) {
+            (Some(ConfiguredRootConflictKind::ConfiguredConfigured), Some(root)) => format!(
+                "Remove one named root, or move `{}` persistently with `ctx sources add {} --provider {} --root <different-path> --replace`.",
+                root.id,
+                root.id,
+                provider,
+            ),
+            (Some(ConfiguredRootConflictKind::AutomaticConfigured), Some(root)) => format!(
+                "Remove or move `{}`; if named roots should replace automatic discovery, set `[sources] automatic=false`.",
+                root.id,
+            ),
+            _ => format!(
+                "Repair the persisted roots with `ctx sources remove <name>` or `ctx sources add <name> --provider {provider} --root <different-path> --replace`; use `[sources] automatic=false` when automatic discovery should be disabled."
+            ),
+        };
+        let action_command = repair_root.map(|root| format!("ctx sources remove {}", root.id));
+        return diagnostic(
+            context,
+            Diagnostic {
+                level: DiagnosticLevel::Warning,
+                summary: &summary,
+                detail: Some(&detail),
+                fields: &fields,
+                action: action_command.as_deref().map(|command| Action { command }),
+            },
+        );
+    }
     let (summary, detail) = match issue.kind {
         DiscoveryIssueKind::NoDiskHistory => (
             format!("{provider} has no disk history selected"),
@@ -460,9 +540,7 @@ fn render_discovery_issue(context: &RenderContext, issue: &DiscoveryIssue) -> Do
             format!("{provider} has no established automatic history location"),
             issue.reason,
         ),
-        DiscoveryIssueKind::ConfiguredRootConflict => {
-            (format!("{provider} configured roots overlap"), issue.reason)
-        }
+        DiscoveryIssueKind::ConfiguredRootConflict => unreachable!(),
     };
     let command = manual_path_guidance(issue.provider);
     diagnostic(
@@ -799,6 +877,92 @@ mod ui_tests {
         assert!(rendered.contains("ctx import --provider codex --path <path>"));
         assert!(!rendered.as_bytes().contains(&0x1b));
         assert_fits(&document, &context);
+    }
+
+    #[test]
+    fn configured_root_conflicts_name_paths_and_persistent_repairs() {
+        let shared = PathBuf::from("/provider/claude");
+        let roots = [
+            ctx_history_capture::ProviderRootDefinition {
+                id: "personal".to_owned(),
+                provider: CaptureProvider::Claude,
+                path: shared.clone(),
+                group: None,
+                kind: None,
+            },
+            ctx_history_capture::ProviderRootDefinition {
+                id: "work".to_owned(),
+                provider: CaptureProvider::Claude,
+                path: shared.clone(),
+                group: None,
+                kind: None,
+            },
+        ];
+        let issue = DiscoveryIssue {
+            provider: CaptureProvider::Claude,
+            path: Some(shared),
+            kind: DiscoveryIssueKind::ConfiguredRootConflict,
+            reason: "distinct configured roots resolve to the same physical provider root",
+        };
+        let context = context(100, ColorMode::Never);
+        let rendered = render_sources_human(
+            &context,
+            SourcesHumanRenderInput::from_sources(&[])
+                .with_issues(&[issue])
+                .with_provider_roots(&roots),
+        )
+        .render_plain();
+
+        assert!(rendered.contains("configured/configured"), "{rendered}");
+        assert!(
+            rendered.contains("personal (/provider/claude)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("work (/provider/claude)"), "{rendered}");
+        assert!(
+            rendered.contains("ctx sources add work --provider claude"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("--root <different-path> --replace"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("ctx sources remove work"), "{rendered}");
+        assert!(!rendered.contains("ctx import"), "{rendered}");
+    }
+
+    #[test]
+    fn automatic_configured_conflict_recommends_persistent_policy() {
+        let path = PathBuf::from("/provider/openhands/conversations");
+        let roots = [ctx_history_capture::ProviderRootDefinition {
+            id: "work".to_owned(),
+            provider: CaptureProvider::OpenHands,
+            path: path.clone(),
+            group: None,
+            kind: Some(ctx_history_capture::ProviderRootKind::OpenHandsCurrentConversations),
+        }];
+        let issue = DiscoveryIssue {
+            provider: CaptureProvider::OpenHands,
+            path: Some(path),
+            kind: DiscoveryIssueKind::ConfiguredRootConflict,
+            reason: "configured root overlaps automatic root",
+        };
+        let context = context(100, ColorMode::Never);
+        let rendered = render_sources_human(
+            &context,
+            SourcesHumanRenderInput::from_sources(&[])
+                .with_issues(&[issue])
+                .with_provider_roots(&roots),
+        )
+        .render_plain();
+
+        assert!(rendered.contains("automatic/configured"), "{rendered}");
+        assert!(
+            rendered.contains("work (/provider/openhands/conversations)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("automatic=false"), "{rendered}");
+        assert!(!rendered.contains("ctx import"), "{rendered}");
     }
 
     #[test]
