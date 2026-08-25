@@ -196,11 +196,30 @@ fn unavailable_configured_codex_home_carries_only_itself_while_peer_refreshes() 
     ]);
     let data_root = fixture.join("data");
     let initial = build_discovered_codex_registry(&context, &data_root);
-    assert!(initial.issues.is_empty(), "{:?}", initial.issues);
+    assert_eq!(
+        initial
+            .issues
+            .iter()
+            .filter(|issue| matches!(
+                issue,
+                SourceBackedAutomaticRegistryIssue::Unavailable {
+                    reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                        ProviderSourceStatus::Missing
+                    ),
+                    ..
+                }
+            ))
+            .count(),
+        4,
+        "each healthy configured home reports its absent archive and prompt-history routes"
+    );
     let index_root = fixture.join("index");
     let initial_receipt =
         refresh_source_backed_generation(&index_root, &initial.registry, writer_options()).unwrap();
-    assert!(initial_receipt.failed_routes.is_empty());
+    assert_eq!(initial_receipt.failed_routes.len(), 4);
+    assert!(initial_receipt.failed_routes.iter().all(|failure| {
+        failure.class == SourceBackedSourceFailureClass::Unavailable && !failure.carried_forward
+    }));
 
     append_event(
         &session_path(&personal_sessions, personal_session_id),
@@ -219,6 +238,23 @@ fn unavailable_configured_codex_home_carries_only_itself_while_peer_refreshes() 
         1,
         "equivalent physical selector issues are deduplicated while all routes are retained"
     );
+    assert_eq!(
+        current
+            .issues
+            .iter()
+            .filter(|issue| matches!(
+                issue,
+                SourceBackedAutomaticRegistryIssue::Unavailable {
+                    reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                        ProviderSourceStatus::Missing
+                    ),
+                    ..
+                }
+            ))
+            .count(),
+        2,
+        "the healthy peer retains typed absence for its optional routes"
+    );
     let retained = VerifiedIndex::open(&index_root).unwrap();
     current
         .registry
@@ -232,7 +268,10 @@ fn unavailable_configured_codex_home_carries_only_itself_while_peer_refreshes() 
     // A root-level wrong-kind discovery failure is route-less; the retained
     // manifest restores the exact prior Codex membership instead of inventing
     // child failures for a root that cannot be safely expanded.
-    assert!(receipt.failed_routes.is_empty());
+    assert_eq!(receipt.failed_routes.len(), 2);
+    assert!(receipt.failed_routes.iter().all(|failure| {
+        failure.class == SourceBackedSourceFailureClass::Unavailable && !failure.carried_forward
+    }));
     let index = VerifiedIndex::open(&index_root).unwrap();
     assert!(source_records_contain(
         &index,
@@ -250,7 +289,11 @@ fn unavailable_configured_codex_home_carries_only_itself_while_peer_refreshes() 
         .iter()
         .find(|root| root.definition().id == "work")
         .unwrap();
-    assert_eq!(work_root.routes().len(), 3);
+    assert_eq!(
+        work_root.routes().len(),
+        1,
+        "retention restores the exact previously published session route"
+    );
 }
 
 #[test]
@@ -302,10 +345,35 @@ fn cold_unavailable_configured_codex_home_does_not_block_healthy_peer() {
         1,
         "wrong-kind configured roots surface one root-level discovery issue"
     );
+    assert_eq!(
+        build
+            .issues
+            .iter()
+            .filter(|issue| matches!(
+                issue,
+                SourceBackedAutomaticRegistryIssue::Unavailable {
+                    reason: SourceBackedAutomaticUnavailableReason::SourceStatus(
+                        ProviderSourceStatus::Missing
+                    ),
+                    ..
+                }
+            ))
+            .count(),
+        2,
+        "the healthy home reports only its absent optional routes"
+    );
     let index_root = fixture.join("index");
     let receipt =
         refresh_source_backed_generation(&index_root, &build.registry, writer_options()).unwrap();
-    assert!(receipt.failed_routes.is_empty());
+    assert_eq!(receipt.failed_routes.len(), 2);
+    assert!(receipt.failed_routes.iter().all(|failure| {
+        failure.class == SourceBackedSourceFailureClass::Unavailable && !failure.carried_forward
+    }));
+    assert_eq!(
+        receipt.successful_route_ids.len(),
+        3,
+        "the inferred missing defaults and healthy named home remain independent"
+    );
     let index = VerifiedIndex::open(&index_root).unwrap();
     assert!(source_records_contain(
         &index,

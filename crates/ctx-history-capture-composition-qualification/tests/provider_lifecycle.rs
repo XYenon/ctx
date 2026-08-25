@@ -4,14 +4,17 @@ use std::{fs, path::PathBuf};
 
 use ctx_history_capture_composition::*;
 use ctx_history_capture_model::{
-    ProviderRootDefinition, ProviderRouteRole, ProviderSourceRouteProvenance, SourceRouteIdentity,
+    ProviderRootDefinition, ProviderRouteRole, ProviderSourceRouteProvenance,
+    RetainedProviderRootAuthority, SourceRouteIdentity,
 };
 use ctx_history_core::{CaptureProvider, CoreRecord, LiteralFactKind, SourceAnchor, SourceKey};
-use ctx_history_index::VerifiedIndex;
+use ctx_history_index::{AppliedProviderRoot, VerifiedIndex};
 use tempfile::tempdir;
 
 #[path = "provider_lifecycle/codex_child_independence.rs"]
 mod codex_child_independence;
+#[path = "provider_lifecycle/released_root_equivalence.rs"]
+mod released_root_equivalence;
 #[path = "provider_lifecycle/sqlite_selected.rs"]
 mod sqlite_selected;
 
@@ -72,13 +75,58 @@ mod provider_sources {
 }
 
 mod test_support_paths {
-    use std::{fs, io};
+    use std::{
+        fs, io,
+        path::{Path, PathBuf},
+    };
 
     pub(crate) fn tempdir() -> io::Result<tempfile::TempDir> {
         let temp_root = fs::canonicalize(std::env::temp_dir())?;
         tempfile::Builder::new()
             .prefix("ctx-history-capture-provider-lifecycle-")
             .tempdir_in(temp_root)
+    }
+
+    pub(crate) fn capture_repo_root() -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if manifest.is_absolute() {
+            return repo_root_from_manifest(manifest);
+        }
+
+        if let Ok(current_dir) = std::env::current_dir() {
+            if let Some(path) = manifest_dir_from(&current_dir, &manifest) {
+                return repo_root_from_manifest(path);
+            }
+        }
+
+        if let Ok(current_exe) = std::env::current_exe() {
+            for ancestor in current_exe.ancestors() {
+                if let Some(path) = manifest_dir_from(ancestor, &manifest) {
+                    return repo_root_from_manifest(path);
+                }
+            }
+        }
+
+        repo_root_from_manifest(manifest)
+    }
+
+    fn repo_root_from_manifest(manifest: PathBuf) -> PathBuf {
+        manifest
+            .ancestors()
+            .find(|candidate| {
+                candidate.join("Cargo.toml").is_file()
+                    && candidate.join("tests/fixtures/provider-history").is_dir()
+            })
+            .unwrap_or_else(|| panic!("locate ctx repository above {}", manifest.display()))
+            .to_path_buf()
+    }
+
+    fn manifest_dir_from(base: &Path, manifest: &Path) -> Option<PathBuf> {
+        let candidate = base.join(manifest);
+        if candidate.join("Cargo.toml").is_file() {
+            return fs::canonicalize(&candidate).ok().or(Some(candidate));
+        }
+        None
     }
 }
 

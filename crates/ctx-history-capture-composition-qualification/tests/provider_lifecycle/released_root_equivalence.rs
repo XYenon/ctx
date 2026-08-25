@@ -169,11 +169,11 @@ fn build_provider_registry(
         context,
         provider,
     );
-    let build = build_automatic_source_backed_registry_from_parts(
+    let build = build_automatic_source_backed_registry_from_report_with_probes(
+        &crate::test_provider_probes(),
         context,
         data_root,
-        report.sources,
-        report.issues,
+        report,
     );
     assert!(build.issues.is_empty(), "{provider}: {:?}", build.issues);
     build
@@ -245,7 +245,8 @@ fn publication_bytes(
         receipt.failed_routes
     );
     assert!(!receipt.sources.is_empty());
-    let manifest = receipt.commit.manifest();
+    let index = VerifiedIndex::open(index_root).unwrap();
+    let manifest = index.manifest();
     let mut sources = manifest
         .sources
         .iter()
@@ -255,7 +256,6 @@ fn publication_bytes(
     let aggregates = serde_json::to_vec(&manifest.core_record_aggregates).unwrap();
     let source_routes = serde_json::to_vec(manifest.source_routes()).unwrap();
     let route_controls = serde_json::to_vec(&receipt.route_controls).unwrap();
-    let index = VerifiedIndex::open(index_root).unwrap();
     let mut records = index
         .search_event_candidates(marker, 32)
         .unwrap()
@@ -265,7 +265,7 @@ fn publication_bytes(
                 .core_record_by_id(candidate.event.event_id.as_uuid())
                 .transpose()
         })
-        .collect::<Result<Vec<_>, _>>()
+        .collect::<std::result::Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
         .map(|record| serde_json::to_vec(&record).unwrap())
