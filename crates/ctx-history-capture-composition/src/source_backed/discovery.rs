@@ -690,6 +690,14 @@ fn rebase_goose_platform_root(
         .map(Path::to_path_buf)
 }
 
+fn codex_automatic_session_root_rank(root: &Path) -> u8 {
+    match root.file_name().and_then(std::ffi::OsStr::to_str) {
+        Some("sessions") => 0,
+        Some("archived_sessions") => 1,
+        _ => 2,
+    }
+}
+
 fn released_root_automatic_coexistence_lineage(
     registry: &SourceBackedProviderRegistry,
     discovery: &DiscoveryContext,

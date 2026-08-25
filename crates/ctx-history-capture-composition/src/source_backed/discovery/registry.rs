@@ -173,6 +173,18 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
                 issues.push(SourceBackedAutomaticRegistryIssue::Unavailable { source, reason });
                 continue;
             }
+            // Suppress a stale missing automatic path; reappearance registers coexistence.
+            if configured_root.is_none()
+                && released_root_automatic_coexistence_lineage(
+                    &registry,
+                    discovery,
+                    &provider_root_registrations,
+                    &source,
+                )
+                .is_some()
+            {
+                continue;
+            }
             let route = if configured_root.is_some() {
                 let reason = SourceBackedAutomaticUnavailableReason::SourceStatus(source.status);
                 SourceBackedRoute::unavailable_explicit(
@@ -568,14 +580,6 @@ pub(in crate::source_backed) fn build_automatic_source_backed_registry_from_part
         discovery_issues,
         &BTreeMap::new(),
     )
-}
-
-fn codex_automatic_session_root_rank(root: &Path) -> u8 {
-    match root.file_name().and_then(std::ffi::OsStr::to_str) {
-        Some("sessions") => 0,
-        Some("archived_sessions") => 1,
-        _ => 2,
-    }
 }
 
 fn retain_unsupported_automatic_format(

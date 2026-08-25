@@ -153,6 +153,22 @@ fn partial_released_codex_overlap_move_remove_readd_preserves_exact_identity() {
             .count(),
         2
     );
+    let session_route = automatic_source_backed_route_identity(
+        automatic_report
+            .sources
+            .iter()
+            .find(|source| source.source_format == "codex_session_jsonl_tree")
+            .unwrap(),
+    )
+    .unwrap();
+    let prompt_history_route = automatic_source_backed_route_identity(
+        automatic_report
+            .sources
+            .iter()
+            .find(|source| source.source_format == "codex_history_jsonl")
+            .unwrap(),
+    )
+    .unwrap();
     let mut progress = |_: CaptureSourceBackedDetailedRefreshProgress| Ok(());
     refresh_all_provider_sources(
         &automatic_discovery,
@@ -190,6 +206,7 @@ fn partial_released_codex_overlap_move_remove_readd_preserves_exact_identity() {
         .unwrap()
         .routes()
         .to_vec();
+    assert_eq!(overlapping_routes, vec![session_route]);
     assert_eq!(
         overlapping
             .manifest()
@@ -217,9 +234,11 @@ fn partial_released_codex_overlap_move_remove_readd_preserves_exact_identity() {
         .unwrap()
         .routes()
         .to_vec();
-    assert!(overlapping_routes
-        .iter()
-        .all(|route| moved_routes.contains(route)));
+    assert_eq!(moved_routes, overlapping_routes);
+    assert!(moved
+        .manifest()
+        .source_route(&prompt_history_route)
+        .is_none());
     assert_eq!(
         moved
             .manifest()
