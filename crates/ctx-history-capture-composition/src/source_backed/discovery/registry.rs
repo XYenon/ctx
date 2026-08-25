@@ -40,17 +40,34 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
     let (configured_sources, automatic_sources): (Vec<_>, Vec<_>) = sources
         .into_iter()
         .partition(|source| configured_provider_root_for_source(discovery, source).is_some());
-    for source in configured_sources.into_iter().chain(automatic_sources) {
+    for mut source in configured_sources.into_iter().chain(automatic_sources) {
         let configured_root = configured_provider_root_for_source(discovery, &source);
-        let configured_route_role = configured_root
-            .and_then(|_| source.route_provenance.route_role())
-            .cloned();
         let configured_source_identity = configured_root.map(|root| {
             provider_root_registrations
                 .get(&root.id)
                 .map(|registration| registration.source_identity)
                 .unwrap_or_else(|| default_provider_root_source_identity(discovery, root))
         });
+        if let Some(configured_root) = configured_root {
+            if configured_source_identity == Some(ProviderRootSourceIdentity::Released) {
+                if let Err(error) = restore_released_automatic_route_role(
+                    &mut source,
+                    configured_root,
+                    &provider_root_registrations,
+                ) {
+                    let reason = automatic_registration_rejected(error);
+                    registry.register(SourceBackedRoute::unsupported(
+                        source.clone(),
+                        automatic_unavailable_detail(&reason),
+                    ));
+                    issues.push(SourceBackedAutomaticRegistryIssue::Unavailable { source, reason });
+                    continue;
+                }
+            }
+        }
+        let configured_route_role = configured_root
+            .and_then(|_| source.route_provenance.route_role())
+            .cloned();
         if let Err(error) =
             validate_provider_source_roots_outside_data_root(data_root, std::iter::once(&source))
         {
@@ -216,28 +233,12 @@ pub(super) fn build_automatic_source_backed_registry_from_parts_with_probes(
             continue;
         }
 
-        let mut source = source;
         if source.status == ProviderSourceStatus::Empty {
             // Resolver diagnostics explain why a present root is empty; they do
             // not make its landed adapter unsupported.
             source.unsupported_reason = None;
         }
         if let Some(configured_root) = configured_root {
-            if configured_source_identity == Some(ProviderRootSourceIdentity::Released) {
-                if let Err(error) = restore_released_automatic_route_role(
-                    &mut source,
-                    configured_root,
-                    &provider_root_registrations,
-                ) {
-                    let reason = automatic_registration_rejected(error);
-                    registry.register(SourceBackedRoute::unsupported(
-                        source.clone(),
-                        automatic_unavailable_detail(&reason),
-                    ));
-                    issues.push(SourceBackedAutomaticRegistryIssue::Unavailable { source, reason });
-                    continue;
-                }
-            }
             let Some(route_role) = configured_route_role.as_ref() else {
                 retain_unsupported_automatic_format(
                     &mut registry,

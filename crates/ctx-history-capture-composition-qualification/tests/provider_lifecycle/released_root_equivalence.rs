@@ -1006,10 +1006,9 @@ fn moved_released_roo_root_keeps_its_dynamic_automatic_role() {
         .unwrap();
 
     let moved = temp.path().join("roo-moved");
-    fs::rename(&original, &moved).unwrap();
     let moved_context =
         initial_context.with_configured_provider_roots(vec![definition(moved.clone())]);
-    let moved_report =
+    let missing_report =
         ctx_history_source_discovery::discover_provider_sources_for_provider_with_context(
             &crate::test_provider_probes(),
             &moved_context,
@@ -1019,6 +1018,46 @@ fn moved_released_roo_root_keeps_its_dynamic_automatic_role() {
         "roo-work".to_owned(),
         initial_root.retained_authority().unwrap(),
     )]);
+    for force_unknown in [false, true] {
+        let mut unavailable_report = missing_report.clone();
+        if force_unknown {
+            for source in &mut unavailable_report.sources {
+                source.status = ProviderSourceStatus::Unknown;
+                source.unsupported_reason = Some("fixture selector is temporarily unreadable");
+            }
+        }
+        let unavailable =
+            build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
+                &crate::test_provider_probes(),
+                &moved_context,
+                &temp.path().join(if force_unknown {
+                    "unknown-data"
+                } else {
+                    "missing-data"
+                }),
+                unavailable_report,
+                &retained,
+            );
+        assert_eq!(unavailable.issues.len(), 1, "{:?}", unavailable.issues);
+        let unavailable_root = &unavailable.registry.applied_provider_roots().unwrap().2[0];
+        assert_eq!(
+            unavailable_root.source_identity(),
+            ProviderRootSourceIdentity::Released
+        );
+        assert_eq!(
+            unavailable_root.routes(),
+            std::slice::from_ref(&initial_route),
+            "force_unknown={force_unknown}"
+        );
+    }
+
+    fs::rename(&original, &moved).unwrap();
+    let moved_report =
+        ctx_history_source_discovery::discover_provider_sources_for_provider_with_context(
+            &crate::test_provider_probes(),
+            &moved_context,
+            CaptureProvider::RooCode,
+        );
     let moved = build_automatic_source_backed_registry_from_report_with_probes_and_retained_roots(
         &crate::test_provider_probes(),
         &moved_context,
