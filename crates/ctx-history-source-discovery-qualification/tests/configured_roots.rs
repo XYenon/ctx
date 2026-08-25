@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -6,12 +8,14 @@ use std::{
 
 use ctx_history_capture_model::ProviderRootDefinition;
 use ctx_history_capture_model::ProviderRootKind;
+use ctx_history_capture_model::ProviderRouteRole;
+use ctx_history_core::CaptureProvider;
+use ctx_history_source_discovery::*;
 
-use super::*;
-use crate::provider_sources::{
-    discover_provider_sources_for_provider_with_context, discover_provider_sources_with_context,
-    provider_source_specs, DiscoveryPlatform, DiscoveryPlatformDirs,
-};
+use support::{tempdir, TEST_PROVIDER_PROBES};
+
+const CONFIGURED_ROOT_SYMLINK_REASON: &str =
+    "the configured provider history root uses a symlink or other unsupported component";
 
 const EXACT_CAPABILITIES: &[(CaptureProvider, ConfiguredRootPathKind, &str, &str)] = &[
     (
@@ -245,11 +249,7 @@ fn openhands_root(id: &str, path: PathBuf, kind: ProviderRootKind) -> ProviderRo
 }
 
 fn provider_report(context: &DiscoveryContext, provider: CaptureProvider) -> DiscoveryReport {
-    discover_provider_sources_for_provider_with_context(
-        &crate::provider_sources::TEST_PROVIDER_PROBES,
-        context,
-        provider,
-    )
+    discover_provider_sources_for_provider_with_context(&TEST_PROVIDER_PROBES, context, provider)
 }
 
 fn configured_report(
@@ -364,7 +364,7 @@ fn exact_and_compound_capability_metadata_is_exhaustive() {
 
 #[test]
 fn all_enabled_roots_emit_missing_candidates_with_provenance_when_automatic_is_false() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let mut roots = Vec::new();
     let mut root_paths = HashMap::new();
     for spec in provider_source_specs() {
@@ -376,10 +376,7 @@ fn all_enabled_roots_emit_missing_candidates_with_provenance_when_automatic_is_f
     let context = context(&temp)
         .with_automatic_provider_discovery(false)
         .with_configured_provider_roots(roots);
-    let report = discover_provider_sources_with_context(
-        &crate::provider_sources::TEST_PROVIDER_PROBES,
-        &context,
-    );
+    let report = discover_provider_sources_with_context(&TEST_PROVIDER_PROBES, &context);
 
     assert_eq!(report.sources.len(), 35);
     assert!(report.issues.is_empty());
@@ -447,7 +444,7 @@ fn corrected_exact_session_and_gemini_roots_probe_the_configured_path_itself() {
         ),
     ];
     for (provider, id, leaf, source_format) in fixtures {
-        let temp = crate::test_support_paths::tempdir().unwrap();
+        let temp = tempdir();
         let selected = temp.path().join(id);
         write(&selected.join(leaf), b"{}\n");
         let report = configured_report(
@@ -462,7 +459,7 @@ fn corrected_exact_session_and_gemini_roots_probe_the_configured_path_itself() {
         assert_configured(&report.sources[0], id, &report.sources[0].path);
     }
 
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let database = temp.path().join("opencode.db");
     write(&database, b"database sentinel");
     let report = configured_report(
@@ -480,7 +477,7 @@ fn corrected_exact_session_and_gemini_roots_probe_the_configured_path_itself() {
 
 #[test]
 fn claude_and_codex_retain_released_home_expansions_and_role_bytes() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let claude = temp.path().join("claude-home");
     write(&claude.join("projects/session.jsonl"), b"{}\n");
     let report = configured_report(
@@ -537,7 +534,7 @@ fn openclaw_agent_id(path: &Path) -> &str {
 
 #[test]
 fn openclaw_state_roots_expand_bounded_agents_with_precedence_and_stable_dynamic_roles() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let state = temp.path().join("state");
     write(
         &state.join("openclaw.json"),
@@ -620,7 +617,7 @@ fn openclaw_state_roots_expand_bounded_agents_with_precedence_and_stable_dynamic
 
 #[test]
 fn configured_openclaw_route_matching_automatic_keeps_automatic_role_bytes() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let state = temp.path().join("openclaw-state");
     write(
         &state.join("openclaw.json"),
@@ -658,7 +655,7 @@ fn configured_openclaw_route_matching_automatic_keeps_automatic_role_bytes() {
 
 #[test]
 fn cline_common_data_root_emits_distinct_task_and_sdk_roles() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let data = temp.path().join("cline-data");
     write(
         &data.join("tasks/legacy/api_conversation_history.json"),
@@ -692,7 +689,7 @@ fn every_enabled_root_rejects_the_wrong_no_follow_file_kind() {
         .iter()
         .filter(|capability| capability.state.is_enabled())
     {
-        let temp = crate::test_support_paths::tempdir().unwrap();
+        let temp = tempdir();
         let selected = temp.path().join("selected");
         match capability.state.expected_path_kind().unwrap() {
             ConfiguredRootPathKind::Directory => write(&selected, b"file"),
@@ -722,7 +719,7 @@ fn every_expander_family_rejects_symlinked_configured_roots() {
         CaptureProvider::Cline,
         CaptureProvider::OpenHands,
     ] {
-        let temp = crate::test_support_paths::tempdir().unwrap();
+        let temp = tempdir();
         let target = temp.path().join("target");
         match configured_root_capability(provider)
             .unwrap()
@@ -748,7 +745,7 @@ fn every_expander_family_rejects_symlinked_configured_roots() {
 
 #[test]
 fn empty_openhands_current_root_is_accepted_without_content_inference() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let selected = temp.path().join("openhands-current");
     fs::create_dir_all(&selected).unwrap();
 
@@ -788,7 +785,7 @@ fn every_expander_family_preserves_unavailable_candidates_with_provenance() {
         (CaptureProvider::OpenClaw, 0),
         (CaptureProvider::Cline, 2),
     ] {
-        let temp = crate::test_support_paths::tempdir().unwrap();
+        let temp = tempdir();
         let locked = temp.path().join("locked");
         fs::create_dir(&locked).unwrap();
         let original = fs::metadata(&locked).unwrap().permissions();
@@ -815,7 +812,7 @@ fn every_expander_family_preserves_unavailable_candidates_with_provenance() {
 
 #[test]
 fn automatic_and_configured_equal_paths_adopt_configured_provenance_per_expander() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let base = context(&temp);
     let home = base.home();
     let fixtures = [
@@ -898,7 +895,7 @@ fn automatic_and_configured_equal_paths_adopt_configured_provenance_per_expander
 
 #[test]
 fn codex_child_kinds_are_checked_independently_without_hiding_valid_peers() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let home = temp.path().join("codex");
     write(&home.join("sessions"), b"wrong kind");
     fs::create_dir_all(home.join("archived_sessions")).unwrap();
@@ -916,7 +913,7 @@ fn codex_child_kinds_are_checked_independently_without_hiding_valid_peers() {
 
 #[test]
 fn intentional_rows_ignore_configured_roots_even_when_layouts_exist() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     for &provider in INTENTIONAL_AUTOMATIC_EXACT {
         let selected = temp.path().join(provider.as_str());
         fs::create_dir_all(&selected).unwrap();
@@ -963,7 +960,7 @@ fn intentional_rows_ignore_configured_roots_even_when_layouts_exist() {
 
 #[test]
 fn openhands_configured_legacy_and_nested_current_roots_fail_closed() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let legacy = temp.path().join("legacy");
     let current = legacy.join("current");
     fs::create_dir_all(&current).unwrap();
@@ -1019,7 +1016,7 @@ fn openhands_configured_legacy_and_nested_current_roots_fail_closed() {
 
 #[test]
 fn openhands_active_automatic_and_configured_nested_roots_fail_closed() {
-    let temp = crate::test_support_paths::tempdir().unwrap();
+    let temp = tempdir();
     let base = context(&temp);
     let automatic_legacy = base.home().join(".openhands");
     let configured_current = automatic_legacy.join("conversations");

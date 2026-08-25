@@ -53,6 +53,7 @@ members = [
     "crates/ctx-history-source-io",
     "crates/ctx-history-source-sqlite",
     "crates/ctx-history-source-discovery",
+    "crates/ctx-history-source-discovery-qualification",
     "crates/ctx-semantic-index",
     "crates/ctx-semantic-model",
     "crates/ctx-terminal",

@@ -1696,6 +1696,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-history-source-discovery-qualification"
+version = "1.1.0"
+dependencies = [
+ "ctx-history-capture-model",
+ "ctx-history-core",
+ "ctx-history-openclaw-schema",
+ "ctx-history-source-discovery",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ctx-history-source-io"
 version = "1.1.0"
 dependencies = [

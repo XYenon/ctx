@@ -967,7 +967,3 @@ fn push_issue_once(
         report.issues.push(issue(spec.provider, path, kind, reason));
     }
 }
-
-#[cfg(test)]
-#[path = "configured_roots_tests.rs"]
-mod tests;

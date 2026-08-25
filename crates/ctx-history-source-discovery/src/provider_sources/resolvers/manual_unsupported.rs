@@ -836,8 +836,3 @@ fn has_current_cline_session_shape(path: &Path) -> bool {
             )
     })
 }
-
-#[cfg(test)]
-#[rustfmt::skip]
-#[path = "manual_unsupported_tests.rs"]
-mod tests;

@@ -1,34 +1,33 @@
-use super::super::super::{
-    context::DiscoveryPlatformDirs, specs::provider_source_spec, types::ProviderImportSupport,
-};
-use super::super::dedupe_report;
-use rusqlite::Connection;
-use std::fs;
+mod support;
 
-use super::*;
+use ctx_history_core::CaptureProvider;
+use ctx_history_source_discovery::*;
+use rusqlite::Connection;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use support::TEST_PROVIDER_PROBES;
+
+const MAX_FINITE_SELECTOR_ENTRIES: usize = 128;
+const MAX_DIRECT_DIRECTORY_ENTRIES: usize = 1_024;
+const MAX_PROJECT_ANCESTORS: usize = 64;
 
 fn resolve(context: &DiscoveryContext, spec: &ProviderSourceSpec) -> DiscoveryReport {
-    super::resolve(
-        &crate::provider_sources::TEST_PROVIDER_PROBES,
+    discover_provider_sources_for_provider_with_context(
+        &TEST_PROVIDER_PROBES,
         context,
-        spec,
+        spec.provider,
     )
 }
 
-fn provider_source_for_path(
-    provider: CaptureProvider,
-    path: PathBuf,
-) -> crate::provider_sources::ProviderSource {
-    crate::provider_sources::provider_source_for_path(
-        &crate::provider_sources::TEST_PROVIDER_PROBES,
-        provider,
-        path,
-    )
+fn provider_source_for_path(provider: CaptureProvider, path: PathBuf) -> ProviderSource {
+    ctx_history_source_discovery::provider_source_for_path(&TEST_PROVIDER_PROBES, provider, path)
 }
 
 fn tempdir() -> tempfile::TempDir {
-    crate::test_support_paths::tempdir()
-        .expect("temporary directory should support resolver fixtures")
+    support::tempdir()
 }
 
 fn context(root: &Path, platform: DiscoveryPlatform) -> DiscoveryContext {
@@ -59,10 +58,9 @@ fn write(path: &Path, bytes: &[u8]) {
 }
 
 fn assert_automatic_role(source: &ProviderSource, components: &[&[u8]]) {
-    let expected = ctx_history_capture_model::ProviderRouteRole::from_dynamic(
-        components.iter().copied(),
-    )
-    .expect("expected test role should be bounded");
+    let expected =
+        ctx_history_capture_model::ProviderRouteRole::from_dynamic(components.iter().copied())
+            .expect("expected test role should be bounded");
     assert_eq!(
         source.route_provenance.automatic_route_role(),
         Some(&expected),
@@ -669,18 +667,12 @@ fn cline_selects_one_owned_legacy_root_and_only_installed_microsoft_hosts() {
         .iter()
         .find(|source| source.path == selected)
         .expect("selected Cline data root");
-    assert_automatic_role(
-        selected_source,
-        &[b"task-store", b"selected-data-root"],
-    );
+    assert_automatic_role(selected_source, &[b"task-store", b"selected-data-root"]);
     let base_source = native
         .iter()
         .find(|source| source.path == code)
         .expect("stable VS Code base Cline store");
-    assert_automatic_role(
-        base_source,
-        &[b"task-store", b"vscode", b"stable", b"base"],
-    );
+    assert_automatic_role(base_source, &[b"task-store", b"vscode", b"stable", b"base"]);
     let profile_source = native
         .iter()
         .find(|source| source.path == profile)
@@ -765,8 +757,7 @@ fn cline_stable_and_insiders_base_stores_have_distinct_order_independent_roles()
     let context = context(temp.path(), DiscoveryPlatform::Windows);
     let config = context.platform_dirs().config.as_ref().unwrap();
     let stable = config.join("Code/User/globalStorage/saoudrizwan.claude-dev");
-    let insiders =
-        config.join("Code - Insiders/User/globalStorage/saoudrizwan.claude-dev");
+    let insiders = config.join("Code - Insiders/User/globalStorage/saoudrizwan.claude-dev");
     write(&stable.join("tasks/stable/ui_messages.json"), b"[]");
     write(&insiders.join("tasks/insiders/ui_messages.json"), b"[]");
 
@@ -953,7 +944,7 @@ fn cline_common_data_root_publishes_separate_sdk_and_legacy_routes() {
         b"[]",
     );
 
-    let report = dedupe_report(resolve(&context, spec(CaptureProvider::Cline)));
+    let report = resolve(&context, spec(CaptureProvider::Cline));
     let sdk = source(&report, "cline_sdk_session_store");
     let legacy = source(&report, "cline_task_directory_json");
     assert_eq!(sdk.path, data);
@@ -1023,7 +1014,7 @@ fn cline_db_only_catalog_selects_the_common_data_root_automatically_and_exactly(
         .unwrap();
     drop(connection);
 
-    let report = dedupe_report(resolve(&context, spec(CaptureProvider::Cline)));
+    let report = resolve(&context, spec(CaptureProvider::Cline));
     let automatic = source(&report, "cline_sdk_session_store");
     assert_eq!(automatic.path, data);
     assert_eq!(automatic.status, ProviderSourceStatus::Available);
@@ -1150,7 +1141,7 @@ fn supported_exact_paths_match_explicit_source_identity_inputs() {
         CaptureProvider::Mux,
         CaptureProvider::Cline,
     ] {
-        let report = dedupe_report(resolve(&context, spec(provider)));
+        let report = resolve(&context, spec(provider));
         let automatic = report
             .sources
             .iter()
