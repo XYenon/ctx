@@ -56,7 +56,15 @@ pub fn clear_manifest_cache_for_root(root: &Path) -> Result<()> {
 #[derive(Clone)]
 struct ManifestCacheEntry {
     manifest: Weak<GenerationManifest>,
+    requires_current_anchor: bool,
     identity: ManifestFileIdentity,
+}
+
+#[derive(Clone)]
+struct MaterializedManifest {
+    manifest: Arc<GenerationManifest>,
+    // Versionless deltas inherit this from their full persisted anchor.
+    requires_current_anchor: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -200,6 +208,7 @@ impl PreparedManifest {
 pub struct LoadedPublication {
     generation_id: String,
     manifest: Arc<GenerationManifest>,
+    requires_current_anchor: bool,
     metadata: Option<Arc<[u8]>>,
 }
 
@@ -214,6 +223,11 @@ impl LoadedPublication {
 
     pub fn metadata(&self) -> Option<&Arc<[u8]>> {
         self.metadata.as_ref()
+    }
+
+    #[doc(hidden)]
+    pub fn requires_current_manifest_anchor(&self) -> bool {
+        self.requires_current_anchor
     }
 
     #[doc(hidden)]
@@ -245,10 +259,11 @@ pub fn load_publication_for_metas(root: &Path, metas: &IndexMeta) -> Result<Load
             .as_deref()
             .ok_or(IndexError::MissingCommitPayload)?,
     )?;
-    let manifest = load_materialized_manifest(root, &payload.generation_id, 0)?;
+    let loaded = load_materialized_manifest(root, &payload.generation_id, 0)?;
     Ok(LoadedPublication {
         generation_id: payload.generation_id,
-        manifest,
+        manifest: loaded.manifest,
+        requires_current_anchor: loaded.requires_current_anchor,
         metadata: payload
             .publication_metadata
             .map(|metadata| Arc::from(metadata.into_boxed_slice())),
@@ -259,7 +274,7 @@ fn load_materialized_manifest(
     root: &Path,
     generation_id: &str,
     depth: usize,
-) -> Result<Arc<GenerationManifest>> {
+) -> Result<MaterializedManifest> {
     if depth > 128 {
         return Err(IndexError::NonCanonicalManifest);
     }
@@ -276,7 +291,7 @@ fn load_materialized_manifest(
     if let Some(manifest) = cached_manifest(&key)? {
         return Ok(manifest);
     }
-    let manifest = if bytes.starts_with(MANIFEST_FLAT_DELTA_PREFIX) {
+    let (manifest, requires_current_anchor) = if bytes.starts_with(MANIFEST_FLAT_DELTA_PREFIX) {
         let delta: StoredManifestFlatDeltaV1 = serde_json::from_slice(&bytes)?;
         if serde_json::to_vec(&delta)? != bytes
             || delta.storage_format != MANIFEST_FLAT_DELTA_STORAGE
@@ -287,29 +302,30 @@ fn load_materialized_manifest(
             return Err(IndexError::NonCanonicalManifest);
         }
         let base = load_materialized_manifest(root, &delta.base_generation_id, depth + 1)?;
-        materialize_delta(
-            base.as_ref(),
+        let manifest = materialize_delta(
+            base.manifest.as_ref(),
             delta.indexed_documents,
             delta.certified_source_bytes,
             delta.source_count,
             delta.changes,
-        )?
+        )?;
+        (manifest, base.requires_current_anchor)
     } else {
         let stored_version: StoredManifestVersion = serde_json::from_slice(&bytes)?;
-        let manifest = match stored_version.manifest_version {
+        let (manifest, requires_current_anchor) = match stored_version.manifest_version {
             GENERATION_MANIFEST_VERSION => {
                 let manifest: GenerationManifest = serde_json::from_slice(&bytes)?;
                 if serde_json::to_vec(&manifest)? != bytes {
                     return Err(IndexError::NonCanonicalManifest);
                 }
-                manifest
+                (manifest, false)
             }
-            PREVIOUS_GENERATION_MANIFEST_VERSION => migrate_previous_manifest_v9(&bytes)?,
-            LEGACY_GENERATION_MANIFEST_VERSION => migrate_previous_manifest_v8(&bytes)?,
+            PREVIOUS_GENERATION_MANIFEST_VERSION => (migrate_previous_manifest_v9(&bytes)?, true),
+            LEGACY_GENERATION_MANIFEST_VERSION => (migrate_previous_manifest_v8(&bytes)?, true),
             version => return Err(IndexError::UnsupportedManifest(version)),
         };
         validate_manifest_contract(&manifest)?;
-        manifest
+        (manifest, requires_current_anchor)
     };
     let manifest = Arc::new(manifest);
     let mut cache = MANIFEST_CACHE
@@ -321,10 +337,14 @@ fn load_materialized_manifest(
         key,
         ManifestCacheEntry {
             manifest: Arc::downgrade(&manifest),
+            requires_current_anchor,
             identity: capture_manifest_identity(root, generation_id)?,
         },
     );
-    Ok(manifest)
+    Ok(MaterializedManifest {
+        manifest,
+        requires_current_anchor,
+    })
 }
 
 fn migrate_previous_manifest_v9(bytes: &[u8]) -> Result<GenerationManifest> {
@@ -447,7 +467,7 @@ fn migrate_previous_manifest_v8(bytes: &[u8]) -> Result<GenerationManifest> {
     Ok(serde_json::from_value(value)?)
 }
 
-fn cached_manifest(key: &ManifestCacheKey) -> Result<Option<Arc<GenerationManifest>>> {
+fn cached_manifest(key: &ManifestCacheKey) -> Result<Option<MaterializedManifest>> {
     let entry = MANIFEST_CACHE
         .get_or_init(|| Mutex::new(BTreeMap::new()))
         .lock()
@@ -463,7 +483,18 @@ fn cached_manifest(key: &ManifestCacheKey) -> Result<Option<Arc<GenerationManife
     if capture_manifest_identity(&key.0, &key.1)? != entry.identity {
         return Err(IndexError::NonCanonicalManifest);
     }
-    Ok(Some(manifest))
+    Ok(Some(MaterializedManifest {
+        manifest,
+        requires_current_anchor: entry.requires_current_anchor,
+    }))
+}
+
+fn requires_current_manifest_anchor(root: &Path, generation_id: &str) -> Result<bool> {
+    let key = (root.to_path_buf(), generation_id.to_owned());
+    if let Some(loaded) = cached_manifest(&key)? {
+        return Ok(loaded.requires_current_anchor);
+    }
+    Ok(load_materialized_manifest(root, generation_id, 0)?.requires_current_anchor)
 }
 
 fn capture_manifest_identity(root: &Path, generation_id: &str) -> Result<ManifestFileIdentity> {
@@ -730,7 +761,7 @@ pub fn write_manifest(
 ) -> Result<()> {
     if manifest_path(root, generation_id).is_file() {
         let retained = load_materialized_manifest(root, generation_id, 0)?;
-        if serde_json::to_vec(retained.as_ref())? == serde_json::to_vec(manifest)? {
+        if serde_json::to_vec(retained.manifest.as_ref())? == serde_json::to_vec(manifest)? {
             return Ok(());
         }
         return Err(IndexError::NonCanonicalManifest);
@@ -756,6 +787,12 @@ pub fn prepare_successor_manifest(
     let Some((base_generation_id, base)) = base else {
         return full();
     };
+    // V9 understands the same versionless delta envelope. Reusing a migrated
+    // descriptor, or anchoring a delta on it, would therefore bypass the
+    // intentional v10 downgrade boundary.
+    if requires_current_manifest_anchor(root, base_generation_id)? {
+        return full();
+    }
     if manifest.exact_snapshot_eq(base) {
         return Ok(PreparedManifest {
             generation_id: base_generation_id.to_owned(),
@@ -902,6 +939,7 @@ pub fn write_prepared_manifest(root: &Path, manifest: &PreparedManifest) -> Resu
         key,
         ManifestCacheEntry {
             manifest: Arc::downgrade(&manifest.materialized),
+            requires_current_anchor: false,
             identity: capture_manifest_identity(root, &manifest.generation_id)?,
         },
     );

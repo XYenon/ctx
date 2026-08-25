@@ -57,6 +57,12 @@ fn certified(source: SourceKey) -> CertifiedSource {
     .unwrap()
 }
 
+fn write_literal_manifest(root: &Path, bytes: &[u8]) -> String {
+    let generation_id = sha256_hex(bytes);
+    write_manifest_bytes(root, &generation_id, bytes).unwrap();
+    generation_id
+}
+
 fn current_as_v9(manifest: GenerationManifest) -> Vec<u8> {
     let mut value = serde_json::to_value(manifest).unwrap();
     value["manifest_version"] = serde_json::json!(PREVIOUS_GENERATION_MANIFEST_VERSION);
@@ -270,4 +276,81 @@ fn membership_only_successor_uses_a_full_v10_manifest() {
     assert!(!prepared.bytes.starts_with(MANIFEST_FLAT_DELTA_PREFIX));
     let persisted: GenerationManifest = serde_json::from_slice(&prepared.bytes).unwrap();
     persisted.validate_contract().unwrap();
+}
+
+#[test]
+fn migrated_v8_and_v9_anchors_are_rewritten_once_before_reuse() {
+    let temp = tempfile::tempdir().unwrap();
+    for bytes in [V8_EMPTY_FIXTURE, V9_CODEX_FIXTURE] {
+        let generation_id = write_literal_manifest(temp.path(), bytes);
+        let loaded = load_materialized_manifest(temp.path(), &generation_id, 0).unwrap();
+        assert!(loaded.requires_current_anchor);
+
+        let prepared = prepare_successor_manifest(
+            temp.path(),
+            Arc::clone(&loaded.manifest),
+            Some((&generation_id, loaded.manifest.as_ref())),
+        )
+        .unwrap();
+        assert_ne!(prepared.generation_id(), generation_id);
+        assert!(!prepared.bytes.starts_with(MANIFEST_FLAT_DELTA_PREFIX));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&prepared.bytes).unwrap()
+                ["manifest_version"],
+            GENERATION_MANIFEST_VERSION
+        );
+
+        write_prepared_manifest(temp.path(), &prepared).unwrap();
+        let anchored_id = prepared.generation_id().to_owned();
+        let reused = prepare_successor_manifest(
+            temp.path(),
+            Arc::clone(&loaded.manifest),
+            Some((&anchored_id, loaded.manifest.as_ref())),
+        )
+        .unwrap();
+        assert_eq!(reused.generation_id(), anchored_id);
+    }
+}
+
+#[test]
+fn flat_delta_inherits_the_v9_anchors_rewrite_requirement() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = fixture_source("v9-delta-anchor");
+    let base = GenerationManifest::from_sources(vec![certified(source.clone())]).unwrap();
+    let base_generation_id = write_literal_manifest(temp.path(), &current_as_v9(base));
+    let observation = SourceObservation::new(source.clone(), "fixture-revision", vec![2]).unwrap();
+    let successor = CertifiedSource::certify(
+        observation.clone(),
+        observation,
+        "fixture-parser",
+        [1; 32],
+        ScannedSourceCounts::default(),
+    )
+    .unwrap();
+    let delta = StoredManifestFlatDeltaV1 {
+        storage_format: MANIFEST_FLAT_DELTA_STORAGE.to_owned(),
+        base_generation_id,
+        indexed_documents: 0,
+        certified_source_bytes: 0,
+        source_count: 1,
+        changes: vec![StoredManifestSourceChangeV1 {
+            source_identity: source.identity().digest(),
+            source: successor,
+            aggregate: SourceCoreRecordAggregate::new(source_token(&source), 0, "00".repeat(32))
+                .unwrap(),
+        }],
+    };
+    let delta_generation_id =
+        write_literal_manifest(temp.path(), &serde_json::to_vec(&delta).unwrap());
+    let loaded = load_materialized_manifest(temp.path(), &delta_generation_id, 0).unwrap();
+    assert!(loaded.requires_current_anchor);
+
+    let prepared = prepare_successor_manifest(
+        temp.path(),
+        Arc::clone(&loaded.manifest),
+        Some((&delta_generation_id, loaded.manifest.as_ref())),
+    )
+    .unwrap();
+    assert!(!prepared.bytes.starts_with(MANIFEST_FLAT_DELTA_PREFIX));
+    assert_ne!(prepared.generation_id(), delta_generation_id);
 }
