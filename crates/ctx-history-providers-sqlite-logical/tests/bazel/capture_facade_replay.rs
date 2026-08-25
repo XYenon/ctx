@@ -79,11 +79,7 @@ fn assert_scoped_replay_lifecycle(
     assert_eq!(cold.sources.len(), 1);
     assert!(cold.successful_route_outcomes[0].changed);
     let source_a = cold.sources[0].observation().source().clone();
-    let replay_fingerprint_a = cold.sources[0]
-        .frontier()
-        .unwrap()
-        .checkpoint()
-        .clone();
+    let replay_fingerprint_a = cold.sources[0].frontier().unwrap().checkpoint().clone();
     let cold_generation = cold.commit.generation_id.clone();
     let (cold_disposition, cold_pin) = cold.take_verified_publication().unwrap();
     assert_eq!(cold_disposition, CapturePublicationDisposition::Published);
@@ -167,9 +163,7 @@ fn scoped_registry(
         LogicalSqliteRoutePlan::DeepAgents { source, adapter } => {
             scoped_route(source, authority, adapter)
         }
-        LogicalSqliteRoutePlan::Zed { source, adapter } => {
-            scoped_route(source, authority, adapter)
-        }
+        LogicalSqliteRoutePlan::Zed { source, adapter } => scoped_route(source, authority, adapter),
         _ => panic!("unexpected logical SQLite replay provider"),
     };
     let mut registry = SourceBackedProviderRegistry::new();
@@ -184,10 +178,10 @@ fn scoped_route<A>(
 ) -> SourceBackedRoute
 where
     A: ReplacementDocumentTree<
-            Lifecycle = IndexCaptureLifecycle,
-            Spool = CaptureDocumentSpool,
-            RouteControl = SourceBackedRouteControlExpectation,
-        >,
+        Lifecycle = IndexCaptureLifecycle,
+        Spool = CaptureDocumentSpool,
+        RouteControl = SourceBackedRouteControlExpectation,
+    >,
 {
     let inventory_authority =
         DocumentInventoryAuthority::new(source.provider.as_str().to_owned(), [0x71; 32]);

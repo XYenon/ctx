@@ -17,7 +17,7 @@ RUST_FORMAT_TARGETS = [
     "//crates/ctx-history-ingest-application:history_source_plugins_tests",
     "//crates/ctx-cli:hosted_uninstall_fence_tests",
     "//crates/ctx-history-ingest-application:import_change_reporting_tests",
-    "//crates/ctx-cli:index_tests",
+    "//crates/ctx-cli-contract-tests:index_tests",
     "//crates/ctx-agent-application:integrations_mcp_tests",
     "//crates/ctx-agent-application:integrations_tests",
     "//crates/ctx-client-observability:local_usage_tests",
