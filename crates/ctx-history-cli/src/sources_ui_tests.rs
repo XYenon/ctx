@@ -52,8 +52,7 @@ fn source(status: ProviderSourceStatus, path: &str) -> ProviderSource {
 fn source_merge_is_stable_and_keeps_configured_missing_sources_visible() {
     let automatic = source(ProviderSourceStatus::Available, "/tmp/shared-history");
     let configured_duplicate = automatic.clone();
-    let mut configured_missing =
-        source(ProviderSourceStatus::Missing, "/tmp/configured-missing");
+    let mut configured_missing = source(ProviderSourceStatus::Missing, "/tmp/configured-missing");
     configured_missing.route_provenance = ProviderSourceRouteProvenance::ConfiguredRoot {
         root_id: "configured".to_owned(),
         root_path: configured_missing.path.clone(),
@@ -286,8 +285,8 @@ fn sources_stack_when_fixed_columns_do_not_fit_and_keep_atoms_whole() {
 #[test]
 fn sources_empty_state_is_actionable() {
     let context = context(48, ColorMode::Never);
-    let rendered = render_sources_human(&context, SourcesHumanRenderInput::from_sources(&[]))
-        .render_plain();
+    let rendered =
+        render_sources_human(&context, SourcesHumanRenderInput::from_sources(&[])).render_plain();
     assert!(rendered.starts_with("No history sources found\n"));
     assert!(rendered.contains("Next\n  ctx sources --all\n"));
 }
@@ -402,8 +401,7 @@ fn automatic_configured_conflict_recommends_persistent_policy() {
 fn sources_plain_output_matches_ansi_stripped_output() {
     let sources = vec![source(ProviderSourceStatus::Available, "/tmp/codex")];
     let context = context(80, ColorMode::Always);
-    let document =
-        render_sources_human(&context, SourcesHumanRenderInput::from_sources(&sources));
+    let document = render_sources_human(&context, SourcesHumanRenderInput::from_sources(&sources));
     assert_eq!(
         strip_ansi(&document.render(&context)),
         document.render_plain()

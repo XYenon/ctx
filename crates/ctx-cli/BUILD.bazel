@@ -311,7 +311,7 @@ test_suite(
 
 test_suite(
     name = "index_tests",
-    tests = ["//crates/ctx-cli-contract-tests:index_tests"],
+    tests = ["//crates/ctx-cli-qualification:index_tests"],
 )
 
 test_suite(
@@ -338,11 +338,6 @@ ctx_cli_integration_test(
 ctx_cli_integration_test(
     name = "status_store_cutover_tests",
     src = "tests/status_store_cutover.rs",
-)
-
-alias(
-    name = "stats_tests",
-    actual = "//crates/ctx-cli-qualification:stats_tests",
 )
 
 test_suite(

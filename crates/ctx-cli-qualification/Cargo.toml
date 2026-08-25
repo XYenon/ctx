@@ -13,6 +13,10 @@ publish = false
 autotests = false
 
 [[test]]
+name = "index"
+path = "tests/index.rs"
+
+[[test]]
 name = "stats"
 path = "tests/stats.rs"
 

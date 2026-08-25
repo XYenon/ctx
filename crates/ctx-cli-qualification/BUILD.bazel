@@ -13,6 +13,16 @@ filegroup(
 )
 
 ctx_cli_contract_test(
+    name = "index_tests",
+    src = "tests/index.rs",
+    extra_crates = ["anstream"],
+    test_support = [
+        "base",
+        "fixtures",
+    ],
+)
+
+ctx_cli_contract_test(
     name = "stats_tests",
     src = "tests/stats.rs",
     deps = [

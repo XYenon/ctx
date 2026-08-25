@@ -104,16 +104,6 @@ ctx_cli_contract_test(
 )
 
 ctx_cli_contract_test(
-    name = "index_tests",
-    src = "tests/contracts/index.rs",
-    extra_crates = ["anstream"],
-    test_support = [
-        "base",
-        "fixtures",
-    ],
-)
-
-ctx_cli_contract_test(
     name = "hosted_uninstall_fence_tests",
     src = "tests/contracts/hosted_uninstall_fence.rs",
     binary = "//crates/ctx-cli:ctx_hosted_uninstall_test_host",

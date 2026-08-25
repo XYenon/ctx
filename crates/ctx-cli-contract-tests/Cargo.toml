@@ -17,10 +17,6 @@ name = "cli_public_help_docs"
 path = "tests/contracts/cli_public_help_docs.rs"
 
 [[test]]
-name = "index"
-path = "tests/contracts/index.rs"
-
-[[test]]
 name = "hosted_uninstall_fence"
 path = "tests/contracts/hosted_uninstall_fence.rs"
 
