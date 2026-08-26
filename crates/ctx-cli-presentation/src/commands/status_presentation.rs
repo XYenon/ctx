@@ -6,7 +6,7 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
-use crate::progress::format_bytes;
+use crate::progress::{format_bytes, format_count};
 use crate::ui::{
     fields, outcome, section, Document, Field, Line, Outcome, OutcomeState, RenderContext, Span,
     Token,
@@ -219,19 +219,7 @@ pub(super) fn humanize_code(value: &str) -> String {
 
 fn counted(count: u64, singular: &str, plural: &str) -> String {
     let noun = if count == 1 { singular } else { plural };
-    format!("{} {noun}", grouped_count(count))
-}
-
-fn grouped_count(count: u64) -> String {
-    let digits = count.to_string();
-    let mut reversed = String::with_capacity(digits.len().saturating_add(digits.len() / 3));
-    for (index, character) in digits.chars().rev().enumerate() {
-        if index > 0 && index % 3 == 0 {
-            reversed.push(',');
-        }
-        reversed.push(character);
-    }
-    reversed.chars().rev().collect()
+    format!("{} {noun}", format_count(count))
 }
 
 fn current_rejected_record_count(report: &Value) -> u64 {

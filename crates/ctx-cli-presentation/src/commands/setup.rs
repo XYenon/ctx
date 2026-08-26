@@ -7,7 +7,10 @@ use crate::ui::{
     fields, outcome, section, Document, Field, Line, Outcome, OutcomeState, RenderContext, Span,
     Token,
 };
-use crate::{output::JsonOutputFormat, progress::ProgressArg};
+use crate::{
+    output::JsonOutputFormat,
+    progress::{format_count, ProgressArg},
+};
 
 #[derive(Debug, Args)]
 pub struct SetupArgs {
@@ -172,19 +175,7 @@ fn daemon_human_status(daemon: &SetupDaemonState<'_>) -> Option<String> {
 
 fn counted(count: u64, singular: &str, plural: &str) -> String {
     let noun = if count == 1 { singular } else { plural };
-    format!("{} {noun}", grouped_count(count))
-}
-
-fn grouped_count(count: u64) -> String {
-    let digits = count.to_string();
-    let mut reversed = String::with_capacity(digits.len().saturating_add(digits.len() / 3));
-    for (index, character) in digits.chars().rev().enumerate() {
-        if index > 0 && index % 3 == 0 {
-            reversed.push(',');
-        }
-        reversed.push(character);
-    }
-    reversed.chars().rev().collect()
+    format!("{} {noun}", format_count(count))
 }
 
 #[cfg(test)]
